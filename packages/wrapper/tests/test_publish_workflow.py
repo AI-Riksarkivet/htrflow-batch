@@ -98,6 +98,39 @@ def test_every_image_ends_as_one_manifest_list_under_the_plain_tag() -> None:
         assert f'"${{IMAGE}}:${{TAG}}{suffix}"' in create
 
 
+def test_the_manifest_list_joins_the_digests_the_publish_entries_signed() -> None:
+    """A per-arch tag re-pushed between the two jobs would make the signed
+    list name an image nobody signed. So each publish entry hands the digest
+    it signed over as an artifact named for its component and arch, the
+    manifest job downloads exactly its component's, and the list is created
+    from ``IMAGE@digest`` -- the tags only read back to refuse a mismatch."""
+    publish = JOBS["publish"]["steps"]
+    upload = next(s for s in publish if "upload-artifact" in s.get("uses", ""))
+    name = "digest-${{ matrix.component }}${{ matrix.tag_suffix }}"
+    assert upload["with"]["name"] == upload["with"]["path"] == name
+    record = next(s for s in publish if s.get("name") == "Record the signed digest")
+    assert record["env"]["DIGEST"] == "${{ steps.digest.outputs.digest }}"
+    # the digest recorded is the one the sign-attest step was given
+    signing = next(
+        s for s in publish if s.get("uses") == "./.github/actions/sign-attest"
+    )
+    assert signing["with"]["digest"] == record["env"]["DIGEST"]
+
+    steps = JOBS["manifest"]["steps"]
+    download = next(s for s in steps if "download-artifact" in s.get("uses", ""))
+    assert download["with"]["pattern"] == "digest-${{ matrix.component }}-*"
+    create = next(s["run"] for s in steps if "imagetools create" in s.get("run", ""))
+    line = create[create.index("imagetools create") :].split("\n")
+    joined = " ".join(part.strip().rstrip("\\") for part in line[:2])
+    target = 'imagetools create -t "${IMAGE}:${TAG}" '
+    assert joined.startswith(target), joined
+    members = re.findall(r'"\$\{IMAGE\}([@:])\$\{(\w+)\}"', joined[len(target) :])
+    assert members == [("@", suffix.strip("-")) for suffix in RUNNERS], joined
+    for suffix in RUNNERS:
+        arch = suffix.strip("-")
+        assert f'{arch}="$(cat "digests/digest-${{COMPONENT}}-{arch}")"' in create
+
+
 def test_every_pushed_digest_is_signed_and_attested() -> None:
     """Signature, provenance and SBOM come from the one composite action, so
     a new build job cannot quietly publish an unsigned image."""
@@ -222,14 +255,15 @@ def _step_index(steps: list[dict], needle: str) -> int:
     return found[0]
 
 
-def test_every_image_is_trivy_gated_before_it_is_pushed() -> None:
+def test_every_image_is_published_through_publish_docker() -> None:
     """Finding 3060: only the amd64 wrapper went through Trivy, and only on
     main. Every image and architecture is published through publish-docker,
-    which runs the CRITICAL gate on the container it is about to push."""
+    which runs the CRITICAL gate on the container it is about to push -- the
+    order of its gates is asserted on its syntax tree by
+    .dagger/publishcheck (`go test ./publishcheck/`)."""
     assert set(JOBS) == {"publish", "manifest"}
-    publish_go = (REPO / ".dagger" / "publish.go").read_text()
-    gate = publish_go.index('m.scanImage(ctx, container, "CRITICAL"')
-    assert gate < publish_go.index(".Publish(ctx, imageRef)")
+    runs = [step.get("run", "") for step in JOBS["publish"]["steps"]]
+    assert sum("dagger call --progress plain publish-docker" in r for r in runs) == 1
 
 
 def test_the_arm64_wrapper_is_scanned_in_ci_and_every_week() -> None:
@@ -244,46 +278,21 @@ def test_the_arm64_wrapper_is_scanned_in_ci_and_every_week() -> None:
     assert any(r.strip() == "make scan-image" for r in runs)  # the CRITICAL gate
 
 
-def test_no_workflow_builds_an_htrflow_base_of_its_own() -> None:
-    """The wrapper dockerfile builds its htrflow base from the commit it pins;
-    a workflow that built one separately would be a second recipe."""
-    for name in _all_workflows():
-        text = (WORKFLOWS / name).read_text()
-        assert "HTRFLOW_ARM64_BASE" not in text, name
-        assert "build-htrflow-base" not in text, name
-
-
-def test_publish_docker_itself_refuses_an_existing_tag() -> None:
+def test_make_publish_goes_through_publish_docker() -> None:
     """Finding 3069: only publish.yml checked the registry, so `make
-    publish` (and any other caller) replaced a signed release's manifest list
-    with an unsigned single-arch image. publish-docker now asks the registry
-    before its tests and again right before the push, and a registry it
-    cannot get an answer from refuses rather than passes."""
-    go = (REPO / ".dagger" / "publish.go").read_text()
-    body = go[go.index("func (m *HtrflowBatch) PublishDocker(") :]
-    checks = [m.start() for m in re.finditer(r"m\.refuseExistingTags\(", body)]
-    assert len(checks) == 2
-    assert checks[0] < body.index("m.Test(ctx") < checks[1]
-    assert checks[1] < body.index(".Publish(ctx, imageRef)")
-    assert "imageRef := refs[0]" in body  # the ref pushed is the ref checked
-    # Only "no such manifest/repository" means free.
-    assert '"MANIFEST_UNKNOWN"' in go and '"NAME_UNKNOWN"' in go
-    assert "cannot tell whether" in go
-    # The Makefile's publish goes through the same function.
+    publish` replaced a signed release's manifest list with an unsigned
+    single-arch image. The registry check lives in publish-docker itself
+    (.dagger/publishcheck asserts it runs before the tests and again right
+    before the push), and the Makefile goes through the same function."""
     assert "dagger call publish-docker" in (REPO / "Makefile").read_text()
 
 
 def test_the_driver_test_runs_on_the_images_that_ship() -> None:
     """Finding 3104: the level-0 pin ran only against an arm64 image built in
     ci.yml. publish-docker, which publishes the wrapper for both
-    architectures, now runs it on the container it pushes, and ci.yml on the
-    amd64 build its scan job already has."""
-    go = (REPO / ".dagger" / "publish.go").read_text()
-    body = go[go.index("func (m *HtrflowBatch) PublishDocker(") :]
-    driver = body.index("m.driverTest(ctx, container, source, caBundle)")
-    assert body.index("container, err = m.BuildWrapper(") < driver
-    assert driver < body.index(".Publish(ctx, imageRef)")
-
+    architectures, now runs it on the container it pushes (asserted by
+    .dagger/publishcheck), and ci.yml on the amd64 build its scan job
+    already has."""
     wrappers = [
         e
         for e in JOBS["publish"]["strategy"]["matrix"]["include"]

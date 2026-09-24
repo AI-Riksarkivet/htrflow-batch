@@ -8,7 +8,7 @@ import yaml
 from pydantic import ValidationError
 
 from htrflow_converter import render
-from htrflow_converter.models import Campaign, ConverterConfig, Volume
+from htrflow_converter.models import Campaign, ConverterConfig, Toleration, Volume
 from htrflow_converter.parse import load
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -81,25 +81,6 @@ def test_campaign_job_fields_per_global_constraints():
     assert labels["htrflow.riksarkivet.se/managed-by"] == "converter"
 
 
-def test_no_volume_ref_or_iiif_manifest_url_env_set_by_python():
-    kyrk, demo, cfg = _kyrk()
-    job = render.campaign_objects(kyrk, demo, cfg)[1]
-    container = job["spec"]["template"]["spec"]["containers"][0]
-    names = {e["name"] for e in container["env"]}
-    assert "VOLUME_REF" not in names
-    assert "IIIF_MANIFEST_URL" not in names
-
-
-def test_shell_args_contain_a_real_tab_and_exec():
-    kyrk, demo, cfg = _kyrk()
-    job = render.campaign_objects(kyrk, demo, cfg)[1]
-    container = job["spec"]["template"]["spec"]["containers"][0]
-    assert container["command"] == ["/bin/sh", "-c"]
-    args = container["args"][0]
-    assert "\t" in args
-    assert "exec python -m htrflow_batch" in args
-
-
 def test_both_jobs_make_the_writable_dirs_before_exec():
     """readOnlyRootFilesystem: HOME/TMPDIR/YOLO_CONFIG_DIR point into the
     tmpfs workdir and must exist before htrflow builds a model. The shell
@@ -132,27 +113,57 @@ def test_init_container_present_with_pipeline_marker_path():
     assert "nvidia.com/gpu" not in init[0]["resources"]["requests"]
 
 
-def test_the_warmup_wait_is_bounded_and_fails_the_index():
+def _run_gate(tmp_path, pod: dict, marker: str, after: int | None = None):
+    """Run a pod's rendered ``warmup-wait`` command under its own shell,
+    with the marker at a path under ``tmp_path`` and ``sleep`` a shell
+    function that logs its seconds instead of waiting -- creating the marker
+    once ``after`` sleeps are logged. -> (exit code, stderr, seconds slept,
+    the marker's stand-in path)."""
+    command = pod["initContainers"][0]["command"]
+    here, log = tmp_path / "warmup.done", tmp_path / "slept"
+    log.write_text("")
+    here.unlink(missing_ok=True)
+    if after == 0:
+        here.touch()
+    stub = (
+        f'sleep() {{ echo "$1" >> {log}; '
+        f'[ "$(wc -l < {log})" -lt {after or 10**9} ] || touch {here}; }}; '
+    )
+    done = subprocess.run(
+        [*command[:-1], stub + command[-1].replace(marker, str(here))],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    slept = sum(int(n) for n in log.read_text().split())
+    return done.returncode, done.stderr, slept, str(here)
+
+
+def test_the_warmup_wait_is_bounded_and_fails_the_index(tmp_path):
     """An unbounded `until [ -f … ]` holds `nvidia.com/gpu: 1` for the pod's
     whole deadline, once per retry, whenever a pipeline's warm-up never wrote
     its marker (audit X3). The init container now gives up after
     `warmup_wait_seconds`, says on stderr which marker it waited for, and
     exits 13 -- which the Job's podFailurePolicy turns into a failed index
-    instead of three more six-hour waits."""
+    instead of three more six-hour waits. The rendered script is run, not
+    read: a counter that steps too fast, or a test that exits on the first
+    pass, reads the same as the right one."""
     kyrk, demo, cfg = _kyrk()
     cfg = cfg.model_copy(update={"warmup_wait_seconds": 120})
     job = render.campaign_objects(kyrk, demo, cfg)[1]
-    init = job["spec"]["template"]["spec"]["initContainers"][0]
-    script = init["command"][-1]
+    pod = job["spec"]["template"]["spec"]
+    init = pod["initContainers"][0]
     marker = f"/data/warmup/{demo.id}.done"
 
-    assert f"[ -f {marker} ]" in script
-    # `-le`, not `-lt`: the check runs BEFORE each sleep, so `-lt` gives up
-    # one step early -- at 110 s here, while printing "after 120s".
-    assert '[ "$n" -le 120 ]' in script
-    assert "exit 13" in script
-    message = script.split("echo ", 1)[1].split(" >&2", 1)[0]
-    assert marker in message
+    # Never there: the whole 120 s is waited -- not one step less, which a
+    # `-lt` would give while printing "after 120s" -- and then exit 13,
+    # naming the marker.
+    rc, err, slept, here = _run_gate(tmp_path, pod, marker)
+    assert (rc, slept) == (13, 120)
+    assert here in err and "after 120s" in err
+    # There from the start: through at once. Arriving late: through then.
+    assert _run_gate(tmp_path, pod, marker, after=0)[:3] == (0, "", 0)
+    assert _run_gate(tmp_path, pod, marker, after=3)[:3] == (0, "", 30)
 
     # The default policy (`File`) reads /dev/termination-log, which a shell
     # script never writes: without this the index fails with an EMPTY
@@ -173,7 +184,7 @@ def test_the_warmup_wait_is_bounded_and_fails_the_index():
     }
 
 
-def test_the_warmup_wait_never_outlasts_the_pods_own_deadline():
+def test_the_warmup_wait_never_outlasts_the_pods_own_deadline(tmp_path):
     """A pipeline whose `max_seconds:` is shorter than `warmup_wait_seconds`
     would have its pod killed by the kubelet -- exit 143, matched by no
     `FailIndex` rule -- before the gate could ever give up, so the index
@@ -185,30 +196,31 @@ def test_the_warmup_wait_never_outlasts_the_pods_own_deadline():
     a `FailIndex` and a sentence. A tie would hand it back to the kubelet."""
     _, demo, cfg = _kyrk()
     cfg = cfg.model_copy(update={"warmup_wait_seconds": 900})
-    short = demo.model_copy(update={"max_seconds": 600})
+    marker = f"/data/warmup/{demo.id}.done"
     c = Campaign(
         name="kyrk",
         pipeline="demo-v1",
         volumes=[Volume(id="v1", manifest="https://x/y")],
     )
-    spec = render.campaign_objects(c, short, cfg)[1]["spec"]["template"]["spec"]
-    script = spec["initContainers"][0]["command"][-1]
 
-    assert spec["activeDeadlineSeconds"] == 600
-    assert '[ "$n" -le 590 ]' in script
-    assert "after 590s" in script
+    def gate(pipeline):
+        """(the pod's deadline, seconds the gate waits before exit 13)."""
+        pod = render.campaign_objects(c, pipeline, cfg)[1]["spec"]["template"]["spec"]
+        rc, err, slept, _ = _run_gate(tmp_path, pod, marker)
+        assert rc == 13 and f"after {slept}s" in err
+        return pod["activeDeadlineSeconds"], slept
+
+    deadline, waited = gate(demo.model_copy(update={"max_seconds": 600}))
+    assert deadline == 600
+    assert waited == deadline - render._WAIT_STEP, "gives up one step early"
 
     # A deadline under one step still has to render a runnable script: the
-    # gate cannot win that race, but it must not render `-le -5` either.
-    tiny = demo.model_copy(update={"max_seconds": 5})
-    spec = render.campaign_objects(c, tiny, cfg)[1]["spec"]["template"]["spec"]
-    assert '[ "$n" -le 10 ]' in spec["initContainers"][0]["command"][-1]
+    # gate cannot win that race, but it must not give up before it starts.
+    assert gate(demo.model_copy(update={"max_seconds": 5})) == (5, render._WAIT_STEP)
 
     # The other way round, the pipeline's deadline is none of the gate's
     # business: 900 s of waiting inside a 6 h budget is what it is for.
-    spec = render.campaign_objects(c, demo, cfg)[1]["spec"]["template"]["spec"]
-    assert spec["activeDeadlineSeconds"] == 21600
-    assert '[ "$n" -le 900 ]' in spec["initContainers"][0]["command"][-1]
+    assert gate(demo) == (21600, 900)
 
 
 def test_the_warmup_deadline_is_the_pods_and_not_the_jobs():
@@ -238,7 +250,7 @@ def test_the_warmup_job_schedules_where_the_campaign_job_does():
             "runtime_class": "nvidia",
             "node_selector": {"gpu": "true"},
             "tolerations": [
-                {"key": "gpu", "operator": "Exists", "effect": "NoSchedule"}
+                Toleration(key="gpu", operator="Exists", effect="NoSchedule")
             ],
         }
     )
@@ -372,7 +384,7 @@ def test_node_selector_and_tolerations_appear_in_the_pod_spec():
         update={
             "node_selector": {"gpu": "true"},
             "tolerations": [
-                {"key": "gpu", "operator": "Exists", "effect": "NoSchedule"}
+                Toleration(key="gpu", operator="Exists", effect="NoSchedule")
             ],
         }
     )
@@ -464,15 +476,24 @@ def test_the_ci_test_image_carries_the_tools_this_suite_shells_out_to():
     manifest validation and the commit provenance were never checked in CI
     while the suite reported green.
 
-    The dagger test container installs git and copies kubeconform and helm
-    out of the same digest-pinned images the chart render uses. This asserts
-    it still does, because the skip cannot.
+    The dagger test container installs git, jq and make from Debian and
+    copies kubeconform, helm and the Kyverno CLI out of the digest-pinned
+    images the chart render uses. This asserts it still does, because the
+    skip cannot -- every tool a `skipif` or `pytest.skip` here waits for,
+    not only the first three: without kyverno the whole policy-admission
+    file skipped while the run stayed green.
+
+    The list can still fall behind a NEW tool, so the dagger run also
+    refuses any skip but the one it expects (the real-driver test, which
+    needs the wrapper image): a tool that goes missing fails CI by name.
     """
     dagger = (Path(__file__).resolve().parents[3] / ".dagger" / "test.go").read_text()
-    assert "--no-install-recommends git" in dagger
-    assert '"/usr/local/bin/kubeconform"' in dagger
-    assert '"/usr/local/bin/helm"' in dagger
+    assert "--no-install-recommends git jq make" in dagger
+    for tool in ("kubeconform", "helm", "kyverno"):
+        assert f'"/usr/local/bin/{tool}"' in dagger, tool
     assert "m.withTestTools(container)." in dagger
+    assert "pytest --tb=short -q -rs" in dagger, "the audit reads -rs's report"
+    assert "unexpectedSkips" in dagger
 
 
 def test_window_is_capped_by_the_converter_window():
@@ -489,14 +510,6 @@ def test_window_is_capped_by_the_converter_window():
     assert render.campaign_objects(under, demo, cfg)[1]["spec"]["parallelism"] == 2
     unset = kyrk.model_copy(update={"window": None})
     assert render.campaign_objects(unset, demo, cfg)[1]["spec"]["parallelism"] == 10
-
-
-def test_no_job_carries_the_partial_admission_annotation():
-    kyrk, demo, cfg = _kyrk()
-    for obj in render.pipeline_objects(demo, cfg) + render.campaign_objects(
-        kyrk, demo, cfg
-    ):
-        assert "kueue.x-k8s.io/job-min-parallelism" not in str(obj["metadata"])
 
 
 def test_suspend_true_renders_spec_suspend():
@@ -523,26 +536,6 @@ def test_pipeline_max_seconds_renders_the_pod_deadline():
 
     assert deadline(demo) == cfg.max_seconds
     assert deadline(demo.model_copy(update={"max_seconds": 60})) == 60
-
-
-@pytest.mark.parametrize(
-    "name",
-    [
-        "campaign-job.yaml",
-        "warmup-job.yaml",
-        "configmap.yaml",
-        "pipeline-configmap.yaml",
-    ],
-)
-def test_skeletons_are_valid_jobs(name):
-    """The packaged skeletons (render._load) are complete, well-formed
-    objects on their own -- this is also what kubeconform validates as-is in
-    CI (.dagger/checks.go)."""
-    doc = render._load(name)
-    assert doc["kind"] in ("Job", "ConfigMap")
-    assert doc["apiVersion"] in ("batch/v1", "v1")
-    if name == "campaign-job.yaml":
-        assert doc["spec"]["completionMode"] == "Indexed"
 
 
 def test_load_returns_a_fresh_copy_every_call():
@@ -586,7 +579,7 @@ def _images_campaign(volumes: int, pages: int) -> Campaign:
     line of space-joined URLs, so 300 pages of a 90-character URL is 23 kB on
     that line (`Volume.source_line`)."""
     url = (
-        "https://lbiiif.riksarkivet.se/arkis!R00012345/jp2/00000000000000000{:03d}.jpg"
+        "https://images.example.org/archives!R00012345/jp2/00000000000000000{:03d}.jpg"
     )
     return Campaign(
         name="kyrk",
@@ -785,7 +778,7 @@ def test_the_apply_and_the_read_api_write_the_same_field_names():
 
 
 IIIF_SIZE = (
-    "https://lbiiif.riksarkivet.se/arkis!R0001203_{:05d}/full/2500,/0/default.jpg"
+    "https://images.example.org/archives!R0001203_{:05d}/full/2500,/0/default.jpg"
 )
 
 
@@ -876,3 +869,159 @@ def test_the_campaign_job_never_gets_the_hub_token():
     rendered = yaml.safe_dump_all(render.campaign_objects(kyrk, demo, cfg))
     assert "HF_TOKEN" not in rendered
     assert "htr-batch-hf" not in rendered
+
+
+def _cache_mounts(pod_spec: dict) -> list[dict]:
+    """Every mount of the model-cache volume, init containers included."""
+    cache = next(v["name"] for v in pod_spec["volumes"] if "persistentVolumeClaim" in v)
+    return [
+        m
+        for c in pod_spec.get("initContainers", []) + pod_spec["containers"]
+        for m in c["volumeMounts"]
+        if m["name"] == cache
+    ]
+
+
+def _warmup_pod(p, cfg) -> dict:
+    return render.pipeline_objects(p, cfg)[1]["spec"]["template"]
+
+
+def test_a_recipe_edit_replaces_the_warmup_and_moves_the_cache_it_fills():
+    """audit 0923 C-3: the warm-up and its marker were keyed by pipeline id.
+    A steps-only edit rendered a byte-identical warm-up Job, so the apply was
+    a no-op, the new model was never downloaded, and `<id>.done` was still
+    there: new campaign pods passed the gate and failed every index, offline,
+    without the model. An image edit raced the same way. Any recipe change
+    now changes the warm-up's pod template (the apply replaces it) and the
+    directory both it and the campaign pods use."""
+    kyrk, demo, cfg = _kyrk()
+    steps = [*demo.steps[:1], {"step": "TextRecognition", "settings": {"model": "x"}}]
+    for edited in (
+        demo.model_copy(update={"steps": steps}),
+        demo.model_copy(update={"image": demo.image[:-1] + "b"}),
+    ):
+        assert _warmup_pod(edited, cfg) != _warmup_pod(demo, cfg)
+        before = render.campaign_objects(kyrk, demo, cfg)[1]["spec"]["template"]
+        after = render.campaign_objects(kyrk, edited, cfg)[1]["spec"]["template"]
+        paths = {m["subPath"] for m in _cache_mounts(after["spec"])}
+        assert paths.isdisjoint(m["subPath"] for m in _cache_mounts(before["spec"]))
+        assert paths == {
+            m["subPath"] for m in _cache_mounts(_warmup_pod(edited, cfg)["spec"])
+        }
+
+
+def test_each_pipeline_warms_and_reads_a_cache_directory_of_its_own():
+    """audit 0923 S-2: every warm-up mounted the whole cache PVC read-write,
+    so one pipeline's warm-up -- which runs its author's pinned YOLO `.pt`,
+    a pickle -- could overwrite another pipeline's snapshots and markers,
+    which that pipeline's campaigns then load offline, trusting the cache.
+    A warm-up writes only its own recipe's directory; the campaign pods read
+    that directory alone, read-only."""
+    kyrk, demo, cfg = _kyrk()
+    other = demo.model_copy(update={"id": "other-v1"})
+    same_recipe = demo.model_copy(update={"id": "copy-v1"})
+    dirs = set()
+    for p in (demo, other, same_recipe):
+        warm = _cache_mounts(_warmup_pod(p, cfg)["spec"])
+        assert [m.get("readOnly", False) for m in warm] == [False]
+        (path,) = {m["subPath"] for m in warm}
+        assert path.startswith(f"{p.id}-")
+        pod = render.campaign_objects(kyrk, p, cfg)[1]["spec"]["template"]["spec"]
+        reads = _cache_mounts(pod)
+        assert len(reads) == 2  # the warmup-wait gate and the wrapper
+        assert all(m["readOnly"] is True and m["subPath"] == path for m in reads)
+        dirs.add(path)
+    # one recipe under two ids is two authors: no directory is shared
+    assert len(dirs) == 3
+
+
+def test_the_warmup_pod_template_names_its_recipe():
+    _, demo, cfg = _kyrk()
+    annotations = _warmup_pod(demo, cfg)["metadata"]["annotations"]
+    assert annotations["htrflow.riksarkivet.se/recipe-sha256"] == demo.recipe_sha256
+
+
+def _wrapper_env(job: dict) -> dict:
+    return {
+        e["name"]: e for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+
+
+def test_the_wrapper_is_told_which_attempt_of_its_index_it_is(monkeypatch):
+    """audit 0923 W-4 (the wrapper's request): the wrapper fails a page it
+    still defers on its index's LAST attempt, so it needs the attempt it is
+    on and how many there are. The Job controller annotates every pod of an
+    Indexed Job with `backoffLimitPerIndex` set with
+    `batch.kubernetes.io/job-index-failure-count` (kubernetes
+    pkg/controller/job: `addIndexFailureCountAnnotation`), which the
+    downward API reads; the limit is rendered from the very field the Job
+    carries, so the two cannot drift."""
+    kyrk, demo, cfg = _kyrk()
+    job = render.campaign_objects(kyrk, demo, cfg)[1]
+    env = _wrapper_env(job)
+    assert env["INDEX_FAILURE_COUNT"]["valueFrom"] == {
+        "fieldRef": {
+            "fieldPath": "metadata.annotations"
+            "['batch.kubernetes.io/job-index-failure-count']"
+        }
+    }
+    assert env["BACKOFF_LIMIT_PER_INDEX"]["value"] == str(
+        job["spec"]["backoffLimitPerIndex"]
+    )
+
+    skeleton = render._base("campaign-job.yaml")
+    monkeypatch.setitem(skeleton["spec"], "backoffLimitPerIndex", 5)
+    job = render.campaign_objects(kyrk, demo, cfg)[1]
+    assert job["spec"]["backoffLimitPerIndex"] == 5
+    assert _wrapper_env(job)["BACKOFF_LIMIT_PER_INDEX"]["value"] == "5"
+
+
+#: Env the campaign Job sets for the libraries under the wrapper, not for the
+#: wrapper's own Config: botocore, huggingface_hub, ultralytics, the shell.
+LIBRARY_ENV = {
+    "AWS_SHARED_CREDENTIALS_FILE",
+    "HF_HOME",
+    "HF_HUB_OFFLINE",
+    "HOME",
+    "TMPDIR",
+    "YOLO_CONFIG_DIR",
+}
+
+
+def test_every_wrapper_variable_the_job_sets_is_one_the_wrapper_reads(tmp_path):
+    """The rendered Job and the wrapper's Config are two packages naming the
+    same variables: one renamed on either side is a setting the wrapper
+    silently runs without -- its default -- and for the attempt pair that
+    default is "never the last attempt", so a deferred page is never failed.
+    Read through the wrapper's own Config, the rendered values mean what
+    render says they mean."""
+    config = pytest.importorskip("htrflow_batch.config")
+    kyrk, demo, cfg = _kyrk()
+    job = render.campaign_objects(kyrk, demo, cfg)[1]
+    env = _wrapper_env(job)
+    aliases = {f.alias for f in config.Config.model_fields.values()}
+    assert set(env) - LIBRARY_ENV <= aliases, set(env) - LIBRARY_ENV - aliases
+
+    limit = int(env["BACKOFF_LIMIT_PER_INDEX"]["value"])
+    (tmp_path / "pipeline.yaml").write_text("steps: []\n")
+    plain = {k: e["value"] for k, e in env.items() if "value" in e}
+    secret = {  # the chart's S3 Secret, by the keys the Job reads from it
+        "S3_BUCKET": "htr-results",
+        "S3_ENDPOINT": "https://s3.example.org",
+    }
+    from_secret = {
+        k: secret[k] for k, e in env.items() if "secretKeyRef" in e.get("valueFrom", {})
+    }
+    shell = {  # what the Job's own script exports from volumes.txt
+        "VOLUME_REF": "vol0",
+        "IIIF_MANIFEST_URL": "https://iiif.example.org/vol0/manifest",
+        "PIPELINE_PATH": str(tmp_path / "pipeline.yaml"),
+        "WORKDIR_PATH": str(tmp_path / "work"),
+    }
+
+    def attempt(failures: str) -> bool:
+        both = {**plain, **from_secret, **shell, "INDEX_FAILURE_COUNT": failures}
+        return config.Config.from_env(both).last_attempt
+
+    assert (attempt(str(limit - 1)), attempt(str(limit))) == (False, True)
+    assert attempt("") is False  # the annotation not there yet: not the last

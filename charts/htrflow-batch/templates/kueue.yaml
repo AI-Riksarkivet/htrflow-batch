@@ -1,13 +1,25 @@
+{{- /*
+Three kinds here are cluster-scoped with names of their own -- the
+ResourceFlavor, the ClusterQueue and the WorkloadPriorityClasses -- so a
+second release, or a cluster whose Kueue already has one of them, would fail
+Helm's ownership check (0923 D-9). Each is created by this release or only
+referenced by name: `queue.createFlavor`, `queue.createClusterQueue`,
+`queue.createPriorityClasses`, with the names as values.
+*/}}
+{{- $cq := .Values.queue.clusterQueueName | default (printf "%s-cq" .Values.queue.name) }}
+{{- if .Values.queue.createFlavor }}
 apiVersion: kueue.x-k8s.io/v1beta2
 kind: ResourceFlavor
 metadata:
   name: {{ .Values.queue.flavor }}
   labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
 ---
+{{- end }}
+{{- if .Values.queue.createClusterQueue }}
 apiVersion: kueue.x-k8s.io/v1beta2
 kind: ClusterQueue
 metadata:
-  name: {{ .Values.queue.name }}-cq
+  name: {{ $cq }}
   labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
 spec:
   # Only LocalQueues in the release namespace may borrow this quota (audit
@@ -26,6 +38,7 @@ spec:
               nominalQuota: {{ .quota }}
             {{- end }}
 ---
+{{- end }}
 apiVersion: kueue.x-k8s.io/v1beta2
 kind: LocalQueue
 metadata:
@@ -33,13 +46,16 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
 spec:
-  clusterQueue: {{ .Values.queue.name }}-cq
+  clusterQueue: {{ $cq }}
 {{- /*
 One cluster-scoped WorkloadPriorityClass per queue.priorityClasses entry, on
 the same API version as the queue objects above. `value` and `description`
 sit at the top level of this kind, not under a spec. Nothing here turns
-preemption on: a class only decides who is admitted next.
+preemption on: a class only decides who is admitted next. With
+createPriorityClasses false the list still names the classes the cluster
+has, which converter.yaml's `priority_classes` must repeat.
 */}}
+{{- if .Values.queue.createPriorityClasses }}
 {{- range .Values.queue.priorityClasses }}
 ---
 apiVersion: kueue.x-k8s.io/v1beta2
@@ -49,4 +65,5 @@ metadata:
   labels: {{- include "htrflow-batch.labels" $ | nindent 4 }}
 value: {{ int .value }}
 description: {{ .description | quote }}
+{{- end }}
 {{- end }}

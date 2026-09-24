@@ -55,7 +55,7 @@ pipeline: demo-v1            # a pipeline file in the same repository
 window: 4                    # optional: how many volumes run at once
 priority: htr-bulk           # optional: where it goes in the line
 volumes:
-  - R0001203                 # a reference code is enough
+  - R0001203                 # a reference code, once converter.yaml's source_template is set
   - id: loc-mal2459400
     manifest: https://…/manifest.json
   - id: loose-scans
@@ -73,7 +73,9 @@ changes too. There is no CRD, no controller and no database.
 
 - **A pure converter** (`htrflow-campaigns`) checks the campaign and renders it
   into one Kubernetes **Indexed Job**, one index per volume, plus a warm-up Job
-  that fills the model cache. It runs in CI, never in the cluster.
+  that fills the model cache. It renders in the campaigns repo's CI; the
+  apply runs by hand or in the cluster, as an Argo CD hook on the converter
+  image.
 - **Kyverno** decides which images and model revisions may run. **Kueue** holds
   a campaign until its GPUs are free, and lets higher priority go first.
 - **A web front** shows every campaign and volume live, with each volume's run
@@ -161,10 +163,13 @@ cluster.
 
 ## Where things stand
 
-- **Images.** `docker.io/riksarkivet/htrflow-batch` (the wrapper) and
-  `docker.io/riksarkivet/htrflow-web` (the web front) are signed with cosign
-  and carry SLSA provenance and an SBOM. Pipeline files pin the wrapper by
-  digest, and the chart's `web.image` pins the web front the same way.
+- **Images.** `docker.io/riksarkivet/htrflow-batch` (the wrapper),
+  `docker.io/riksarkivet/htrflow-web` (the web front) and
+  `docker.io/riksarkivet/htrflow-campaigns` (the converter, for the Argo CD
+  apply hook) are signed with cosign and carry SLSA provenance and an SBOM.
+  Each is pinned by digest: pipeline files pin the wrapper, the chart's
+  `web.image` the web front, and the hook in the campaigns repo the
+  converter.
 - **Versions.** Each lives next to what it versions: the charts' `Chart.yaml`
   files, the packages' `pyproject.toml` files, and `KUEUE_VERSION` in the
   `Makefile`.

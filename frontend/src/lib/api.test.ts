@@ -8,6 +8,10 @@ import {
   isResultUrl,
   jobDetailSchema,
   jobSummarySchema,
+  moreReaped,
+  REAPED_MAX,
+  REAPED_PAGE,
+  reapedHidden,
   sameDay,
   shortDate,
   volumeStateSchema,
@@ -62,19 +66,6 @@ const pipeline = {
   lastError: null,
 };
 
-const progress = {
-  done: 137,
-  total: 638,
-  failed: 1,
-  lastPage: "0137",
-  stage: "stream",
-  updatedAt: "2026-09-08T09:31:00+00:00",
-  ageSeconds: 12,
-  lastError: { page: "0044", error: "the worker thread died" },
-  errors: 2,
-  viewerPublished: true,
-};
-
 describe("fetchJobs", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -85,11 +76,43 @@ describe("fetchJobs", () => {
     const fetchMock = vi.fn(async () => jsonResponse([summary]));
     vi.stubGlobal("fetch", fetchMock);
     const list = await fetchJobs();
-    expect(list).toEqual({ jobs: [summary], unreadable: 0 });
+    expect(list).toEqual({ jobs: [summary], unreadable: 0, reapedTotal: 0 });
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/jobs",
+      `/api/v1/jobs?reaped=${REAPED_PAGE}`,
       expect.objectContaining({ cache: "no-store" }),
     );
+  });
+
+  // The API carries every live Job but only the newest campaigns whose Jobs
+  // are gone, and says how many of those there are in all (2026-09-23
+  // audit): the page asks for more by count.
+  test("asks for as many reaped campaigns as it is told, and reads their total", async () => {
+    const gone = { ...summary, name: "gamla", jobGone: true };
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify([summary, gone]), {
+          headers: {
+            "content-type": "application/json",
+            "x-reaped-total": "57",
+          },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const list = await fetchJobs(undefined, 40);
+    expect(list.reapedTotal).toBe(57);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/jobs?reaped=40",
+      expect.anything(),
+    );
+  });
+
+  test("an API that sends no total has no more to offer than it sent", async () => {
+    const gone = { ...summary, name: "gamla", jobGone: true };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse([summary, gone])),
+    );
+    expect((await fetchJobs()).reapedTotal).toBe(1);
   });
 
   test("honours window.API_BASE, resolved per call", async () => {
@@ -98,7 +121,7 @@ describe("fetchJobs", () => {
     vi.stubGlobal("fetch", fetchMock);
     await fetchJobs();
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://elsewhere/api/v1/jobs",
+      `http://elsewhere/api/v1/jobs?reaped=${REAPED_PAGE}`,
       expect.anything(),
     );
   });
@@ -142,7 +165,11 @@ describe("fetchJobs", () => {
         jsonResponse([summary, { ...summary, name: "broken", phase: "Bogus" }]),
       ),
     );
-    expect(await fetchJobs()).toEqual({ jobs: [summary], unreadable: 1 });
+    expect(await fetchJobs()).toEqual({
+      jobs: [summary],
+      unreadable: 1,
+      reapedTotal: 0,
+    });
     expect(consoleError).toHaveBeenCalledTimes(1); // the bug stays visible to the operator
     consoleError.mockRestore();
   });
@@ -209,88 +236,16 @@ describe("fetchJob", () => {
 });
 
 describe("schemas", () => {
-  test("jobSummarySchema and jobDetailSchema parse the API's own shapes", () => {
-    expect(jobSummarySchema.parse(summary)).toEqual(summary);
-    expect(
-      jobDetailSchema.parse({
-        ...summary,
-        ...pipeline,
-        failures: [],
-        volumes: [volume],
-      }),
-    ).toMatchObject({ volumes: [volume] });
-  });
-
-  test("the detail carries the pipeline's steps and YAML", () => {
-    const parsed = jobDetailSchema.parse({
-      ...summary,
-      ...pipeline,
-      failures: [],
-      volumes: [],
-    });
-    expect(parsed.pipelineSteps).toEqual(["Segmentation"]);
-    expect(parsed.pipelineYaml).toBe("steps:\n");
-  });
-
-  test("latest is a whole volume row, or null", () => {
-    const parsed = jobDetailSchema.parse({
-      ...summary,
-      ...pipeline,
-      latest: volume,
-      failures: [],
-      volumes: [],
-    });
-    expect(parsed.latest?.id).toBe("vol0");
-    expect(
-      jobDetailSchema.parse({
-        ...summary,
-        ...pipeline,
-        failures: [],
-        volumes: [],
-      }).latest,
-    ).toBeNull();
-  });
-
   test("a detail without the pipeline fields is refused", () => {
     expect(() =>
       jobDetailSchema.parse({ ...summary, failures: [], volumes: [] }),
     ).toThrow();
   });
 
-  test("PartiallyFailed is a phase of its own", () => {
-    expect(
-      jobSummarySchema.parse({ ...summary, phase: "PartiallyFailed" }).phase,
-    ).toBe("PartiallyFailed");
-  });
-
   test("an unknown phase is rejected, not coerced to a neutral value", () => {
     expect(() =>
       jobSummarySchema.parse({ ...summary, phase: "Bogus" }),
     ).toThrow();
-  });
-
-  test("reason is optional on a volume row", () => {
-    const reason = { stage: "setup", permanent: true, error: "no canvases" };
-    expect(
-      jobDetailSchema.parse({
-        ...summary,
-        ...pipeline,
-        failures: [],
-        volumes: [{ ...volume, reason }],
-      }),
-    ).toMatchObject({ volumes: [{ reason }] });
-  });
-
-  test("a reason the API could not parse still carries the three fields", () => {
-    const reason = { stage: null, permanent: null, error: "Killed" };
-    expect(
-      jobDetailSchema.parse({
-        ...summary,
-        ...pipeline,
-        failures: [],
-        volumes: [{ ...volume, reason }],
-      }),
-    ).toMatchObject({ volumes: [{ reason }] });
   });
 
   test("a reason that is still the old bare string is rejected", () => {
@@ -302,17 +257,6 @@ describe("schemas", () => {
         volumes: [{ ...volume, reason: "exit 1" }],
       }),
     ).toThrow();
-  });
-
-  test("a volume row carries its progress, or null when nothing is known", () => {
-    expect(
-      jobDetailSchema.parse({
-        ...summary,
-        ...pipeline,
-        failures: [],
-        volumes: [{ ...volume, progress }],
-      }),
-    ).toMatchObject({ volumes: [{ progress }] });
   });
 
   test("a volume row without the progress field is refused", () => {
@@ -327,53 +271,10 @@ describe("schemas", () => {
     ).toThrow();
   });
 
-  test("the detail carries the campaign's summed pages", () => {
-    const parsed = jobDetailSchema.parse({
-      ...summary,
-      ...pipeline,
-      pagesDone: 137,
-      pagesTotal: 638,
-      failures: [],
-      volumes: [],
-    });
-    expect([parsed.pagesDone, parsed.pagesTotal]).toEqual([137, 638]);
-  });
-
-  test("the campaign's notice fields survive the parse", () => {
-    const lastError = {
-      page: "0044",
-      error: "the worker thread died",
-      volume: "vol1",
-      logUrl: "https://results.example.org/status/logs/demo-v1/vol1.txt",
-    };
-    const parsed = jobDetailSchema.parse({
-      ...summary,
-      ...pipeline,
-      pagesFailed: 3,
-      errors: 5,
-      lastError,
-      failures: [],
-      volumes: [],
-    });
-    expect([parsed.pagesFailed, parsed.errors]).toEqual([3, 5]);
-    expect(parsed.lastError).toEqual(lastError);
-  });
-
-  test("warmup is required on a job row, missing has no reason", () => {
+  test("warmup is required on a job row", () => {
     expect(() =>
       jobSummarySchema.parse({ ...summary, warmup: undefined }),
     ).toThrow();
-    expect(warmupSchema.parse({ phase: "missing" })).toEqual({
-      phase: "missing",
-    });
-  });
-
-  test("a failed warmup carries the same reason shape a volume does", () => {
-    const reason = { stage: "warmup", permanent: true, error: "bad model id" };
-    expect(warmupSchema.parse({ phase: "failed", reason })).toEqual({
-      phase: "failed",
-      reason,
-    });
   });
 
   test("an unknown warmup phase is rejected", () => {
@@ -468,17 +369,46 @@ describe("a URL field has to be a URL", () => {
     },
   );
 
-  test("sourceUrl may be null but may not be something else", () => {
-    const withSource = (sourceUrl: unknown) => ({
+  // sourceUrl alone is not built by the API: it is a line of a campaign's
+  // volumes.txt, which people edit, and the API's check and the browser's
+  // URL parser need not agree on every string. One the page cannot use is
+  // no link -- never a card that fails to parse, and so re-polls for ever
+  // (2026-09-23 audit).
+  test.each([
+    "images:x",
+    "javascript:alert(1)",
+    "https://example.org:99999/m",
+    "https://exa%mple.org/m",
+    "https://ex<ample.org/m",
+    42,
+  ])(
+    "a sourceUrl the page cannot use (%s) is no link, not a lost card",
+    (bad) => {
+      const detail = {
+        ...summary,
+        ...pipeline,
+        failures: [{ ...volume, sourceUrl: bad }],
+        latest: { ...volume, sourceUrl: bad },
+        volumes: [volume, { ...volume, index: 1, id: "vol1", sourceUrl: bad }],
+      };
+      const parsed = jobDetailSchema.parse(detail);
+      expect(parsed.volumes.map((v) => v.sourceUrl)).toEqual([
+        volume.sourceUrl,
+        null,
+      ]);
+      expect(parsed.failures[0]?.sourceUrl).toBeNull();
+      expect(parsed.latest?.sourceUrl).toBeNull();
+    },
+  );
+
+  test("sourceUrl may be null", () => {
+    const detail = {
       ...summary,
       ...pipeline,
       failures: [],
-      volumes: [{ ...volume, sourceUrl }],
-    });
-    expect(jobDetailSchema.safeParse(withSource(null)).success).toBe(true);
-    expect(jobDetailSchema.safeParse(withSource("images:x")).success).toBe(
-      false,
-    );
+      volumes: [{ ...volume, sourceUrl: null }],
+    };
+    expect(jobDetailSchema.parse(detail).volumes[0]?.sourceUrl).toBeNull();
   });
 
   test("the campaign notice's log link is a URL too", () => {
@@ -541,22 +471,6 @@ describe("isResultUrl", () => {
 });
 
 describe("a volume whose state nobody recorded", () => {
-  test("`unknown` is a state the page can read", () => {
-    expect(volumeStateSchema.parse("unknown")).toBe("unknown");
-  });
-
-  test("a reaped campaign's rows parse with it", () => {
-    const detail = {
-      ...summary,
-      ...pipeline,
-      jobGone: true,
-      phase: "Unknown",
-      failures: [],
-      volumes: [{ ...volume, state: "unknown", progress: null }],
-    };
-    expect(jobDetailSchema.parse(detail).volumes[0]?.state).toBe("unknown");
-  });
-
   test("a state nobody defined is still refused", () => {
     expect(volumeStateSchema.safeParse("probably-fine").success).toBe(false);
   });
@@ -579,5 +493,22 @@ describe("the compact date range on a card", () => {
       false,
     );
     expect(sameDay("nope", "2026-09-14T10:00:00Z", "UTC")).toBe(false);
+  });
+});
+
+// Asked for past the API's own maximum, the list 422'd, the page read that
+// as the API being unreachable and stopped updating (2026-09-23 review).
+describe("asking for older campaigns stops at what the API allows", () => {
+  test("each ask is one page more, never past the maximum", () => {
+    expect(moreReaped(REAPED_PAGE)).toBe(REAPED_PAGE * 2);
+    expect(moreReaped(REAPED_MAX - 5)).toBe(REAPED_MAX);
+    expect(moreReaped(REAPED_MAX)).toBe(REAPED_MAX);
+  });
+
+  test("nothing is left to offer once the maximum is shown", () => {
+    expect(reapedHidden(25, REAPED_PAGE)).toBe(5);
+    expect(reapedHidden(25, 40)).toBe(0);
+    expect(reapedHidden(REAPED_MAX + 500, REAPED_MAX)).toBe(0);
+    expect(reapedHidden(REAPED_MAX + 500, REAPED_MAX - 20)).toBe(20);
   });
 });

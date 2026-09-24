@@ -5,6 +5,10 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+from htrflow_converter import render
+from htrflow_converter.models import ConverterConfig
+
 from htrflow_web import projection
 
 CFG = SimpleNamespace(public_results_base="https://results.example.org")
@@ -118,18 +122,17 @@ def _pod(
     }
 
 
-class TestParseIndexRanges:
-    def test_mixed_ranges_and_singles(self):
-        assert projection.parse_index_ranges("0-2,5,7-9") == {0, 1, 2, 5, 7, 8, 9}
-
-    def test_empty_string(self):
-        assert projection.parse_index_ranges("") == set()
-
-    def test_none(self):
-        assert projection.parse_index_ranges(None) == set()
-
-    def test_single_value(self):
-        assert projection.parse_index_ranges("3") == {3}
+@pytest.mark.parametrize(
+    ("spec", "indexes"),
+    [
+        ("0-2,5,7-9", {0, 1, 2, 5, 7, 8, 9}),
+        ("3", {3}),
+        ("", set()),
+        (None, set()),
+    ],
+)
+def test_parse_index_ranges(spec: str | None, indexes: set[int]):
+    assert projection.parse_index_ranges(spec) == indexes
 
 
 class TestSummarize:
@@ -152,38 +155,26 @@ class TestSummarize:
         summary = projection.summarize(job, CFG, MISSING_WARMUP)
         assert summary["resultsBase"] == "https://results.example.org/htr-batch/demo-v1"
 
-    def test_phase_queued(self):
-        job = _job(suspend=True, completed="", failed="")
-        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "Queued"
+    COMPLETE = {"type": "Complete", "status": "True"}
+    FAILED = {"type": "Failed", "status": "True"}
 
-    def test_phase_paused(self):
-        job = _job(suspend=True, completed="0", failed="")
-        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "Paused"
-
-    def test_phase_succeeded(self):
-        job = _job(conditions=[{"type": "Complete", "status": "True"}])
-        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "Succeeded"
-
-    def test_phase_failed(self):
-        """Nothing completed: the campaign produced nothing."""
-        job = _job(completed="", conditions=[{"type": "Failed", "status": "True"}])
-        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "Failed"
-
-    def test_phase_partially_failed(self):
-        """The Job gave up, but four indexes had already published."""
-        job = _job(conditions=[{"type": "Failed", "status": "True"}])
-        assert (
-            projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "PartiallyFailed"
-        )
-
-    def test_phase_succeeded_wins_over_failed(self):
-        job = _job(
-            conditions=[
-                {"type": "Complete", "status": "True"},
-                {"type": "Failed", "status": "True"},
-            ]
-        )
-        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "Succeeded"
+    @pytest.mark.parametrize(
+        ("status", "phase"),
+        [
+            ({"suspend": True, "completed": "", "failed": ""}, "Queued"),
+            ({"suspend": True, "completed": "0", "failed": ""}, "Paused"),
+            ({"conditions": [COMPLETE]}, "Succeeded"),
+            # Nothing completed: the campaign produced nothing.
+            ({"completed": "", "conditions": [FAILED]}, "Failed"),
+            # The Job gave up, but four indexes had already published.
+            ({"conditions": [FAILED]}, "PartiallyFailed"),
+            ({"conditions": [COMPLETE, FAILED]}, "Succeeded"),
+        ],
+        ids=["queued", "paused", "succeeded", "failed", "partial", "complete-wins"],
+    )
+    def test_phase(self, status: dict, phase: str):
+        job = _job(**status)
+        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == phase
 
 
 class TestDetail:
@@ -325,6 +316,44 @@ class TestDetail:
             job, configmap, [], CFG, offset=5, limit=2, warmup=MISSING_WARMUP
         )
         assert [v["index"] for v in d["volumes"]] == [5, 6]
+
+    def test_a_done_volume_never_carries_an_earlier_attempts_reason(self):
+        """The read API lists no Succeeded pods (kube.list_pods), so the
+        newest pod left for an index that failed once and then published is
+        the failed attempt. Its sentence is history, not why the volume is
+        anything: a done row says nothing (2026-09-23 audit)."""
+        pods = [_pod(0, terminated_message='{"permanent": false, "error": "OOM"}')]
+        d = projection.detail(_job(), _configmap(), pods, CFG, warmup=MISSING_WARMUP)
+        row0 = next(v for v in d["volumes"] if v["index"] == 0)
+        assert row0["state"] == "done"
+        assert "reason" not in row0
+
+    def test_a_pod_trimmed_to_its_read_fields_projects_the_same(self):
+        """kube.list_pods keeps only `projection.pod_fields` of each pod, so
+        anything this module reads off a pod has to survive the trim."""
+        pod = _pod(3, terminated_message='{"permanent": true, "error": "x"}')
+        pod["status"]["reason"] = "DeadlineExceeded"
+        pod["status"]["initContainerStatuses"] = [
+            {"name": "warmup-wait", "state": {"terminated": {"exitCode": 13}}}
+        ]
+        pod["status"]["containerStatuses"][0]["lastState"] = {
+            "terminated": {"exitCode": 1, "message": "earlier"}
+        }
+        pod["spec"] = {"containers": [{"name": "wrapper", "env": ["x" * 1000]}]}
+        pod["metadata"]["managedFields"] = [{"manager": "kubelet"}]
+        slim = projection.pod_fields(pod)
+        assert "spec" not in slim and "managedFields" not in slim["metadata"]
+        full = projection.detail(
+            _job(), _configmap(), [pod], CFG, warmup=MISSING_WARMUP
+        )
+        trimmed = projection.detail(
+            _job(), _configmap(), [slim], CFG, warmup=MISSING_WARMUP
+        )
+        assert trimmed == full
+        for container in ("wrapper", "warmup"):
+            assert projection.wrapper_reason(slim, container) == (
+                projection.wrapper_reason(pod, container)
+            )
 
     def test_newest_pod_wins_reason(self):
         job = _job()
@@ -680,20 +709,17 @@ class TestMatchWarmup:
         assert projection.match_warmup(job, [no_pipeline_warmup]) is None
 
 
-class TestWarmupPhase:
-    def test_pending_before_any_pod(self):
-        assert projection.warmup_phase(_warmup_job()) == "pending"
-
-    def test_running_while_active(self):
-        assert projection.warmup_phase(_warmup_job(active=1)) == "running"
-
-    def test_succeeded_on_complete_condition(self):
-        job = _warmup_job(conditions=[{"type": "Complete", "status": "True"}])
-        assert projection.warmup_phase(job) == "succeeded"
-
-    def test_failed_on_failed_condition(self):
-        job = _warmup_job(conditions=[{"type": "Failed", "status": "True"}])
-        assert projection.warmup_phase(job) == "failed"
+@pytest.mark.parametrize(
+    ("status", "phase"),
+    [
+        ({}, "pending"),  # before any pod
+        ({"active": 1}, "running"),
+        ({"conditions": [{"type": "Complete", "status": "True"}]}, "succeeded"),
+        ({"conditions": [{"type": "Failed", "status": "True"}]}, "failed"),
+    ],
+)
+def test_warmup_phase(status: dict, phase: str):
+    assert projection.warmup_phase(_warmup_job(**status)) == phase
 
 
 class TestWrapperReasonOnAWarmupPod:
@@ -1133,17 +1159,31 @@ def test_a_failed_job_finishes_at_its_condition_transition():
 
 def test_status_record_field_names_are_the_ones_apply_reads():
     """`htrflow-campaigns apply` parses these back to decide whether to leave
-    a finished campaign alone, so the names are a contract, not a detail."""
-    job = _finished_job(completionTime="2026-09-08T10:00:00Z")
+    a finished campaign alone, so the names are a contract, not a detail --
+    and it writes the same record itself once the Job has ended. Held to
+    the converter's own writer: for one finished Job the two records are
+    the same, name for name and value for value; a slash apart on one field
+    was a 409 on every poll (3081)."""
+    job = _finished_job(completionTime="2026-09-08T10:00:00Z", succeeded=2)
+    job["metadata"]["uid"] = "uid-kyrk"
     row = projection.summarize(job, CFG, {"phase": "succeeded"})
-    data = projection.status_record(row)
+    data = projection.status_record(row, job_uid="uid-kyrk")
+    theirs = render.status_configmap(
+        job, ConverterConfig(public_results_base=CFG.public_results_base)
+    )
+    assert theirs is not None
+    assert data == theirs["data"]
     assert set(data) == STATUS_FIELDS
-    assert data["phase"] == "PartiallyFailed"
-    assert (data["volumesTotal"], data["volumesDone"]) == ("3", "2")
-    assert data["volumesFailed"] == "1"
-    assert data["finishedAt"] == "2026-09-08T10:00:00Z"
-    assert data["resultsBase"].endswith("/htr-test/demo-v1")
-    assert all(isinstance(v, str) for v in data.values())
+    assert data == {
+        "phase": "PartiallyFailed",
+        "volumesTotal": "3",
+        "volumesDone": "2",
+        "volumesFailed": "1",
+        "startedAt": "2026-09-08T08:00:00Z",
+        "finishedAt": "2026-09-08T10:00:00Z",
+        "resultsBase": "https://results.example.org/htr-test/demo-v1",
+        "jobUid": "uid-kyrk",
+    }
 
 
 def test_the_list_endpoints_record_leaves_the_failed_volumes_alone():
@@ -1417,12 +1457,10 @@ def test_a_reaped_campaign_that_was_paused_is_unknown_too():
     assert row["phase"] == "Unknown"
 
 
-def test_a_terminal_record_keeps_its_own_phase():
-    for phase in projection.FINISHED_PHASES:
-        row = projection.record_summary(
-            RECORD, _stored(phase=phase), CFG, MISSING_WARMUP
-        )
-        assert row["phase"] == phase
+@pytest.mark.parametrize("phase", ["Succeeded", "Failed", "PartiallyFailed"])
+def test_a_terminal_record_keeps_its_own_phase(phase: str):
+    row = projection.record_summary(RECORD, _stored(phase=phase), CFG, MISSING_WARMUP)
+    assert row["phase"] == phase
 
 
 # --- the record only ever gains (B76 review) ----------------------------
@@ -1695,15 +1733,25 @@ class TestRecordWrite:
     def test_a_first_record_is_the_whole_observation_unforced(self):
         row = _running_row()
         fresh = projection.status_record(row, job_uid="uid-1")
-        body, force = projection.record_write(None, row, fresh)
-        assert body["data"] == projection.merge_record({}, fresh)
+        ((body, force, manager),) = projection.record_write(None, row, fresh)
+        # No finishedAt: a campaign still running has none to say.
+        assert body["data"] == {
+            "phase": "Running",
+            "volumesTotal": "7",
+            "volumesDone": "2",
+            "volumesFailed": "0",
+            "startedAt": "",
+            "resultsBase": "https://results.example.org/htr-test/demo-v1",
+            "jobUid": "uid-1",
+        }
         assert body["metadata"]["labels"]["htrflow.riksarkivet.se/kind"] == "status"
         assert force is False
+        assert manager == projection.WEB_MANAGER
 
     def test_an_unchanged_record_is_not_written(self):
         row = _running_row()
         fresh = projection.status_record(row, job_uid="uid-1")
-        assert projection.record_write(_stored_cm(dict(fresh)), row, fresh) is None
+        assert projection.record_write(_stored_cm(dict(fresh)), row, fresh) == []
 
     def test_once_apply_recorded_the_ending_only_failed_volumes_are_sent(self):
         """`htrflow-campaigns apply` force-owns the ending it read off the
@@ -1720,12 +1768,13 @@ class TestRecordWrite:
         stored = _stored_cm(theirs, _managed(*APPLY_KEYS))
         failures = [{"id": "vol2", "reason": {"error": "manifest 404"}}]
         fresh = projection.status_record(row, failures, job_uid="uid-1")
-        body, force = projection.record_write(stored, row, fresh)
+        ((body, force, manager),) = projection.record_write(stored, row, fresh)
         assert body["data"] == {
-            "failedVolumes": '[{"id":"vol2","reason":"manifest 404"}]'
+            "failedVolumes": '[{"id":"vol2","reason":"manifest 404"}]',
+            "failedVolumesJobUid": "uid-1",
         }
         assert "labels" not in body["metadata"]
-        assert force is False
+        assert manager == projection.FAILURES_MANAGER
 
     def test_a_record_of_another_job_is_replaced_not_merged(self):
         """The record carried no Job uid, so a Job recreated under the same
@@ -1742,10 +1791,24 @@ class TestRecordWrite:
         }
         row = _running_row()
         fresh = projection.status_record(row, job_uid="uid-new")
-        body, _ = projection.record_write(_stored_cm(old), row, fresh)
+        ((body, force, _),) = projection.record_write(_stored_cm(old), row, fresh)
+        # The old run's failures left standing, tied to the old run.
         assert body["data"] == fresh
-        assert "failedVolumes" not in body["data"]
         assert body["data"]["finishedAt"] == ""
+        assert force is False
+
+    def test_a_detail_of_another_jobs_record_writes_only_this_runs_failures(self):
+        old = {"jobUid": "uid-old", "failedVolumes": '[{"id":"vol2","reason":"x"}]'}
+        row = _running_row()
+        failures = [{"id": "vol1", "reason": {"error": "OOM"}}]
+        fresh = projection.status_record(row, failures, job_uid="uid-new")
+        summary, failed = projection.record_write(_stored_cm(old), row, fresh)
+        assert "failedVolumes" not in summary.body["data"]
+        assert failed.body["data"] == {
+            "failedVolumes": '[{"id":"vol1","reason":"OOM"}]',
+            "failedVolumesJobUid": "uid-new",
+        }
+        assert failed.manager == projection.FAILURES_MANAGER
 
     def test_taking_another_jobs_record_over_from_apply_is_forced_on_a_version(
         self,
@@ -1758,7 +1821,7 @@ class TestRecordWrite:
         stored = _stored_cm(old, _managed("phase", "jobUid"), rv="99")
         row = _running_row()
         fresh = projection.status_record(row, job_uid="uid-new")
-        body, force = projection.record_write(stored, row, fresh)
+        ((body, force, _),) = projection.record_write(stored, row, fresh)
         assert force is True
         assert body["metadata"]["resourceVersion"] == "99"
         assert body["data"]["phase"] == "Running"
@@ -1771,7 +1834,99 @@ class TestRecordWrite:
         row = _running_row()
         fresh = projection.status_record(row, [], job_uid="uid-1")
         stored = _stored_cm({"phase": "Running", "failedVolumes": kept})
-        body, force = projection.record_write(stored, row, fresh)
-        assert body["data"]["failedVolumes"] == kept
-        assert body["data"]["jobUid"] == "uid-1"
-        assert force is False
+        summary, failed = projection.record_write(stored, row, fresh)
+        assert failed.body["data"]["failedVolumes"] == kept
+        assert summary.body["data"]["jobUid"] == "uid-1"
+        assert summary.force is False
+
+    def test_the_summary_never_carries_the_failures_it_does_not_own(self):
+        """The list route's write re-sent the failedVolumes it had read, and
+        could apply them over reasons a detail request had just written
+        (2026-09-23 audit)."""
+        row = _running_row()
+        stored = _stored_cm(
+            {"phase": "Queued", "failedVolumes": '[{"id":"v","reason":"x"}]'},
+            _managed("failedVolumes", manager=projection.FAILURES_MANAGER),
+        )
+        fresh = projection.status_record(row, job_uid="uid-1")
+        ((body, _, manager),) = projection.record_write(stored, row, fresh)
+        assert manager == projection.WEB_MANAGER
+        assert "failedVolumes" not in body["data"]
+
+    def test_unchanged_failures_the_failures_manager_owns_are_not_sent(self):
+        row = _running_row()
+        kept = '[{"id":"v","reason":"x"}]'
+        fresh = projection.status_record(row, [], job_uid="uid-1")
+        data = {k: v for k, v in fresh.items() if k != "failedVolumes"}
+        stored = _stored_cm(
+            {**data, "failedVolumes": kept, "failedVolumesJobUid": "uid-1"},
+            _managed("failedVolumes", manager=projection.FAILURES_MANAGER),
+        )
+        assert projection.record_write(stored, row, fresh) == []
+
+    def test_failures_the_summary_manager_still_owns_are_taken_over(self):
+        """From before the split: the failures write is sent, forced, even
+        with nothing new in it, and the summary keeps the field until then
+        so that releasing it cannot delete it."""
+        row = _running_row()
+        kept = '[{"id":"v","reason":"x"}]'
+        fresh = projection.status_record(row, [], job_uid="uid-1")
+        stored = _stored_cm(
+            {"phase": "Queued", "failedVolumes": kept},
+            _managed("phase", "failedVolumes", manager=projection.WEB_MANAGER),
+        )
+        summary, failed = projection.record_write(stored, row, fresh)
+        assert summary.body["data"]["failedVolumes"] == kept
+        assert failed.body["data"] == {
+            "failedVolumes": kept,
+            "failedVolumesJobUid": "uid-1",
+        }
+        assert failed.force is True
+
+
+# --- a source URL the browser could not parse is no source (audit F-7) ------
+
+#: Each rejected by the WHATWG URL parser -- `new URL(...)` throws in every
+#: browser (checked against the parser node and bun ship). The page parses a
+#: detail all or nothing, so one of these in volumes.txt used to sink the
+#: whole card, and the page re-polled it for ever (2026-09-23 audit).
+WHATWG_REJECTS = [
+    "https://example.org:99999/m",
+    "https://exa%mple.org/m",
+    "https://ex<ample.org/m",
+    "https://1.2.3.999/m",
+    "https://[::g]/m",
+    "https://xn--a.org/m",
+    "https://example.org:0x1/m",
+    "https://ex ample.org/m",
+    "https://example.123/m",
+    "https://ex^ample.org/",
+    "https://ex|ample.org/",
+    "https://ex%00ample.org/",
+]
+
+#: Accepted by it, and by this API.
+WHATWG_ACCEPTS = [
+    "https://example.org/m",
+    "https://example.org:443/m",
+    "http://user:pw@example.org/x",
+    "https://1.2.3.4/m",
+    "https://[::1]/m",
+    "https://xn--bcher-kva.example/m",
+    "https://bücher.example/m",
+    "https://a_b.example.org/m",
+    "https://example.org:/m",
+    "https://example.org./m",
+    "https://example.org/%zz",
+    "https://iiif.example.org/iiif/2/x/full/2500,/0/default.jpg",
+]
+
+
+@pytest.mark.parametrize("url", WHATWG_REJECTS)
+def test_a_source_the_browser_rejects_is_no_source(url: str):
+    assert projection._source_url(f"vol0\t{url}") is None
+
+
+@pytest.mark.parametrize("url", WHATWG_ACCEPTS)
+def test_a_source_the_browser_accepts_is_kept(url: str):
+    assert projection._source_url(f"vol0\t{url}") == url

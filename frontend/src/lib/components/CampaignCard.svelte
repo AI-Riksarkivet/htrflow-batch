@@ -7,7 +7,6 @@
   import {
     clockTime,
     fetchJob,
-    isHttpUrl,
     sameDay,
     shortDate,
     type CampaignNotice,
@@ -42,10 +41,20 @@
     }
   }
 
-  let collapsed = $state(remembered());
+  const startsFolded = remembered();
+  let collapsed = $state(startsFolded);
+
+  // Whether anyone has had a chance to see this card: it has been on screen,
+  // or open. A finished campaign reads its detail only then -- a page of
+  // them used to make one request per card the moment it opened, each
+  // reading the campaign's volume list, its pods and up to a hundred
+  // progress files, for cards nobody had scrolled to (the 2026-09-23
+  // audit). Sticky: once seen, folding the card is not a reason to forget.
+  let wanted = $state(!startsFolded);
 
   function toggle(): void {
     collapsed = !collapsed;
+    if (!collapsed) wanted = true;
     try {
       localStorage.setItem(memoryKey, collapsed ? "closed" : "open");
     } catch {
@@ -455,10 +464,12 @@
   // A campaign that has finished -- or whose Job is gone -- cannot change,
   // so its card reads the detail once rather than every minute for as long
   // as the page is open: each call lists pods, reads the campaign's
-  // ConfigMaps and up to 32 progress files, and a page of old campaigns
-  // polling for ever was load that grew with the history and bought nothing
-  // (the 2026-09-17 audit, 3079). "Once" means once it has landed: a read
-  // that failed is still retried, on $lib/poll's backoff.
+  // ConfigMaps and up to a hundred progress files (the API's
+  // PROGRESS_FETCH_CAP), and a page of old campaigns polling for ever was
+  // load that grew with the history and bought nothing (the 2026-09-17
+  // audit, 3079). "Once" means once it has landed: a read that failed is
+  // still retried, on $lib/poll's backoff. And only once the card is
+  // `wanted` -- on screen or open.
   const settled = $derived(
     job.jobGone ||
       job.phase === "Succeeded" ||
@@ -474,6 +485,8 @@
     // re-run under the same name starts polling again.
     void [job.phase, job.jobGone];
     const once = settled;
+    // Read only for a settled card, so a running one is not restarted by it.
+    if (once && !wanted) return;
     // untrack: load() reads `volumes` to size its refresh and then writes it,
     // and an effect that reads its own output re-runs forever. The list
     // keys each card by namespace/name, so a card never changes campaign
@@ -489,6 +502,29 @@
       );
     });
   });
+
+  /**
+   * Marks the card `wanted` the first time any of it is on screen (or
+   * nearly: the margin reads it just before it scrolls in). A browser with
+   * no IntersectionObserver cannot say, so the card is wanted at once --
+   * what every card did before.
+   */
+  function whenSeen(node: HTMLElement) {
+    if (typeof IntersectionObserver === "undefined") {
+      wanted = true;
+      return {};
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        wanted = true;
+        observer.disconnect();
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(node);
+    return { destroy: () => observer.disconnect() };
+  }
 
   /**
    * The fill's width, clamped to the track. `done` and `total` come from the
@@ -531,15 +567,6 @@
           : shortDate(job.finishedAt)) ?? job.finishedAt),
   );
 
-  // Defence in depth. `sourceUrl` is the API's copy of a line from a
-  // campaign's volumes.txt, which is a file humans edit in a git repo — so
-  // it is checked here too, at the last step before it becomes an href, the
-  // way the old card checked every URL the status document carried. Anything
-  // but an absolute http(s) URL is no link at all.
-  function sourceOf(v: VolumeView): string | null {
-    return v.sourceUrl !== null && isHttpUrl(v.sourceUrl) ? v.sourceUrl : null;
-  }
-
   // The published result once there is one, the source manifest before that
   // (the old derive.viewerHref) — so "open" is a live link from the first
   // tick, not only after the volume publishes. Switches on viewerPublished,
@@ -550,12 +577,14 @@
   function openHref(v: VolumeView): string | null {
     const published =
       v.state === "done" || (v.progress?.viewerPublished ?? false);
-    const manifest = published ? v.iiifUrl : sourceOf(v);
-    // Checked and encoded like every other URL this card turns into an
-    // href: `iiifUrl` is built by the API from a volume id that came off a
-    // campaign's volumes.txt, and it went into the fragment unread and
-    // unescaped (2026-09-14 audit).
-    if (manifest === null || !isHttpUrl(manifest)) return null;
+    const manifest = published ? v.iiifUrl : v.sourceUrl;
+    // Every URL this card turns into an href has been through $lib/api's
+    // httpUrlSchema, the one gate: a detail whose API-built URL is not an
+    // absolute http(s) one is refused whole, and a `sourceUrl` -- a line of
+    // a volumes.txt people edit -- that is not one arrives as null. Encoded,
+    // since `iiifUrl` is built from a volume id and went into the fragment
+    // unescaped once (2026-09-14 audit).
+    if (manifest === null) return null;
     return `uv.html#?manifest=${encodeURIComponent(manifest)}`;
   }
 
@@ -577,7 +606,7 @@
   // the API sent rather than from a row. Live, because a campaign showing a
   // notice is nearly always still running.
   const noticeHref = $derived(
-    notice.lastError === null || !isHttpUrl(notice.lastError.logUrl)
+    notice.lastError === null
       ? null
       : `log?log=${encodeURIComponent(notice.lastError.logUrl)}&live=1`,
   );
@@ -661,7 +690,7 @@
      what happened), so a volume with no source leaves a gap, not a shift. One snippet, so the folded strip and
      the table row can never drift apart. -->
 {#snippet links(v: VolumeView)}
-  {@const source = sourceOf(v)}
+  {@const source = v.sourceUrl}
   <span class="slot"
     >{#if source !== null}<a
         class="vicon"
@@ -836,7 +865,7 @@
   {@render lostLine(cell.failed, 0)}
 {/snippet}
 
-<section class="campaign" data-health={health}>
+<section class="campaign" data-health={health} use:whenSeen>
   <div class="camp">
     <!-- aria-controls only while the table exists: it must be an IDREF that
          resolves, and a folded card renders no table (the pre-Task-7 card

@@ -144,7 +144,7 @@ security: { allowedImageRepos: ["127.0.0.1:30500/"], psaEnforce: baseline, allow
 network:
   enabled: true
   defaultDeny: true
-  iiifCidrs: ["192.121.221.27/32", "0.0.0.0/0"]   # the htr_demo pages live on huggingface.co
+  iiifCidrs: ["203.0.113.27/32", "0.0.0.0/0"]   # the image server; the htr_demo pages live on huggingface.co
 ```
 
 `network.apiServer.cidr` was left empty on purpose: the chart's `lookup` of

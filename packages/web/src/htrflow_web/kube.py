@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import os
-import time
 from collections.abc import Mapping
 from typing import Protocol
 
@@ -25,12 +24,26 @@ from kubernetes import client, config
 from pydantic import BaseModel, ConfigDict, Field
 from urllib3.exceptions import HTTPError
 
-from .projection import KIND_LABEL, STATUS_KIND
+from .projection import KIND_LABEL, STATUS_KIND, WEB_MANAGER, pod_fields
 
 #: Selects campaign progress Jobs only — excludes the per-pipeline warm-up
 #: Jobs, which carry ``managed-by=converter`` too but not ``app`` or
 #: ``campaign`` (packages/converter/src/htrflow_converter/render.py).
-LABEL_SELECTOR = "app=htrflow-batch,htrflow.riksarkivet.se/managed-by=converter"
+CAMPAIGN_LABELS = {
+    "app": "htrflow-batch",
+    "htrflow.riksarkivet.se/managed-by": "converter",
+}
+LABEL_SELECTOR = ",".join(f"{k}={v}" for k, v in CAMPAIGN_LABELS.items())
+
+
+def is_campaign(job: dict) -> bool:
+    """Whether a Job read by name is one ``LABEL_SELECTOR`` would list. The
+    detail route reads any name it is given, and answered -- and wrote a
+    status record for -- a warm-up Job or anything else in the namespace
+    as though it were a campaign (2026-09-23 audit)."""
+    labels = (job.get("metadata") or {}).get("labels") or {}
+    return all(labels.get(k) == v for k, v in CAMPAIGN_LABELS.items())
+
 
 _WARMUP_SELECTOR = "app=htrflow-warmup,htrflow.riksarkivet.se/managed-by=converter"
 
@@ -57,7 +70,7 @@ _APPLY_PATCH = "application/apply-patch+yaml"
 PARTIAL_METADATA = (
     "application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1,application/json"
 )
-FIELD_MANAGER = "htrflow-web"
+FIELD_MANAGER = WEB_MANAGER
 
 _NAMESPACE_FILE = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 _DEFAULT_NAMESPACE = "htr-batch"
@@ -131,9 +144,16 @@ class ApplyConflict(Exception):
     (2026-09-14 review)."""
 
 
-#: How long the retry waits for the other manager to finish writing.
-#: Retrying in the same microsecond meets the same half-finished write.
-CONFLICT_PAUSE = 0.2
+#: (connect, read) seconds for every call to the API server. Without one a
+#: connection that hung held its worker thread for ever, and a detail
+#: request makes several calls in a row (2026-09-23 audit). The read half is
+#: per socket read, so it bounds a body that stops arriving too. A list of a
+#: few thousand objects answers in well under it.
+REQUEST_TIMEOUT = (3.0, 10.0)
+
+#: Pods per list page. Small enough that one page of whole pod objects is a
+#: few MB at most; the API server hands out the next with a continue token.
+POD_PAGE = 250
 
 
 def _read(api: object, method: str, *args: object, **kwargs: object) -> dict | None:
@@ -142,14 +162,21 @@ def _read(api: object, method: str, *args: object, **kwargs: object) -> dict | N
     sends — no typed-model round trip. 404 -> ``None``."""
     fn = getattr(api, method)
     try:
-        resp = fn(*args, _preload_content=False, **kwargs)
+        resp = fn(
+            *args,
+            _preload_content=False,
+            _request_timeout=REQUEST_TIMEOUT,
+            **kwargs,
+        )
+        # Read inside the try: the body arrives after the headers, and a
+        # read that times out there is the same silence as one before them.
+        return json.loads(resp.data)
     except client.ApiException as e:
         if e.status == 404:
             return None
         raise ClusterUnavailable(f"{method}: {e.status}") from e
     except HTTPError as e:  # urllib3: refused, timed out, TLS
         raise ClusterUnavailable(f"{method}: {type(e).__name__}") from e
-    return json.loads(resp.data)
 
 
 class ReaderLike(Protocol):
@@ -157,12 +184,14 @@ class ReaderLike(Protocol):
     ``NoCluster`` in site-only mode, a fake in the tests. Written down so the
     doubles cannot drift from the real adapter -- a fake that answers with
     one fewer argument passes its own tests and proves nothing about the
-    route (2026-09-14 audit); a test binds every signature below against
-    each of them.
+    route (2026-09-14 audit); a test holds every signature below against
+    each of them, parameter names included.
 
-    ``apply_configmap`` is deliberately absent: site-only mode has no cluster
-    to write to, and ``app.py`` asks for the attribute rather than calling
-    into a 503 on every request.
+    ``apply_configmap`` is part of it like any other call. Left out, with
+    ``app.py`` asking for the attribute instead, a rename of the real one
+    passed every test and silently stopped every status write (2026-09-23
+    audit). Site-only mode answers it with the same 503 as everything else,
+    and never gets that far: its first read already refused.
     """
 
     cfg: Config | None
@@ -173,6 +202,9 @@ class ReaderLike(Protocol):
     def get_configmap(self, namespace: str, name: str) -> dict | None: ...
     def list_configmaps(self) -> list[dict]: ...
     def list_pods(self, namespace: str, job_name: str) -> list[dict]: ...
+    def apply_configmap(
+        self, body: dict, force: bool = False, manager: str = FIELD_MANAGER
+    ) -> str | None: ...
 
 
 class Reader:
@@ -247,15 +279,19 @@ class Reader:
                 {"Accept": PARTIAL_METADATA},
                 auth_settings=["BearerToken"],
                 _preload_content=False,
+                _request_timeout=REQUEST_TIMEOUT,
             )
+            return json.loads(resp.data).get("items", [])
         except client.ApiException as e:
             raise ClusterUnavailable(f"list records: {e.status}") from e
         except HTTPError as e:
             raise ClusterUnavailable(f"list records: {type(e).__name__}") from e
-        return json.loads(resp.data).get("items", [])
 
-    def apply_configmap(self, body: dict, force: bool = False) -> None:
-        """The one write this service makes. Raises like any other client
+    def apply_configmap(
+        self, body: dict, force: bool = False, manager: str = FIELD_MANAGER
+    ) -> str | None:
+        """The one write this service makes; the uid of the ConfigMap it
+        left. Raises like any other client
         call — ``app.py`` logs it and answers the request anyway, because a
         status page that 500s when it cannot write a record is worse than
         one whose record is a few minutes old.
@@ -264,39 +300,63 @@ class Reader:
         apply` writes this same record from the live Job once a campaign is
         over, and those terminal values are the authoritative ones; forcing
         would take the fields back off it on every poll of an open status
-        page. A 409 while the other manager is mid-write is retried once,
-        after a short pause, and a second one is left to stand as an
-        ``ApplyConflict`` -- contention, not a refusal. ``force`` is only
-        ever asked for a record of another Job (``projection.record_write``),
-        and then with the ``resourceVersion`` it read in ``body``: the API
-        server holds the apply to that version.
+        page. A 409 stands as an ``ApplyConflict`` -- contention, not a
+        refusal -- and is never sent again as it is: it means a field another
+        manager owns or a precondition this request's read no longer meets,
+        and the same request meets the same answer (2026-09-23 review). The
+        next poll reads the record afresh. ``force`` is only ever asked for
+        a record of another Job (``projection.record_write``), and then with
+        the ``resourceVersion`` it read in ``body``: the API server holds
+        the apply to that version. ``manager`` is the field manager sent:
+        ``failedVolumes`` has one of its own (``projection.FAILURES_MANAGER``).
         """
         meta = body["metadata"]
         extra = {"force": True} if force else {}
-        for attempt in (1, 2):
-            try:
-                self.core.patch_namespaced_config_map(
-                    meta["name"],
-                    meta["namespace"],
-                    body,
-                    field_manager=FIELD_MANAGER,
-                    _content_type=_APPLY_PATCH,
-                    _preload_content=False,
-                    **extra,
-                )
-                return
-            except client.ApiException as e:
-                if e.status != 409:
-                    raise ClusterUnavailable(f"apply {meta['name']}: {e.status}") from e
-                if attempt == 2:
-                    raise ApplyConflict(meta["name"]) from e
-                time.sleep(CONFLICT_PAUSE)
+        try:
+            resp = self.core.patch_namespaced_config_map(
+                meta["name"],
+                meta["namespace"],
+                body,
+                field_manager=manager,
+                _content_type=_APPLY_PATCH,
+                _preload_content=False,
+                _request_timeout=REQUEST_TIMEOUT,
+                **extra,
+            )
+            return (json.loads(resp.data).get("metadata") or {}).get("uid")
+        except client.ApiException as e:
+            if e.status == 409:
+                raise ApplyConflict(meta["name"]) from e
+            raise ClusterUnavailable(f"apply {meta['name']}: {e.status}") from e
+        except HTTPError as e:
+            raise ClusterUnavailable(f"apply {meta['name']}: {type(e).__name__}") from e
 
     def list_pods(self, namespace: str, job_name: str) -> list[dict]:
-        body = _read(
-            self.core,
-            "list_namespaced_pod",
-            namespace,
-            label_selector=f"batch.kubernetes.io/job-name={job_name}",
-        )
-        return (body or {}).get("items", [])
+        """One Job's pods that are not Succeeded, a page at a time, each
+        trimmed to ``projection.pod_fields`` before the next page is read.
+
+        A Job keeps every pod of every index until it is deleted -- up to
+        ``backoffLimitPerIndex + 1`` per index -- and read whole, a campaign
+        of a few thousand volumes was tens of MB of JSON per poll against
+        the pod's memory limit (2026-09-23 audit). A succeeded pod belongs
+        to a done index, which the Job's ``completedIndexes`` already says,
+        so the API server keeps those; what is left is running and failed
+        pods, the ones a row's state and reason are read from, and a page
+        of them is the most this process ever holds whole."""
+        pods: list[dict] = []
+        token: str | None = None
+        while True:
+            paging = {"_continue": token} if token else {}
+            body = _read(
+                self.core,
+                "list_namespaced_pod",
+                namespace,
+                label_selector=f"batch.kubernetes.io/job-name={job_name}",
+                field_selector="status.phase!=Succeeded",
+                limit=POD_PAGE,
+                **paging,
+            )
+            pods.extend(pod_fields(p) for p in (body or {}).get("items", []))
+            token = ((body or {}).get("metadata") or {}).get("continue")
+            if not token:
+                return pods

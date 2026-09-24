@@ -7,6 +7,7 @@ import {
   describeProgress,
   describeUnreadable,
 } from "./reasons.js";
+import wrapper from "./fixtures/wrapper-contract.json";
 
 /**
  * The wording of every sentence a reader can meet is pinned here, verbatim.
@@ -33,10 +34,14 @@ describe("describeReason", () => {
     },
   );
 
+  // The messages below are the wrapper's own, as its termination log carries
+  // them: scripts/wrapper_contract.py writes them from `sigterm_reason`,
+  // `_verify` and `terminate` (with its 3500-character clip) into the
+  // fixture, and a pytest keeps the fixture current.
+  const { terminations } = wrapper;
+
   test("a drain or a pause", () => {
-    expect(
-      reasonOf({ stage: "stream", permanent: false, error: "SIGTERM" }),
-    ).toBe(
+    expect(reasonOf(terminations.sigterm)).toBe(
       "The pod was stopped by the cluster (a node drain or a pause); the " +
         "volume will be retried.",
     );
@@ -57,34 +62,23 @@ describe("describeReason", () => {
   });
 
   test("pages that failed the verify gate, with the page names", () => {
-    expect(
-      reasonOf({
-        stage: "verify",
-        permanent: false,
-        error:
-          "verify failed: 2 missing, 1 failed errors: p101: boom " +
-          "missing=['p012', 'p045'] failed=['p101']",
-      }),
-    ).toBe(
-      "2 pages are missing from the results (p012, p045); the volume is " +
+    // The failed page is accounted for and not named: only the missing ones
+    // come back.
+    expect(reasonOf(terminations.verifyMissing)).toBe(
+      "2 pages are missing from the results (0002, 0003); the volume is " +
         "retried automatically and only those pages are redone.",
     );
   });
 
   test("every page in the attempt failed: a broken model, not a volume", () => {
-    expect(
-      reasonOf({
-        stage: "verify",
-        error:
-          "verify failed: all 3 processed pages failed errors: p101: boom " +
-          "failed=['p101', 'p102', 'p103']",
-      }),
-    ).toBe(
+    expect(reasonOf(terminations.verifyAllFailed)).toBe(
       "None of the 3 pages processed in this attempt produced a result; the " +
         "volume is retried automatically — check the model and the GPU.",
     );
   });
 
+  // The two below are messages of an older wrapper, which wrote the page
+  // lists with no counts in front: the names are all there is to count.
   test("more failed pages than the sentence spells out", () => {
     expect(
       reasonOf({
@@ -105,14 +99,44 @@ describe("describeReason", () => {
   });
 
   test("a verify message whose page lists were truncated away", () => {
+    // The count is still there to read; only a message that has neither a
+    // count nor one whole page name says "some".
     expect(
       reasonOf({
         stage: "verify",
         error: "verify failed: 900 missing, 0 f...",
       }),
     ).toBe(
+      "900 pages are missing from the results; the volume is retried " +
+        "automatically and only those pages are redone.",
+    );
+    expect(
+      reasonOf({ stage: "verify", error: "verify failed: missing=['p0..." }),
+    ).toBe(
       "Some pages are missing from the results; the volume is retried " +
         "automatically and only those pages are redone.",
+    );
+  });
+
+  // A few hundred page names fill the clip on their own. The counts come
+  // first so the clip only ever takes names; the sentence must read them,
+  // not count the names that survived.
+  test("clipped: the missing count is the wrapper's, not the names left", () => {
+    const error = terminations.verifyMissingClipped.error;
+    expect(error).toMatch(/\.\.\.\(truncated\)$/);
+    expect(reasonOf(terminations.verifyMissingClipped)).toBe(
+      "600 pages are missing from the results (0001, 0002, 0003 and 597 " +
+        "more); the volume is retried automatically and only those pages " +
+        "are redone.",
+    );
+  });
+
+  test("clipped: every page failed, however many names were cut", () => {
+    const error = terminations.verifyAllFailedClipped.error;
+    expect(error).toMatch(/\.\.\.\(truncated\)$/);
+    expect(reasonOf(terminations.verifyAllFailedClipped)).toBe(
+      "None of the 400 pages processed in this attempt produced a result; " +
+        "the volume is retried automatically — check the model and the GPU.",
     );
   });
 

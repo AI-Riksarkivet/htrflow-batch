@@ -6,7 +6,8 @@ import os
 import signal
 from pathlib import Path
 
-from htrflow_batch import warmup as warmup_mod
+import pytest
+
 from htrflow_batch.warmup import (
     EXIT_OK,
     EXIT_PERMANENT,
@@ -47,12 +48,70 @@ def test_warmup_writes_the_done_marker_on_success(tmp_path):
     assert (tmp_path / "warmup" / "demo-v1.done").is_file()
 
 
-def test_warmup_writes_no_marker_on_failure(tmp_path):
-    def boom(_):
-        raise OSError("connection reset")
+def _repository_not_found():
+    import httpx
+    from huggingface_hub.errors import RepositoryNotFoundError
 
-    rc = main(_env(tmp_path), load=boom)
-    assert rc == EXIT_TRANSIENT
+    # huggingface_hub's HfHubHTTPError wants a real response object across
+    # its supported versions; the content is irrelevant here.
+    response = httpx.Response(404, request=httpx.Request("GET", "https://hf.co"))
+    return RepositoryNotFoundError(
+        "Repository Not Found for url: ...", response=response
+    )
+
+
+def _yaml_error():
+    import yaml
+
+    return yaml.YAMLError("while parsing")
+
+
+@pytest.mark.parametrize(
+    ("make_error", "permanent"),
+    [
+        (lambda: OSError("connection reset"), False),
+        # W12: a typo'd step/model or malformed YAML looped forever as a
+        # transient warm-up; nothing about it changes on retry
+        (lambda: ValueError("1 validation error for PipelineConfig"), True),
+        (_yaml_error, True),
+        (lambda: KeyError("segmentatoin"), True),  # unknown step: STEPS[...]
+        (lambda: NotImplementedError("Model Yolo9 is not supported"), True),
+        # W2: htrflow hands a step's settings to its constructor as kwargs
+        (lambda: TypeError("__init__() got an unexpected keyword argument 'x'"), True),
+        # a bogus HF model id (401/404 from the Hub) is a config mistake
+        (_repository_not_found, True),
+    ],
+    ids=[
+        "download-failure",
+        "invalid-config",
+        "malformed-yaml",
+        "unknown-step",
+        "unknown-model",
+        "mistyped-setting",
+        "bad-repo-id",
+    ],
+)
+def test_a_failed_warmup_is_classified_reported_and_leaves_no_marker(
+    tmp_path, make_error, permanent
+):
+    """How a load failure ends: exit 13 for a config mistake the Job's
+    backoffLimit must stop retrying, 1 for what a retry can fix. No warm-up
+    log exists (the Job mounts no S3 secret), so the termination message is
+    the only place the cause reaches the campaign card -- and no marker opens
+    the pipeline's gate."""
+    error = make_error()
+    term_path = tmp_path / "termination-log"
+    env = {**_env(tmp_path), "TERMINATION_LOG_PATH": str(term_path)}
+
+    def boom(_):
+        raise error
+
+    assert main(env, load=boom) == (EXIT_PERMANENT if permanent else EXIT_TRANSIENT)
+    assert json.loads(term_path.read_text()) == {
+        "stage": "warmup",
+        "permanent": permanent,
+        "error": str(error),
+    }
     assert not (tmp_path / "warmup" / "demo-v1.done").exists()
 
 
@@ -85,71 +144,6 @@ def test_warmup_missing_pipeline_is_permanent(tmp_path):
     assert "nope.yaml" in term["error"]
 
 
-def test_warmup_download_failure_is_transient(tmp_path):
-    def boom(_):
-        raise OSError("connection reset")
-
-    assert main(_env(tmp_path), load=boom) == EXIT_TRANSIENT
-
-
-def test_warmup_permanent_failure_writes_termination_message(tmp_path):
-    """No warm-up log exists (the Job mounts no S3 secret) — the termination
-    message is the only place the bad model id reaches the campaign card."""
-    term_path = tmp_path / "termination-log"
-    env = {**_env(tmp_path), "TERMINATION_LOG_PATH": str(term_path)}
-
-    def boom(_):
-        raise NotImplementedError("Model Yolo9 is not supported")
-
-    rc = main(env, load=boom)
-    assert rc == EXIT_PERMANENT
-    assert json.loads(term_path.read_text()) == {
-        "stage": "warmup",
-        "permanent": True,
-        "error": "Model Yolo9 is not supported",
-    }
-
-
-def test_warmup_transient_failure_writes_termination_message(tmp_path):
-    term_path = tmp_path / "termination-log"
-    env = {**_env(tmp_path), "TERMINATION_LOG_PATH": str(term_path)}
-
-    def boom(_):
-        raise OSError("connection reset")
-
-    rc = main(env, load=boom)
-    assert rc == EXIT_TRANSIENT
-    assert json.loads(term_path.read_text()) == {
-        "stage": "warmup",
-        "permanent": False,
-        "error": "connection reset",
-    }
-
-
-def test_warmup_bad_repo_id_is_permanent(tmp_path):
-    """A bogus HF model id (401/404 from the Hub) is a config mistake, not a
-    network hiccup — exit 13, same as an unknown step (failure-handling.md,
-    "Warm-ups fail the same way")."""
-    import httpx
-    from huggingface_hub.errors import RepositoryNotFoundError
-
-    term_path = tmp_path / "termination-log"
-    env = {**_env(tmp_path), "TERMINATION_LOG_PATH": str(term_path)}
-    # huggingface_hub's HfHubHTTPError wants a real response object across
-    # its supported versions; the content is irrelevant to this test.
-    response = httpx.Response(404, request=httpx.Request("GET", "https://hf.co"))
-
-    def boom(_):
-        raise RepositoryNotFoundError(
-            "Repository Not Found for url: ...", response=response
-        )
-
-    rc = main(env, load=boom)
-    assert rc == EXIT_PERMANENT
-    term = json.loads(term_path.read_text())
-    assert term["permanent"] is True
-
-
 def test_warmup_local_entry_not_found_is_transient(tmp_path):
     """The cache is simply not warm yet -- a re-warm and a retry fix it. The
     two hub lines disagree about the MRO (on 0.x the error is also a
@@ -168,24 +162,6 @@ def test_warmup_local_entry_not_found_is_transient(tmp_path):
     assert rc == EXIT_TRANSIENT
     term = json.loads(term_path.read_text())
     assert term["permanent"] is False
-
-
-def test_warmup_bad_config_is_permanent(tmp_path):
-    """W12: a typo'd step/model or malformed YAML looped forever as a
-    transient warm-up; nothing about it changes on retry."""
-    import yaml
-
-    for exc in (
-        ValueError("1 validation error for PipelineConfig"),
-        yaml.YAMLError("while parsing"),
-        KeyError("segmentatoin"),  # unknown step: htrflow STEPS[...]
-        NotImplementedError("Model Yolo9 is not supported"),
-    ):
-
-        def boom(_, exc=exc):
-            raise exc
-
-        assert main(_env(tmp_path), load=boom) == EXIT_PERMANENT, exc
 
 
 def test_warmup_unwritable_marker_dir_is_permanent(tmp_path, caplog):
@@ -223,12 +199,10 @@ def test_warmup_without_pipeline_id_is_permanent(tmp_path):
 
 
 def test_warmup_sigterm_writes_a_termination_message_and_exits_143(
-    tmp_path, monkeypatch
+    tmp_path, hard_exits
 ):
     """The Job's activeDeadlineSeconds (1 h) kills a slow first download; the
     campaign card must show why, not an empty message."""
-    exits: list[int] = []
-    monkeypatch.setattr(warmup_mod, "_hard_exit", lambda code: exits.append(code))
     before = signal.getsignal(signal.SIGTERM)
     term_path = tmp_path / "termination-log"
     env = {**_env(tmp_path), "TERMINATION_LOG_PATH": str(term_path)}
@@ -238,7 +212,7 @@ def test_warmup_sigterm_writes_a_termination_message_and_exits_143(
 
     rc = main(env, load=killed)
     assert rc == EXIT_SIGTERM == 143
-    assert exits == [EXIT_SIGTERM]
+    assert hard_exits == [EXIT_SIGTERM]
     assert json.loads(term_path.read_text()) == {
         "stage": "warmup",
         "permanent": False,
@@ -269,21 +243,6 @@ def test_warmup_says_nothing_about_a_token_when_there_is_none(tmp_path, caplog):
     assert [m for m in caplog.messages if "HF_TOKEN" in m] == []
 
 
-def test_warmup_mistyped_pipeline_setting_is_permanent(tmp_path):
-    """W2: a TypeError from building the pipeline is a mistyped setting in the
-    YAML, not a network hiccup -- exit 13, so the warm-up Job's backoffLimit
-    stops retrying a pipeline that cannot get better."""
-    term_path = tmp_path / "termination-log"
-    env = {**_env(tmp_path), "TERMINATION_LOG_PATH": str(term_path)}
-
-    def boom(_):
-        raise TypeError("__init__() got an unexpected keyword argument 'batch_sz'")
-
-    rc = main(env, load=boom)
-    assert rc == EXIT_PERMANENT
-    assert json.loads(term_path.read_text())["permanent"] is True
-
-
 def test_warmup_redacts_urls_in_its_output(tmp_path, capsys):
     """W8: the warm-up pod mounts no S3 Secret, so it ships no run log and
     `kubectl logs` is where its failure is read -- and huggingface_hub names
@@ -300,31 +259,20 @@ def test_warmup_redacts_urls_in_its_output(tmp_path, capsys):
     assert "https://hf.co/api/models" in err
 
 
-def _fake_htrflow(monkeypatch) -> list:
+def _recording_htrflow(fake_htrflow) -> list:
     """The real ``_load`` path (driver.build_pipeline) over a fake htrflow
     whose ``from_config`` records the build: empty means no model loaded."""
-    import sys
-    from types import ModuleType
-
     built: list = []
-    pipeline_mod = ModuleType("htrflow.pipeline.pipeline")
-    pipeline_mod.Pipeline = type(
-        "Pipeline", (), {"from_config": staticmethod(built.append)}
-    )
-    for name, module in (
-        ("htrflow", ModuleType("htrflow")),
-        ("htrflow.pipeline", ModuleType("htrflow.pipeline")),
-        ("htrflow.pipeline.pipeline", pipeline_mod),
-    ):
-        monkeypatch.setitem(sys.modules, name, module)
+    pipeline = type("Pipeline", (), {"from_config": staticmethod(built.append)})
+    fake_htrflow(pipeline={"Pipeline": pipeline})
     return built
 
 
-def test_warmup_refuses_an_export_step_without_loading_a_model(tmp_path, monkeypatch):
+def test_warmup_refuses_an_export_step_without_loading_a_model(tmp_path, fake_htrflow):
     """3098: the warm-up is where a pipeline the batch Job would refuse must
     fail, once, instead of going green and letting every index load the
     weights first."""
-    built = _fake_htrflow(monkeypatch)
+    built = _recording_htrflow(fake_htrflow)
     term_path = tmp_path / "termination-log"
     env = {**_env(tmp_path), "TERMINATION_LOG_PATH": str(term_path)}
     Path(env["PIPELINE_PATH"]).write_text(
@@ -340,13 +288,13 @@ def test_warmup_refuses_an_export_step_without_loading_a_model(tmp_path, monkeyp
 
 
 def test_warmup_refuses_a_pin_a_key_beside_model_settings_overrides(
-    tmp_path, monkeypatch
+    tmp_path, fake_htrflow
 ):
     """3058: htrflow gives the model ``model_settings | <the other keys>``, so
     ``revision: null`` beside a pinned revision loads the repo's head. The
     warm-up is the one pod that reaches the Hub, so it refuses before a single
     file is fetched, permanently, and says which model and why."""
-    built = _fake_htrflow(monkeypatch)
+    built = _recording_htrflow(fake_htrflow)
     term_path = tmp_path / "termination-log"
     env = {**_env(tmp_path), "TERMINATION_LOG_PATH": str(term_path)}
     pin = "7c44178d85926b4a096c55c89bf224855a201fbf"
@@ -365,8 +313,8 @@ def test_warmup_refuses_a_pin_a_key_beside_model_settings_overrides(
     assert built == []
     error = json.loads(term_path.read_text())["error"]
     assert error == (
-        "step 1 (Segmentation): model Riksarkivet/yolov9-regions-1 is not pinned "
-        f"to a commit — model_settings.revision is {pin}, but the revision key "
+        "step 1 (Segmentation): model Riksarkivet/yolov9-regions-1 does not load "
+        f"its pinned revision — model_settings.revision is {pin}, but the revision key "
         "beside model_settings overrides it and htrflow would load revision "
         "None; move every model setting under model_settings"
     )

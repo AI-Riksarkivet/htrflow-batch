@@ -13,21 +13,23 @@ lists what the module exposes on your checkout.
 | `lint` | `ruff format --check` and `ruff check` on the workspace, from the locked venv (`uv run --no-sync`, never `uvx`, which resolves the newest release and drifts from `uv.lock`) |
 | `typecheck` | `ty check` on the wrapper, converter and web packages from the locked venv; `make typecheck` is the local twin |
 | `check-frontend` | `bun install --frozen-lockfile`, then `bun run check`, `bun run test` and `bun run build`, in a digest-pinned node container carrying the pinned bun binary (vitest needs a real node runtime) |
-| `check-chart` | `helm lint` and a render of both charts on their defaults and on each chart's `ci/full-values.yaml`, plus a render the devstack chart must refuse (RustFS without chosen credentials); asserts the production chart renders no `CronJob`, always renders the `htrflow-web` Deployment with a `/healthz` livenessProbe, and renders no devstack-labelled object; then `kubeconform -strict` on every render and on the converter's Job and ConfigMap skeletons |
+| `check-chart` | `helm lint` and renders of both charts (defaults, `ci/full-values.yaml`, and the production profile from `ci/prod-values.yaml`), then `kubeconform -strict` on every render and on the converter's skeletons, Kueue and Kyverno kinds against pinned CRD schemas (`scripts/crd-schemas.sh`). What the renders contain is `test_chart_render.py`'s |
 | `test` | the workspace pytest suite in a uv container (`uv run --no-sync pytest`, no GPU) — wrapper, converter, web |
-| `test-driver` | `packages/wrapper/tests/test_driver_real.py` against the real htrflow inside a wrapper image it builds itself — the level-0 pin test ([Testing](testing.md)); `ci.yml` runs it in the wrapper scan job. `make test-driver-real` runs the same test against an image that already exists in the local docker daemon, which is how the second architecture's CI job runs it on the image it just built |
-| `build-wrapper` | the wrapper image from `.docker/htrflow-batch.dockerfile`, for the engine's own platform. The optional `--platform` exists for a caller with an engine per platform; nothing here passes it ([Releasing](releasing.md#one-dockerfile-every-architecture)). `--transformers-version` builds the image on the other transformers line; empty keeps the dockerfile's default ([Two transformers lines](../how-it-works/wrapper.md#model-handling)) |
+| `test-driver` | the level-0 pin test ([Testing](testing.md)) against a wrapper image it builds itself; `make test-driver-real` runs it on an image already in the local docker daemon |
+| `build-wrapper` | the wrapper image from `.docker/htrflow-batch.dockerfile`, for the engine's own platform ([Releasing](releasing.md#one-dockerfile-every-architecture)). `--transformers-version` picks the other transformers line ([Model handling](../how-it-works/wrapper.md#model-handling)) |
 | `build-web` | the web image from `.docker/htrflow-web.dockerfile` (CPU-only, no torch): the campaign browser SPA, the Universal Viewer fork at the pinned `UV4_REF` with `.docker/uv4-uv-html.patch` applied, and the read API that serves both. A CA bundle goes in as the optional `ca` build secret |
 | `build-campaigns` | the converter image from `.docker/htrflow-campaigns.dockerfile` (distroless, CPU-only, no git binary or shell): the `htrflow-campaigns` CLI and dulwich, what the Argo CD hook in a campaigns repository runs ([Campaign YAML](../reference/campaign-yaml.md)) |
-| `scan` | Trivy over the built wrapper image; table output, fails on findings (default `CRITICAL,HIGH`, unfixed findings ignored) |
+| `scan` | Trivy over the built wrapper image; fails on findings (default `CRITICAL,HIGH`, unfixed ignored). Every Trivy run reads the VEX statements in `.docker/distroless.openvex.json` ([Releasing](releasing.md)) |
 | `scan-web` | the same over the built web image — a distroless Debian runtime with no shell or package manager, so a clean gate is realistic; `make scan-web` is the local twin |
 | `scan-campaigns` | the same over the built converter image, which `ci.yml` gates on pull requests too |
 | `scan-json` | `scan` with JSON output that never fails the call; what `make scan` runs |
 | `scan-sarif` | Trivy over one built image (`--image wrapper\|web\|campaigns`) as a SARIF report: `CRITICAL,HIGH`, unfixed findings included, never fails on findings; what `security.yml` uploads to the Security tab, while `scan`, `scan-web` and `scan-campaigns` stay the gates |
+| `scan-published` | Trivy over a published image by the digest this commit pins (`--image wrapper\|web\|campaigns`, `--arch`), pulled, not rebuilt: what clusters run now, where the scans above cover the next release |
+| `verify-published` | the chart's verify-images `ClusterPolicy`, rendered with `values-prod.yaml`, run by the Kyverno CLI against those three pinned digests: their Sigstore signatures and transparency-log entries, checked the way the admission webhook checks them |
 | `publish-docker` | refuses a tag already on the registry, then tests, builds, runs the driver test (wrapper) and the Trivy CRITICAL gate on the image it will push, pushes it (`--component wrapper\|web\|campaigns`) and returns its reference with the digest; passes `--base-revision` and `--transformers-version` on to the wrapper build ([Releasing](releasing.md#publishing)) |
 | `check-tag-free` | `publish-docker`'s "never overwrite a tag" check on its own: fails when the tag (or, with `--tag-suffix`, the suffixed or the bare tag) is on the registry or the registry gives no answer |
 | `compose-up` | starts the `web` service of the `.docker/docker-compose.yml` project as a dagger Service |
-| `compose-test` | brings up the compose stack and fetches the web service's `/uv.html`. The module mounts only `.docker/` as the compose project, so the `web` service is image-only: this checks the release the compose file pins; `make compose-smoke` runs the stack on images built from the checkout |
+| `compose-test` | brings up the compose stack and fetches `/uv.html` from the web image the compose file pins; `make compose-smoke` runs the stack on images built from the checkout |
 
 The converter is a pure Python package as well as an image. A campaigns
 repository's own CI and a workstation install it with `uvx --from
@@ -43,11 +45,8 @@ VCS and worktree plumbing, `.gitignore`'s entries, and dependency and build
 caches. `check-frontend` does the same for the `frontend/` subtree with its
 own short exclude list.
 
-An allow-list is silently wrong by default: a new top-level path (a fixture,
-a document a test reads, a new package) is invisible inside the container
-until someone adds it, so a test can pass in CI only because its input was
-never mounted. An exclude list inverts the failure: a new path is visible by
-default, and a missing exclude is a harmless over-inclusion.
+A new path is therefore visible by default, and a missing exclude is a
+harmless over-inclusion.
 `packages/converter/tests/test_repo_visible_in_ci.py` pins this by reading
 `docs/reference/campaign-yaml.md` inside the `test` container. Keep
 `repoExclude` in step with `.gitignore` by hand; nothing parses one into the
@@ -66,14 +65,10 @@ CA_BUNDLE ?= /etc/ssl/certs/ca-certificates.crt
 DAGGER_CA := $(shell test -f $(CA_BUNDLE) && echo --ca-bundle $(CA_BUNDLE))
 ```
 
-The same file reaches the other paths that download: `make build-web` passes
-it as the `ca` build secret, `make test-driver-real` mounts it into the
-container, and `make frontend-install` / `frontend-build` export it as
-`NODE_EXTRA_CA_CERTS`. Node and npm do not read the system certificate
-store, so behind such a proxy the Universal Viewer's `npm install` fails with
-a misleading npm-internal crash rather than a certificate error unless
-`NODE_EXTRA_CA_CERTS` is set — the web dockerfile sets it, and
-`GIT_SSL_CAINFO` for the viewer clone, only when the secret was passed.
+The same file reaches `make build-web` (the `ca` build secret),
+`make test-driver-real` and the frontend targets. Without it, behind such a
+proxy, the viewer's `npm install` fails with an npm-internal crash rather
+than a certificate error, since node does not read the system store.
 
 ## Makefile targets
 
@@ -107,20 +102,14 @@ a misleading npm-internal crash rather than a certificate error unless
 - **Documentation:** `docs-serve`, `docs-build` (through
   `scripts/docs-site.sh`), `config-reference` (regenerates
   `docs/reference/configuration.md`; a test asserts the committed page
-  equals it). Slides live in `docs/slides` and build with
-  `scripts/slides.sh`: they are Marp sources rather than site pages, so
-  `scripts/docs-site.sh` stages them out the way it stages out the stories,
-  and `slides.sh` writes into `site/slides` after the site build, which
-  clears `site/` first. The documentation workflow runs both, so every deck
-  at the top of `docs/slides` is published as HTML and PDF and linked from
-  the Presentations page; `slides.sh` lints the decks with the site's own
-  content rules first, and in CI renders no diagrams (`MERMAID=skip`), so a
-  changed diagram must be rendered and committed locally. Superseded decks
-  go in `docs/slides/archive`, which is neither linted nor published.
+  equals it). Slides: `scripts/slides.sh` builds the Marp decks at the top of
+  `docs/slides` into `site/slides` after the site build (HTML and PDF, linked
+  from Presentations). CI renders no diagrams, so render and commit a changed
+  diagram locally; superseded decks go in `docs/slides/archive`.
 - **Contracts:** `api-contract` (regenerates
   `frontend/src/lib/fixtures/api-contract.json` from real read-API output; a
   test asserts the committed fixture equals it — see
-  [Testing](testing.md#the-two-generated-files-ci-checks-are-current)).
+  [Testing](testing.md#the-generated-files-ci-checks-are-current)).
 - **Frontend:** `frontend-install`, `frontend-test`, `frontend-check`,
   `frontend-build`, `frontend-dev`.
 
@@ -140,20 +129,20 @@ The cluster constants these targets use come from `.env`
   build its image first, and both builds are expensive (the wrapper's CUDA
   base; the web image's viewer clone and npm and bun builds). A pull request
   that changes a dockerfile gets its scan when it lands on `main`, before
-  any image is published from it; one job per image so a failure in one
-  still builds the other. Another job runs on every trigger, pull requests
-  included, on a native runner of the second architecture the wrapper ships
-  for: it builds the htrflow base from source at the pinned htrflow commit
-  and the wrapper on top of it, runs the level-0 library-API pin test against
-  the image it just built, on pushes to `main` and manual runs the same
-  Trivy CRITICAL gate (`make scan-image`), pushes nothing, and prints the
-  image's base labels — so both architectures of a dockerfile change are proven before
-  it lands, and the canary for an htrflow release that moves the library API
-  finally runs on every push instead of waiting to be remembered.
+  any image is published from it. A further job, on every trigger, builds the
+  htrflow base and the wrapper on a native runner of the second architecture,
+  runs the level-0 pin test on it and (on `main`) `make scan-image`, and
+  pushes nothing.
 - **`publish.yml`** — manual, one explicit tag per run; tests, builds,
   pushes, signs and attests all three images for both of the CPU architectures
   they ship for — each on a runner of its own architecture, joined into one
   manifest list per image ([Releasing](releasing.md#the-publish-workflow)).
+- **`ci.yml`** also runs, on every trigger: a `docs` job, the lint (the
+  site's pages, the root and package READMEs and `SECURITY.md`: no project
+  ids, dates, versions, hardware or one site's hosts) and the strict site
+  build below without the deploy, so a pull request that breaks
+  the site fails before it lands; `verify-published`; and a `dagger-go` job,
+  `go vet` and `go test` over `.dagger/publishcheck` ([Testing](testing.md)).
 - **`docs.yml`** ("Documentation") — on push to `main` and by hand:
   `uv sync --locked --only-group docs` (zensical pinned and hash-checked in
   `uv.lock`), `scripts/docs-site.sh build --clean --strict` with that
@@ -166,14 +155,17 @@ The cluster constants these targets use come from `.env`
   further job does the same for the wrapper on the second architecture, on a
   native runner of it, through `make scan-image`. On a
   push the gate is skipped, since `ci.yml` has just run it.
+- **`published.yml`** ("Published images") — weekly, by hand, and on pushes
+  to `main` that move a pin (the chart's web image, the demo pipeline's
+  wrapper, the Argo CD hook's converter image). It builds nothing:
+  `scan-published` gates each pinned digest on both architectures, and
+  `verify-published` checks their signatures, so a signature that stops
+  verifying fails a scheduled run too.
 - **`codeql.yml`** ("CodeQL") — on push and pull request to `main` and weekly:
-  static analysis of the Python packages, the campaign browser, the dagger
-  module and the workflows themselves, with findings in the Security tab.
+  static analysis of the Python, frontend, dagger and workflow code.
 - **`trufflehog.yml`** ("Secret Leaks") — on every push and pull request:
-  TruffleHog over the git history, reporting verified and unverifiable
-  credentials. A newly pushed branch is scanned from its first commit.
-  `.github/trufflehog-exclude-paths.txt` names the few exact paths whose
-  history holds dummy credentials from tests.
+  TruffleHog over the git history; `.github/trufflehog-exclude-paths.txt`
+  names the paths whose history holds dummy test credentials.
 - **`scorecard.yml`** — OpenSSF Scorecard weekly, on push to `main` and on
   branch-protection changes, publishing the score the README badge shows.
 
@@ -186,19 +178,21 @@ must equal `engineVersion` in `dagger.json` (a test asserts it).
 
 ## Dependency pins
 
-Every input is pinned, and [Renovate](https://docs.renovatebot.com/) keeps
-the pins current. `renovate.json` holds the whole policy; this is where
-each kind of pin lives and how it moves.
+Every input is pinned, and nothing moves the pins on a schedule: every pin
+below moves by hand, in a pull request of its own. The one automatic source
+of updates is Dependabot security updates, enabled in the repository's
+settings, which raise pull requests for vulnerable Python and frontend
+dependencies.
 
 | Pin | Lives in | Updated by |
 |---|---|---|
-| GitHub Actions | `uses:` lines, by commit SHA with the version as a comment | Renovate, one grouped weekly PR |
-| Base and tool images | `FROM` lines in `.docker/*.dockerfile`, image values in both charts' `values.yaml`, `.docker/docker-compose.yml`, the image constants in `.dagger/main.go`, digest-pinned `run:` images in workflows, `TRIVY_IMAGE` in the `Makefile` — each as tag plus digest | Renovate, one grouped weekly PR (regex managers cover the dagger module, workflows and Makefile) |
-| Python dependencies | `uv.lock` (workspace) | Renovate lockfile maintenance weekly; runtime minor and patch grouped, majors and dev tools in their own PRs |
-| Frontend dependencies | `frontend/bun.lock` | Renovate lockfile maintenance weekly; majors separate |
-| Dagger engine | `engineVersion` in `dagger.json`; the CLI version, its checksums and the engine digest in `.github/actions/setup-dagger` | Renovate bumps `dagger.json` in its own PR; the action's three pins follow by hand in that PR, and a test fails until they do |
-| Universal Viewer fork | `UV4_REF` commit in `.docker/htrflow-web.dockerfile` | Renovate, its own PR — `.docker/uv4-uv-html.patch` may need re-deriving |
-| htrflow source for the wrapper's base | `ARG HTRFLOW_REF` in the wrapper dockerfile | Renovate, its own PR — the lock, the base and the wrapper on it must be re-verified |
+| GitHub Actions | `uses:` lines, by commit SHA with the version as a comment | by hand: the new release's commit SHA, its version in the comment |
+| Base and tool images | `FROM` lines in `.docker/*.dockerfile`, image values in both charts' `values.yaml`, `.docker/docker-compose.yml`, the image constants in `.dagger/main.go`, digest-pinned `run:` images in workflows, `TRIVY_IMAGE` in the `Makefile` — each as tag plus digest | by hand: `docker buildx imagetools inspect <ref>` gives the digest of the new tag |
+| Python dependencies | `uv.lock` (workspace) | by hand, `uv lock --upgrade` (or `--upgrade-package <name>`); Dependabot security updates |
+| Frontend dependencies | `frontend/bun.lock` | by hand, `bun update` in `frontend/`; Dependabot security updates |
+| Dagger engine | `engineVersion` in `dagger.json`; the CLI version, its checksums and the engine digest in `.github/actions/setup-dagger` | by hand, all four in one PR: a test fails until the action's version equals `engineVersion` |
+| Universal Viewer fork | `UV4_REF` commit in `.docker/htrflow-web.dockerfile` | by hand, its own PR — `.docker/uv4-uv-html.patch` may need re-deriving |
+| htrflow source for the wrapper's base | `ARG HTRFLOW_REF` in the wrapper dockerfile | by hand, its own PR, with `make lock-htrflow-base` — the lock, the base and the wrapper on it must be re-verified |
 | Dependencies of the wrapper's base, torch included | `.docker/htrflow-base/`: htrflow's `pyproject.toml` plus `overlay.toml`, and `uv.lock`, installed with `uv sync --locked` | by hand with `make lock-htrflow-base`, when the htrflow commit or the overlay moves |
 | transformers line | `.docker/transformers/<major>.in`, compiled with hashes into `<major>.txt` | by hand, `make transformers-requirements`; the dockerfile's `TRANSFORMERS_VERSION` default with it, and the build fails while they disagree |
 | torch / torchvision | per architecture in `.docker/htrflow-base/overlay.toml` (`constraint-dependencies`, and the CUDA wheel index as a source) | by hand, then `make lock-htrflow-base` |
@@ -207,5 +201,4 @@ each kind of pin lives and how it moves.
 Inside the builds, dagger containers sync with `uv sync --frozen
 --all-packages`, and the wrapper image installs its dependencies from
 `uv export --locked … --require-hashes`, so a stale `uv.lock` fails the
-build instead of resolving freshly. Renovate raises security updates at any
-time, outside the weekly schedule.
+build instead of resolving freshly.

@@ -15,7 +15,8 @@ SvelteKit 2 + Svelte 5 static SPA over the read API (`packages/web`,
   terminal line, a finished manifest, or after `LIVE_MAX_FAILURES` misses.
 - `/alto?src=<url>` — the ALTO viewer: one page's ALTO XML as text in
   reading order, each line tinted by its `WC` confidence, with a raw-XML
-  toggle. Reached from the run viewer's alto column.
+  toggle. Reached from the run viewer's alto column; like `/log`, it reads
+  only a URL under the results base.
 
 `bun run build` emits `dist/`, which `.docker/htrflow-web.dockerfile` copies
 into the read API's `/app/static` (over the Universal Viewer build, so `/` is
@@ -26,7 +27,7 @@ talks to is the process serving the page.
 
 ```bash
 bun install
-bun run dev        # http://localhost:5173, LAN-reachable; static/ is served at /
+bun run dev        # Vite dev server on :5173, LAN-reachable; static/ is served at /
 bun run test       # vitest (pure + component tests, jsdom)
 bun run coverage   # vitest with @vitest/coverage-v8
 bun run check      # svelte-check, strict TypeScript
@@ -69,37 +70,46 @@ which is why the configuration arrives as a same-origin file loaded before
 the app and never as an inline `<script>` in `index.html` — that the CSP
 blocks. `/api/v1` is same-origin because the read API is the process serving
 the page, so `script-src 'self'` already covers `/config.js` (no
-`connect-src` directive is set, so fetches are unrestricted by this CSP; the
-only restriction is on what may _execute_ as script). A CSP header from the
-server must not be stricter than the meta tag (the browser enforces the
-intersection); `packages/web` adds `frame-ancestors 'none'` to every
-response, and a policy of its own to `/uv.html`, which has no meta tag —
-Universal Viewer is not built by this project.
+`connect-src` directive is in the meta tag). The server adds what the build
+cannot know: `packages/web` sends `frame-ancestors 'none'` on every response
+and, on the SPA's own pages, `connect-src 'self' <results base>/`, so the page
+may fetch only from the API and the results bucket. The browser enforces the
+header and the meta tag both, so the header only adds directives. `/uv.html`,
+which has no meta tag, gets a policy of its own from `packages/web`.
 
 ## The read API
 
 `src/lib/api.ts` is the boundary: Zod schemas for `JobSummary`/`JobDetail`/
 `VolumeView`, and `fetchJobs()` / `fetchJob(namespace, name, offset, limit)`.
-This is our own API, not a document we found — a malformed response is a bug
-on our side, so parsing **fails hard** (`.parse`, not `.safeParse`): no
-per-row degrading. `ApiUnreachable` covers both a network error and a
-non-2xx status; the page shows one "API unreachable" banner over the last
-good list. There is no staleness check: every response is computed live from
-the Kubernetes API, so there is nothing that can go stale.
+This is our own API, not a document we found — a response of the wrong shape
+is a bug on our side, so parsing **fails hard** (`.parse`). One campaign row
+the page cannot read is still a bug, but not a reason to hide the rest:
+`fetchJobs` leaves that row out (`.safeParse` per row), counts it, logs the
+first issue to the console and shows a banner saying how many campaigns are
+hidden; a list whose every row is unreadable throws like a wrong shape. One
+field is read on its own: `VolumeView.sourceUrl`, a line of a file people
+edit, becomes `null` when it is not an http(s) URL this browser can use
+(`httpUrlSchema.catch(null)`), so one bad line costs its volume a link, not
+the card. `ApiUnreachable` covers both a network error and a non-2xx status;
+the page shows one banner over the last good list. There is no staleness
+check: every response is computed live.
 
 ```jsonc
-// GET /api/v1/jobs — JobSummary[]
+// GET /api/v1/jobs?reaped=20 — JobSummary[]: every live campaign, and the
+// 20 newest whose Jobs are gone (X-Reaped-Total: how many of those in all)
 {
   "namespace": "htr-test",
   "name": "kyrk",
   "pipeline": "demo-v1",
   "phase": "Running", // Succeeded | PartiallyFailed | Failed | Queued | Paused | Running
+  //                    // | Unknown (only with jobGone)
   "counts": { "total": 7, "active": 1, "done": 4, "failed": 1 },
   "suspended": false,
   "createdAt": "2026-01-01T00:00:00Z",
   "resultsBase": "https://results.example.org/htr-test/demo-v1",
   "warmup": { "phase": "succeeded" }, // missing | pending | running | succeeded
   //                                  // | failed (then also `reason`)
+  "jobGone": false, // true: the Job is past its TTL, the row is its record
 }
 ```
 
@@ -109,16 +119,19 @@ the Kubernetes API, so there is nothing that can go stale.
   "pipelineSteps": ["Segmentation", "TextRecognition"], // the chip's tooltip
   "pipelineYaml": "steps:\n  - step: Segmentation\n…", // the chip's toggle
   "latest": {/* the VolumeView a folded card shows, or null */},
-  "failures": [/* up to 50 most recent failed-with-a-reason VolumeView rows */],
+  "failures": [
+    /* up to 50 newest failed VolumeView rows, with a reason or without */
+  ],
   "volumes": [
     {
       "index": 3,
       "id": "vol3",
-      "state": "failed", // pending | active | done | failed
+      "state": "failed", // pending | active | done | failed | unknown (jobGone only)
       "manifestUrl": "https://…/vol3/manifest.json",
       "iiifUrl": "https://…/vol3/iiif.json",
       "altoPrefix": "https://…/vol3/alto/",
-      "sourceUrl": "https://iiif.example.org/vol3/manifest", // null for `images:`
+      "sourceUrl": "https://iiif.example.org/vol3/manifest", // null for `images:`,
+      //                                                    // or one the page cannot use
       "logUrl": "https://…/status/logs/demo-v1/vol3.txt", // absolute, always present
       "reason": { "stage": "setup", "permanent": true, "error": "…" },
       // the wrapper's own termination message, parsed; present only while a
@@ -133,19 +146,116 @@ the Kubernetes API, so there is nothing that can go stale.
 shows its first 200 rows, and the volume in flight is almost never among
 them.
 
-`CampaignCard.svelte` fetches its own volumes via `fetchJob`, paged by
-`offset`/`limit` (a "load more" button pages in the next `limit` rows), on
-its own `RELOAD_MS` timer — independent of the list poll on `/`. `logUrl` is
+The full field reference, for operators and authors, is
+[Web front & read API](../docs/reference/web.md). `logUrl` is
 absolute and bucket-rooted (no namespace/S3_PREFIX prefix): the browser has
 no bucket base URL to resolve a bare key against, so the API builds it. The
 volume table's `log` link is
 `log?log=<encodeURIComponent(logUrl)>&manifest=<encodeURIComponent(manifestUrl)>`,
 plus `&live=1` when `state !== "done"` — `manifestUrl` (same `VolumeView`
-row) is what feeds `/log`'s `RunSummaryCard`. `JobDetail.failures` (up to 50
-newest failed-with-a-reason rows) renders as a compact callout above the
-table, visible even while it's collapsed, only when non-empty — one line per
-entry (`<id> — <reason>`, reason clamped to one line by CSS, no JS
-truncation), each line linking to the same log href as its table row.
+row) is what feeds `/log`'s `RunSummaryCard`.
+
+## The campaign card
+
+`CampaignCard.svelte`. Every card has the same four zones in the same
+order, so ten cards scan like ten rows of one table.
+
+1. **Identity and state**, one line: the left accent bar, `namespace/name`
+   as the fold toggle, the phase chip (a pulsing dot while running), the
+   warm-up chip while the warm-up has not succeeded, the "job removed" chip,
+   and at the right end `created → finished` as two `<time>` elements
+   (`datetime` and `title` carry the exact timestamp; "created"/"finished"
+   are there for screen readers, since the arrow is decoration). A run that
+   finished the same day shows only the clock for its end. Only a `Running`
+   campaign gets the open-ended `→ …`.
+   **partially succeeded** (every volume finished, some pages lost) and
+   **partially failed** share the amber chip; the outline is split amber on
+   the left and green (`--success`) or red (`--destructive`) on the right,
+   and the accent bar runs amber to the same colour. An outline, not a dot,
+   because the dot already means "running"; the words, tooltip and
+   screen-reader sentence stay the same, so colour is never the only cue.
+2. **The body: one grid.** Totals (`volumes`, `pages`), the problems line,
+   then the volumes: `latest` while folded, the loaded page as an ARIA table
+   (headers present but not drawn) when open. Every row uses the same five
+   tracks, declared once as custom properties on the card:
+
+   | track                   | holds                                                                           |
+   | ----------------------- | ------------------------------------------------------------------------------- |
+   | 1 (`minmax(6rem, 1fr)`) | the row's words or the volume id — the one flexible track                       |
+   | 2 (`--icons`)           | the two icon links; empty on a totals row                                       |
+   | 3 (`--bar`)             | the 3px progress bar                                                            |
+   | 4 (`--fraction`)        | `X / Y`, right-aligned, tabular figures (an em dash when the total is unknown)  |
+   | 5 (`--pill`)            | the state pill, fixed width so it anchors the right edge; empty on a totals row |
+   - A row that lost something carries a second line under its bar
+     (`1 failed`, `3 failed · 2 errors`); a clean row is one line.
+     `errors` counts ERROR-and-worse only.
+   - A campaign of one volume drops both totals rows, unless there is no
+     volume row yet to carry them.
+   - Every row with a known total has a bar in the colour of what it
+     measures: running blue (with a sheen only while work happens), green
+     done, amber done with pages missing, red failed. `pending`/`unknown`
+     leave the track empty.
+   - The pill word holds a slot as wide as "pending"/"unknown". A `done`
+     volume with failed pages takes the warning colour, titled "done with N
+     failed pages". `describeProgress` adds the stage and "updated N s ago"
+     only while the volume can still change.
+   - A volume's failure sentence and page error sit on a second line under
+     its own row, wrapping; on the folded row the sentence sits with the id.
+   - At ≤520px the tracks fold onto two lines (id and failure first, then
+     icons, bar, fraction, pill); words wrap, and the bar may shrink
+     between a floor and its full width.
+
+3. **Problems**, across the grid, only when there is one: the warm-up's
+   failure, each failed volume as `id: sentence` (the id links to its run
+   log), and the latest page error only when its volume is not on screen
+   (with a log link from `lastError.logUrl`). Warning colour, wrapping.
+   Past three sentences the rest wait behind "N more" (`aria-expanded`,
+   `aria-controls`), and are not rendered, so no hidden link takes focus.
+   With the card open it drops failures already visible as rows.
+   `describeLastError` names the failing page once, even when the wrapper's
+   message already names it.
+4. **Provenance**, the footer: the pipeline chip (a button once the detail
+   has loaded: `title` is `pipelineSteps` joined by `→`, click toggles
+   `pipelineYaml` in a `<pre>`), and the models line. `src/lib/pipeline.ts`
+   reads the YAML line by line for `model_settings.model` and its revision
+   (`model_settings.revision` or `model_settings.model_kwargs.revision`,
+   never the processor's), rendering `<repo> @<short rev>` or
+   `<repo> unpinned`, linked to `https://huggingface.co/<id>/tree/<rev>`.
+
+**Links.** One snippet builds every volume row and the folded strip, so a
+missing link leaves a gap instead of shifting its neighbours. The id opens
+`uv.html#?manifest=<url>`: `iiifUrl` once the volume is `done` or
+`progress.viewerPublished`, `sourceUrl` before that, plain text with a title
+when there is neither. Beside it, fixed slots for the source-manifest icon
+(empty for `images:` volumes) and the run-log icon, labelled "manifest for
+`<id>`" / "run log for `<id>`": inline SVG, `aria-hidden`, `currentColor`,
+24px hit area — inline because the CSP loads no asset.
+
+**Warm-up chip.** "warm-up pending/running/failed" or "no warm-up"
+(`missing`). `failed` pushes the accent to the failed colour; `missing` does
+so only while the phase is not `Succeeded`. A failed warm-up's
+`describeReason` is the chip's `title` and, when open, a line under it.
+
+**Folding, paging, polling.** Cards start folded and remember the choice in
+`localStorage` (`htrflow.card.<namespace>/<name>`, every access wrapped).
+`fetchJob` pages by `offset`/`limit` (200); "load more" adds a page, and a
+poll re-fetches every open page (capped at the API's 1000). Only a campaign
+that can still change is polled; a finished, `Unknown` or reaped one is read
+once, when its card first intersects the viewport (`IntersectionObserver`)
+or is opened, and again on a phase change. `fetchJobs` asks for
+`?reaped=20`; "show older campaigns" asks for 20 more.
+
+**Motion and accessibility.** Only what runs moves: the pulsing dot, the
+bar sheen, and a one-second fade behind a progress line whose `done`
+changed. Bars ease to their fraction over 600 ms. Under
+`prefers-reduced-motion: reduce` there is no pulse, sheen or fade. The
+campaign header is a disclosure button with `aria-controls` only while the
+table is rendered. AA contrast in both themes, no horizontal overflow at
+390px.
+
+**Header.** Logo and title left; the deployed release from
+`GET /api/v1/version` (`htrflow-batch <version>`, `web` in the tooltip,
+read once, absent if it fails), the GitHub mark and the theme toggle right.
 
 ## Layout
 

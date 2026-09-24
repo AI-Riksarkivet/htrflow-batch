@@ -898,6 +898,7 @@ source = { virtual = "." }
 
 [package.dev-dependencies]
 dev = [
+    { name = "dulwich" },
     { name = "httpx" },
     { name = "moto", extra = ["s3"] },
     { name = "pillow" },
@@ -920,6 +921,7 @@ wrapper-image = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "dulwich", specifier = ">=1.2" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "moto", extras = ["s3"], specifier = ">=5" },
     { name = "pillow", specifier = ">=12.3.0" },

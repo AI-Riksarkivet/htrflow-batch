@@ -10,6 +10,10 @@ name: Security
 # gate as ci.yml, so a new critical fails the scheduled run. On a push the
 # gate is skipped — ci.yml has just run it — and the report is refreshed so
 # alerts a dependency bump fixed are closed.
+#
+# These jobs rebuild from main's source, which says what the NEXT release
+# will carry. published.yml scans what clusters run: the digests the
+# repository pins.
 on:
   push:
     branches: [main]

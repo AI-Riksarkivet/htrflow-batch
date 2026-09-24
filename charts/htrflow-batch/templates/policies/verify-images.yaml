@@ -29,7 +29,8 @@ spec:
       match:
         any:
           - resources:
-              kinds: [Pod]
+              # Pod alone misses the subresource `kubectl debug` goes through
+              kinds: [Pod, Pod/ephemeralcontainers]
               namespaces: [{{ .Release.Namespace | quote }}]
       # Kyverno extracts a Pod's container images by itself, but not its
       # image volumes (2026-09-17 audit, 3061) -- and naming ANY extractor
@@ -43,6 +44,15 @@ spec:
           - { name: imageVolumes, path: /spec/volumes/*/image, value: reference }
       verifyImages:
         - imageReferences: {{ toJson $refs }}
+          # What the release writes (audit 0923 D-1): cosign 3 signs into a
+          # Sigstore bundle, attached to the image as an OCI referrer, and
+          # writes no `sha256-<digest>.sig` tag -- the only place Kyverno's
+          # default type (`Cosign`) looks. Under that default no published
+          # image had a signature and every pod was refused. The bundle
+          # carries its own transparency-log entry; `rekor.url` below is
+          # where Kyverno checks it. `dagger call verify-published` runs
+          # this rule against the published digests.
+          type: SigstoreBundle
           # Digest pinning is the chart's job (requireDigest); do not let the
           # webhook rewrite pod specs on the way in.
           mutateDigest: false

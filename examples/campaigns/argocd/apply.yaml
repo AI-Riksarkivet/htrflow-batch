@@ -3,7 +3,9 @@
 # rendered/sync.yaml and this file; a changed render changes sync.yaml, the
 # sync runs, and this Job re-renders from a fresh clone and applies.
 #
-# Edit REPO_URL and REPO_BRANCH below. The token is a read-only token for
+# Edit REPO_URL and REPO_BRANCH below, and HTRFLOW_APPLIED_BY to name the
+# Argo CD Application: it is the "applied-by" every campaign's record carries,
+# the hook's own account being no one's. The token is a read-only token for
 # this repo, in a Secret the cluster's operator creates once:
 #   kubectl -n <namespace> create secret generic htrflow-campaigns-git --from-literal=token=<token>
 # The chart must run with apply.rbac.enabled=true (the ServiceAccount and
@@ -62,12 +64,32 @@ spec:
           resources: &small
             requests: {cpu: 50m, memory: 128Mi}
             limits: {cpu: 500m, memory: 512Mi}
+        # The clone is the branch's HEAD, not the commit CI rendered: a push
+        # that landed after CI's render commit would be applied unrendered
+        # and unchecked by CI's Policy job. This refuses a checkout whose
+        # rendered/ is not its own render, and the apply never starts; CI's
+        # render commit for that push starts the next sync.
+        - name: check
+          image: docker.io/riksarkivet/htrflow-campaigns@sha256:8c060603a369abb219073b3a01883c70865a4223e46d5372a897bfd0686ee0d3   # v0.5.0
+          args: ["validate", "--rendered", "/repo"]
+          env:
+            - {name: HOME, value: /tmp}
+          volumeMounts:
+            - {name: repo, mountPath: /repo}
+            - {name: tmp, mountPath: /tmp}
+          securityContext: *restricted
+          resources: *small
       containers:
         - name: apply
           image: docker.io/riksarkivet/htrflow-campaigns@sha256:8c060603a369abb219073b3a01883c70865a4223e46d5372a897bfd0686ee0d3   # v0.5.0
-          args: ["apply", "--prune", "/repo"]
+          args: ["apply", "--prune", "--namespace", "$(POD_NAMESPACE)", "/repo"]
           env:
             - {name: HOME, value: /tmp}
+            - {name: HTRFLOW_APPLIED_BY, value: argocd-hook/htrflow-campaigns}
+            # The namespace this hook runs in; apply refuses a converter.yaml
+            # naming another one.
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
           volumeMounts:
             - {name: repo, mountPath: /repo}
             - {name: tmp, mountPath: /tmp}

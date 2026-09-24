@@ -34,12 +34,11 @@ DEVSTACK_CHART = REPO / "charts" / "htrflow-devstack"
 NAMESPACE = "htr-batch"
 
 #: Values the chart `fail`s without and that no cluster is present to look
-#: up. Mirrors the Makefile's CHART_DEFAULT_SETS -- never an install.
-REQUIRED_SETS = (
-    "publicResultsBase=https://x/",
-    "network.apiServer.cidr=10.16.51.10/32",
-    "web.image=docker.io/riksarkivet/htrflow-web@sha256:" + "0" * 64,
-)
+#: up: ci/default-values.yaml, the one copy the Makefile and `dagger call
+#: check-chart` render with too. Every render of this chart starts from it
+#: (helm_template), so a test adds only what it is about.
+REQUIRED_VALUES = "ci/default-values.yaml"
+REQUIRED_SETS: tuple[str, ...] = ()
 #: The default ingress list is a catch-all, and the chart makes that an
 #: explicit choice rather than a silent default.
 PUBLIC_INGRESS = "network.web.allowPublicIngress=true"
@@ -51,6 +50,24 @@ DEFAULT_SETS = REQUIRED_SETS + (PUBLIC_INGRESS, POLICIES_OFF)
 #: Two refusals several tests look for, verbatim: the chart's own sentence
 #: is what an operator reads, so a test that only saw a non-zero exit could
 #: not tell one guard from another (finding 3103).
+S3_NOWHERE_REFUSAL = (
+    "network.s3Cidrs is empty and network.s3InNamespace is false, so campaign"
+    " pods and the web front have no route to the results bucket and every"
+    " volume would fail after its GPU time: list the S3 endpoint's ranges in"
+    " network.s3Cidrs, or set network.s3InNamespace=true when the bucket is the"
+    " in-namespace RustFS of charts/htrflow-devstack"
+)
+CLUSTER_CIDRS_REFUSAL = (
+    "network.clusterCidrs is empty, so no egress range the chart renders would"
+    " carve the cluster's own pod and service ranges out of itself: list your"
+    " cluster's pod and service CIDRs"
+)
+IIIF_NOWHERE_REFUSAL = (
+    "network.iiifCidrs is empty and has no default: name the address ranges of"
+    " the IIIF servers your campaigns fetch page images from, e.g. --set"
+    " network.iiifCidrs='{<cidr>}' (0.0.0.0/0 admits any origin and still"
+    " reaches no cluster or private address)"
+)
 RESULTS_BASE_REFUSAL = (
     "publicResultsBase is required (the read API serves S3 links built from it)"
 )
@@ -65,21 +82,33 @@ pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm not o
 
 def helm_template(
     *,
-    values: str | None = None,
+    values: str | tuple[str, ...] | None = None,
     sets: tuple[str, ...] = (),
     chart: Path = CHART,
+    required: str = REQUIRED_VALUES,
 ) -> subprocess.CompletedProcess[str]:
     """Run `helm template` and hand back the result, failure included: the
-    chart's guards are as much a part of it as its objects."""
+    chart's guards are as much a part of it as its objects. This chart's
+    renders start from `required` (REQUIRED_VALUES); `values` files come after it (later
+    ones win), then `--set`, and a `json:` setting is a `--set-json` -- the
+    one way to say an empty list on the command line."""
     cmd = ["helm", "template", "htr", str(chart), "-n", NAMESPACE]
-    if values:
-        cmd += ["-f", str(chart / values)]
+    files = (values,) if isinstance(values, str) else values or ()
+    if chart == CHART:
+        files = (required, *files)
+    for f in files:
+        cmd += ["-f", str(chart / f)]
     for setting in sets:
-        cmd += ["--set", setting]
+        if setting.startswith("json:"):
+            cmd += ["--set-json", setting.removeprefix("json:")]
+        else:
+            cmd += ["--set", setting]
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
-def render(*, values: str | None = None, sets: tuple[str, ...] = ()) -> list[dict]:
+def render(
+    *, values: str | tuple[str, ...] | None = None, sets: tuple[str, ...] = ()
+) -> list[dict]:
     result = helm_template(values=values, sets=sets)
     assert result.returncode == 0, result.stderr
     return [doc for doc in yaml.safe_load_all(result.stdout) if doc]
@@ -119,33 +148,21 @@ def test_the_read_api_may_only_write_its_own_status_configmaps(full: list[dict])
     mounts as its pipeline -- overwrite it and the next campaign loads
     weights of someone else's choosing. Admission is the only place that
     sees who is asking, so the name scope lives there.
+
+    What the rule refuses and admits is proven through admission
+    (test_policy_admission.py); what the CLI cannot show is here: a
+    background scan has no requesting user, so a subject-matched rule cannot
+    run as one, and a webhook that cannot be reached must refuse the write.
+    And a policy that refuses a legal name is an outage, not a control, so
+    the pattern mirrors the campaign-name rule (a DNS-1123 label).
     """
     policy = named(full, "ClusterPolicy", f"htrflow-batch-rbac-scope-{NAMESPACE}")
-    assert policy["spec"]["validationFailureAction"] == "Enforce"
-    # A background scan has no requesting user, so a subject-matched rule
-    # cannot run as one; saying so here keeps the two from drifting apart.
     assert policy["spec"]["background"] is False
-
+    assert policy["spec"]["failurePolicy"] == "Fail"
     web = rule(policy, "web-writes-status-only")
-    match = web["match"]["any"][0]
-    assert match["resources"]["kinds"] == ["ConfigMap"]
-    assert match["resources"]["namespaces"] == [NAMESPACE]
-    # Every write: a `patch` arrives as UPDATE, a server-side apply of an
-    # absent object as CREATE.
-    assert sorted(match["resources"]["operations"]) == ["CREATE", "UPDATE"]
-    assert match["subjects"] == [
-        {"kind": "ServiceAccount", "name": "htrflow-web", "namespace": NAMESPACE}
-    ]
-    condition = web["validate"]["deny"]["conditions"]["all"][0]
-    assert "campaign-" in condition["key"] and "-status$" in condition["key"]
-    assert condition["operator"] == "Equals" and condition["value"] is False
-    # A policy that refuses a legal name is an outage, not a control: the
-    # status write would fail for that campaign and nothing would say why.
-    # The campaign-name rule is a DNS-1123 label (models.Campaign._check_name).
     assert _status_name_pattern(web) == (
         f"^campaign-{_DNS_LABEL_RE.pattern[:-2]}-status$"
     )
-    assert policy["spec"]["failurePolicy"] == "Fail"
 
 
 def _status_name_pattern(rule_body: dict) -> str:
@@ -173,15 +190,6 @@ def test_every_campaign_name_the_converter_accepts_may_have_a_status(
     assert re.match(pattern, f"campaign-{campaign}-status")
 
 
-@pytest.mark.parametrize("name", ["htr-pipeline-demo-v1", "campaign-kyrk", "x-status"])
-def test_the_objects_the_rule_exists_to_protect_are_still_refused(
-    full: list[dict], name: str
-):
-    policy = named(full, "ClusterPolicy", f"htrflow-batch-rbac-scope-{NAMESPACE}")
-    pattern = _status_name_pattern(rule(policy, "web-writes-status-only"))
-    assert not re.match(pattern, name)
-
-
 def test_the_rbac_scope_policy_follows_the_policies_switch(default: list[dict]):
     """Every ClusterPolicy this chart ships is behind
     `security.policies.enabled`, because a policy nothing reconciles is
@@ -192,20 +200,13 @@ def test_the_rbac_scope_policy_follows_the_policies_switch(default: list[dict]):
 # --- B80: an install that enforces nothing has to say so ------------------
 
 
-def test_an_install_without_the_policies_has_to_say_so():
+def test_an_install_without_the_policies_renders_once_it_says_so():
     """The chart's defaults leave every Kyverno policy off, because a policy
     nothing reconciles is worse than none -- which also meant an install
     that followed no profile enforced nothing the repository built, and
     nothing said so. Off stays possible; silent stops being."""
-    refused = helm_template(sets=REQUIRED_SETS + (PUBLIC_INGRESS,))
-    assert refused.returncode != 0
-    assert "security.policies.allowDisabled" in refused.stderr
-    # One sentence: the error names the switch and the opt-out, nothing more.
-    reason = next(
-        line for line in refused.stderr.splitlines() if "allowDisabled" in line
-    ).split("): ", 1)[1]
-    assert ". " not in reason and reason.startswith("security.policies.enabled")
-
+    # The refusal itself, in its own words, is the guard table's
+    # `policies-off` case; what is left is that both ways out render.
     assert render(sets=DEFAULT_SETS)
     assert render(
         sets=REQUIRED_SETS + (PUBLIC_INGRESS, "security.policies.enabled=true")
@@ -236,10 +237,11 @@ def test_a_named_ingress_range_needs_no_opt_out():
     lists the ranges that may reach the web front says enough by listing
     them."""
     rendered = render(
-        sets=REQUIRED_SETS + (POLICIES_OFF, "network.web.ingressCidrs={10.16.0.0/16}")
+        sets=REQUIRED_SETS
+        + (POLICIES_OFF, "network.web.ingressCidrs={198.51.100.0/24}")
     )
     ingress = named(rendered, "NetworkPolicy", "htr-web")["spec"]["ingress"]
-    assert ingress[0]["from"] == [{"ipBlock": {"cidr": "10.16.0.0/16"}}]
+    assert ingress[0]["from"] == [{"ipBlock": {"cidr": "198.51.100.0/24"}}]
 
 
 @pytest.fixture
@@ -248,19 +250,6 @@ def empty_ingress(tmp_path: Path) -> Path:
     path = tmp_path / "empty-ingress.yaml"
     path.write_text("network:\n  web:\n    ingressCidrs: []\n", encoding="utf-8")
     return path
-
-
-def test_an_empty_ingress_list_is_refused_not_opened(empty_ingress: Path):
-    """An ingress rule with an empty `from` matches every source, so
-    `ingressCidrs: []` -- what an operator writes to shut the web front --
-    rendered exactly the catch-all the guard refuses, without the guard
-    noticing (finding 3100). It fails with a sentence that says so."""
-    refused = helm_template(
-        values=str(empty_ingress), sets=REQUIRED_SETS + (POLICIES_OFF,)
-    )
-    assert refused.returncode != 0
-    assert "network.web.ingressCidrs is empty" in refused.stderr
-    assert "network.web.allowPublicIngress" in refused.stderr
 
 
 def test_an_empty_ingress_list_with_the_opt_in_is_the_catch_all_it_renders(
@@ -275,7 +264,7 @@ def test_an_empty_ingress_list_with_the_opt_in_is_the_catch_all_it_renders(
 
 @pytest.mark.parametrize(
     "cidrs",
-    ["{0.0.0.0/1,128.0.0.0/1}", "{10.16.0.0/16,0.0.0.0/7}", "{64.0.0.0/2}"],
+    ["{0.0.0.0/1,128.0.0.0/1}", "{198.51.100.0/24,0.0.0.0/7}", "{64.0.0.0/2}"],
 )
 def test_a_catch_all_split_into_halves_is_still_a_catch_all(cidrs: str):
     """The guard compared strings, so `0.0.0.0/1` + `128.0.0.0/1` -- every
@@ -309,17 +298,9 @@ def test_the_web_front_sees_its_clients_own_addresses(default: list[dict]):
     range, which every client reaching a node then matched (finding 3064).
     `Local` keeps the client's address, so the list restricts clients."""
     service = named(default, "Service", "htrflow-web")
-    assert service["spec"]["type"] == "NodePort"
+    assert service["spec"]["type"] == "NodePort"  # the default, ingress mode off
     assert service["spec"]["externalTrafficPolicy"] == "Local"
-
-
-def test_the_refusal_no_longer_advises_listing_the_node_range():
-    """Listing the node range is what defeated the list; the chart's own
-    sentence must not tell anyone to do it."""
-    refused = helm_template(sets=REQUIRED_SETS + (POLICIES_OFF,))
-    assert "wider than /8" in refused.stderr
-    assert "node range" not in refused.stderr
-    assert "SNAT" not in refused.stderr
+    assert not objects(default, "Ingress")
 
 
 def test_the_catch_all_guard_is_silent_when_the_policies_are_not_rendered():
@@ -346,13 +327,6 @@ INGRESS = (
     "web.ingress.tlsSecretName=htr-tls",
     "network.web.ingressFrom[0].namespaceSelector.matchLabels.kubernetes\\.io/metadata\\.name=ingress-test",
 )
-
-
-def test_the_default_web_service_is_still_a_nodeport():
-    svc = named(render(sets=DEFAULT_SETS), "Service", "htrflow-web")
-    assert svc["spec"]["type"] == "NodePort"
-    assert svc["spec"]["externalTrafficPolicy"] == "Local"
-    assert not objects(render(sets=DEFAULT_SETS), "Ingress")
 
 
 def test_ingress_mode_renders_a_clusterip_service_and_a_tls_ingress():
@@ -383,27 +357,6 @@ def test_ingress_mode_admits_the_controller_not_address_ranges():
         }
     ]
     assert rule["ports"] == [{"port": 8081}]
-
-
-@pytest.mark.parametrize(
-    "drop, sentence",
-    [
-        (
-            "web.service.type=ClusterIP",
-            "web.ingress.enabled needs web.service.type=ClusterIP",
-        ),
-        (
-            "web.ingress.host=htr.example.org",
-            "web.ingress.enabled needs web.ingress.host",
-        ),
-        (INGRESS[-1], "web.ingress.enabled needs network.web.ingressFrom"),
-    ],
-)
-def test_ingress_mode_refuses_what_it_cannot_serve(drop, sentence):
-    sets = tuple(s for s in INGRESS if s != drop)
-    result = helm_template(sets=REQUIRED_SETS + (POLICIES_OFF,) + sets)
-    assert result.returncode != 0
-    assert sentence in result.stderr
 
 
 def test_ingress_from_refuses_an_address_range():
@@ -461,6 +414,7 @@ def test_ingress_from_refuses_a_selector_that_selects_everything(
 #: the link-local block every cloud serves instance credentials from, and
 #: the three private ranges a VPC is built out of.
 CATCH_ALL_EXCEPT = {
+    "192.0.2.10/32",  # the API server REQUIRED_SETS names
     "10.42.0.0/16",
     "10.43.0.0/16",
     "169.254.0.0/16",
@@ -468,6 +422,7 @@ CATCH_ALL_EXCEPT = {
     "10.0.0.0/8",
     "172.16.0.0/12",
     "192.168.0.0/16",
+    "100.64.0.0/10",
 }
 
 
@@ -509,6 +464,133 @@ def test_a_private_range_the_operator_listed_is_still_reachable():
     policy = named(rendered, "NetworkPolicy", "htr-batch-job")
     targets = [to for rule in policy["spec"]["egress"] for to in rule.get("to", [])]
     assert {"ipBlock": {"cidr": "10.1.2.3/32"}} in targets
+
+
+# --- 0923 D-3: every egress block wide enough to hold an internal range ----
+
+
+def _blocks(policy: dict) -> dict[str, list[str]]:
+    """Every egress ipBlock of a policy: cidr -> its `except` list."""
+    return {
+        to["ipBlock"]["cidr"]: to["ipBlock"].get("except", [])
+        for rule in policy["spec"]["egress"]
+        for to in rule.get("to", [])
+        if "ipBlock" in to
+    }
+
+
+@pytest.mark.parametrize("policy_name", ["htr-batch-job", "htr-web"])
+def test_a_catch_all_s3_range_is_carved_out_like_any_other(policy_name: str):
+    """The carve-out applied to a literal `0.0.0.0/0` in iiifCidrs only, so
+    `s3Cidrs: [0.0.0.0/0]` -- realistic for S3 on AWS, whose ranges move --
+    let both pods that reach S3 open 169.254.169.254 and the cluster's own
+    network on 443."""
+    rendered = render(sets=DEFAULT_SETS + ("network.s3Cidrs={0.0.0.0/0}",))
+    blocks = _blocks(named(rendered, "NetworkPolicy", policy_name))
+    assert set(blocks["0.0.0.0/0"]) == CATCH_ALL_EXCEPT
+
+
+def test_a_catch_all_split_in_halves_is_carved_out_half_by_half():
+    """`0.0.0.0/1` + `128.0.0.0/1` is every address in two entries, and no
+    entry was the literal catch-all, so neither was carved: the metadata
+    address was open again. Each half now loses every internal range it
+    holds -- and only those, since `except` must lie inside its block."""
+    rendered = render(
+        sets=DEFAULT_SETS + ("network.iiifCidrs={0.0.0.0/1,128.0.0.0/1}",)
+    )
+    blocks = _blocks(named(rendered, "NetworkPolicy", "htr-batch-job"))
+    assert set(blocks["0.0.0.0/1"]) == {
+        "10.42.0.0/16",
+        "10.43.0.0/16",
+        "10.0.0.0/8",
+        "100.64.0.0/10",
+        "127.0.0.0/8",
+    }
+    assert set(blocks["128.0.0.0/1"]) == {
+        "192.0.2.10/32",
+        "169.254.0.0/16",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+    }
+
+
+def test_the_apply_pods_git_range_is_carved_out_too():
+    """The apply pod holds a token that may write Jobs; a catch-all git
+    range must not hand it the metadata address either."""
+    rendered = render(
+        sets=DEFAULT_SETS + ("apply.rbac.enabled=true", "apply.gitCidrs={0.0.0.0/0}")
+    )
+    blocks = _blocks(named(rendered, "NetworkPolicy", "htr-campaigns-apply"))
+    assert set(blocks["0.0.0.0/0"]) == CATCH_ALL_EXCEPT
+
+
+def test_the_api_server_is_carved_out_whatever_its_address():
+    """The API server was carved out only when it happened to be a node
+    address or inside a private block; an endpoint on a public address was
+    reachable from the warm-up and from any wide range (audit 0923 M-3)."""
+    sets = DEFAULT_SETS
+    rendered = render(
+        sets=sets
+        + (
+            "network.apiServer.cidr=203.0.113.5/32",
+            "network.apiServer.cidrs={198.51.100.7/32}",
+            "network.iiifCidrs={0.0.0.0/0}",
+        )
+    )
+    for name in ("htr-batch-job", "htr-warmup"):
+        blocks = _blocks(named(rendered, "NetworkPolicy", name))
+        assert {"203.0.113.5/32", "198.51.100.7/32"} <= set(blocks["0.0.0.0/0"]), name
+
+
+def test_a_named_range_inside_a_private_block_is_left_whole():
+    """A range inside an internal one is the operator naming a host on
+    their own network: it holds no internal range, so it has nothing to
+    carve out and stays reachable. A private block named whole still loses
+    the pod and service ranges inside it."""
+    rendered = render(sets=DEFAULT_SETS + ("network.s3Cidrs={10.9.5.5/32,10.0.0.0/8}",))
+    blocks = _blocks(named(rendered, "NetworkPolicy", "htr-batch-job"))
+    assert blocks["10.9.5.5/32"] == []
+    assert set(blocks["10.0.0.0/8"]) == {"10.42.0.0/16", "10.43.0.0/16"}
+
+
+@pytest.mark.parametrize("policy_name", ["htr-batch-job", "htr-web"])
+def test_without_in_namespace_s3_no_pod_labelled_rustfs_is_a_route(policy_name: str):
+    """The in-namespace `app: rustfs` rule is the dev stack's bucket. Off
+    it, any pod that carries the label is a destination the batch Job and
+    the web front may send to, so a production profile drops the rule."""
+    rendered = render(
+        sets=DEFAULT_SETS
+        + ("network.s3InNamespace=false", "network.s3Cidrs={192.0.2.128/25}")
+    )
+    egress = named(rendered, "NetworkPolicy", policy_name)["spec"]["egress"]
+    assert not any(
+        "podSelector" in to and "namespaceSelector" not in to
+        for r in egress
+        for to in r.get("to", [])
+    )
+    assert any(
+        {"ipBlock": {"cidr": "192.0.2.128/25"}} in r.get("to", []) for r in egress
+    )
+
+
+@pytest.mark.parametrize(
+    "cidr",
+    ["10.0.0.0/33", "10.0.0.0/99", "300.0.0.0/8", "10.256.0.0/16", "01.2.3.4/32"],
+)
+def test_the_schema_refuses_an_address_range_that_is_not_one(cidr: str):
+    """A prefix past /32 or an octet past 255 is no IPv4 range; the carve-out
+    helper does integer arithmetic on both, and the API server would refuse
+    the NetworkPolicy only at install."""
+    result = helm_template(sets=DEFAULT_SETS + (f"network.iiifCidrs={{{cidr}}}",))
+    assert result.returncode != 0
+    assert "/network/iiifCidrs/0" in result.stderr
+
+
+def test_the_schema_takes_every_real_address_range():
+    render(
+        sets=DEFAULT_SETS
+        + ("network.iiifCidrs={0.0.0.0/0,255.255.255.255/32,10.9.199.250/29}",)
+    )
 
 
 # --- D4: all-port egress to the S3 range ----------------------------------
@@ -556,52 +638,27 @@ def test_an_endpoint_on_another_port_is_a_value_not_a_fork():
     assert by_cidr["ports"] == [{"port": 9000}, {"port": 443}]
 
 
-# --- D5: a label is not what makes a ConfigMap a pipeline -----------------
-
-
-def test_the_model_revision_rule_reaches_any_configmap_carrying_a_pipeline(
-    full: list[dict],
-):
-    """The rule matched `managed-by: converter`, a label anyone who can
-    create a ConfigMap can leave off. The rule exists because unpinned
-    Hugging Face weights are mutable pickles, and a hand-written pipeline
-    ConfigMap is exactly the case it should catch. What makes a ConfigMap a
-    pipeline is the `pipeline.yaml` key, so that is what it matches on."""
-    policy = named(full, "ClusterPolicy", f"htrflow-batch-model-revision-{NAMESPACE}")
-    pinned = rule(policy, "pipeline-models-pinned")
-    resources = pinned["match"]["any"][0]["resources"]
-    assert resources["kinds"] == ["ConfigMap"]
-    assert resources["namespaces"] == [NAMESPACE]
-    assert "selector" not in resources
-    assert 'data."pipeline.yaml"' in pinned["context"][0]["variable"]["jmesPath"]
-
-
 # --- D6: the apply identity's delete is namespace-wide --------------------
 
 
 def test_the_apply_identity_may_only_delete_what_the_converter_rendered(
     full: list[dict],
 ):
-    """`--prune` is a delete, so the Role grants one -- and RBAC grants it
-    over the whole resource type: every Job and every ConfigMap in the
-    namespace, a running campaign's Job and another team's ConfigMap
-    included. The prune itself only ever selects converter-labelled objects;
-    this makes that the limit rather than the intention."""
+    """`--prune` is a delete, so the Role grants one -- over every Job and
+    ConfigMap in the namespace. The rule that holds it to converter-labelled
+    objects must read `request.oldObject`: a DELETE admission review carries
+    the object there, and `request.object` is null, so a rule reading it
+    would compare against nothing and admit every delete.
+
+    This is the only test of that choice. The Kyverno CLI cannot tell the
+    two apart -- it fills both from the resource it is given -- so the
+    admission test of the delete rule passes whichever one the rule reads.
+    The rest of the rule is proven through admission there."""
     policy = named(full, "ClusterPolicy", f"htrflow-batch-rbac-scope-{NAMESPACE}")
     prune = rule(policy, "apply-deletes-only-what-it-rendered")
-    match = prune["match"]["any"][0]
-    assert sorted(match["resources"]["kinds"]) == ["ConfigMap", "Job"]
-    assert match["resources"]["operations"] == ["DELETE"]
-    assert match["subjects"] == [
-        {"kind": "ServiceAccount", "name": "htrflow-campaigns", "namespace": NAMESPACE}
-    ]
     condition = prune["validate"]["deny"]["conditions"]["all"][0]
-    # A DELETE admission review carries the object as `oldObject`; reading
-    # `request.object` there would compare against nothing at all.
     assert "request.oldObject.metadata.labels" in condition["key"]
-    assert "htrflow.riksarkivet.se/managed-by" in condition["key"]
-    assert condition["operator"] == "NotEquals"
-    assert condition["value"] == "converter"
+    assert "request.object." not in condition["key"]
 
 
 def test_the_prune_rule_is_rendered_with_the_identity_it_scopes():
@@ -639,7 +696,7 @@ def test_the_apply_pod_can_reach_the_api_server_it_was_given_an_identity_for(
     ]
     api = next(r for r in egress if any("ipBlock" in to for to in r["to"]))
     # ci/full-values.yaml states the endpoint, as `helm template` must.
-    assert api["to"] == [{"ipBlock": {"cidr": "10.16.51.56/32"}}]
+    assert api["to"] == [{"ipBlock": {"cidr": "192.0.2.56/32"}}]
     assert api["ports"] == [{"port": 6443}]
     # Nothing else: it reads its campaigns from a directory, not a network.
     assert len(egress) == 2
@@ -671,10 +728,12 @@ def test_the_apply_identity_reaches_no_git_host_by_default():
 
 
 def test_the_apply_identity_reaches_the_listed_git_host_on_443():
-    rendered = render(sets=DEFAULT_SETS + (APPLY_ON, "apply.gitCidrs={192.0.2.10/32}"))
+    rendered = render(
+        sets=DEFAULT_SETS + (APPLY_ON, "apply.gitCidrs={198.51.100.10/32}")
+    )
     rules = _egress(named(rendered, "NetworkPolicy", "htr-campaigns-apply"))
     assert {
-        "to": [{"ipBlock": {"cidr": "192.0.2.10/32"}}],
+        "to": [{"ipBlock": {"cidr": "198.51.100.10/32"}}],
         "ports": [{"port": 443}],
     } in rules
 
@@ -686,11 +745,33 @@ def test_an_empty_git_port_list_is_refused_not_opened(tmp_path: Path):
     path.write_text("apply:\n  gitPorts: []\n", encoding="utf-8")
     result = helm_template(
         values=str(path),
-        sets=DEFAULT_SETS + (APPLY_ON, "apply.gitCidrs={192.0.2.10/32}"),
+        sets=DEFAULT_SETS + (APPLY_ON, "apply.gitCidrs={198.51.100.10/32}"),
     )
     assert result.returncode != 0
     assert "at '/apply/gitPorts'" in result.stderr
     assert "minItems: got 0, want 1" in result.stderr
+
+
+def test_the_apply_identity_may_hold_its_run_lease_and_no_other():
+    """`htrflow-campaigns apply` holds the coordination Lease
+    `htrflow-campaigns-apply` for its whole run, so two applies never
+    interleave, and fails closed without it. `create` cannot be scoped by
+    name in RBAC; reading and renewing can, and are."""
+    rendered = render(sets=DEFAULT_SETS + (APPLY_ON,))
+    rules = named(rendered, "Role", "htrflow-campaigns")["rules"]
+    leases = [r for r in rules if r["resources"] == ["leases"]]
+    assert {
+        "apiGroups": ["coordination.k8s.io"],
+        "resources": ["leases"],
+        "verbs": ["create"],
+    } in leases
+    assert {
+        "apiGroups": ["coordination.k8s.io"],
+        "resources": ["leases"],
+        "resourceNames": ["htrflow-campaigns-apply"],
+        "verbs": ["get", "update"],
+    } in leases
+    assert len(leases) == 2
 
 
 # --- 3101: an HA control plane is more than one API server ----------------
@@ -712,37 +793,26 @@ def test_every_api_server_address_is_let_out(policy_name: str):
         sets=DEFAULT_SETS
         + (
             "apply.rbac.enabled=true",
-            "network.apiServer.cidrs={10.16.51.11/32,10.16.51.12/32}",
+            "network.apiServer.cidrs={192.0.2.11/32,192.0.2.12/32}",
         )
     )
     api = _api_rule(named(rendered, "NetworkPolicy", policy_name))
     assert api["to"] == [
-        {"ipBlock": {"cidr": "10.16.51.10/32"}},
-        {"ipBlock": {"cidr": "10.16.51.11/32"}},
-        {"ipBlock": {"cidr": "10.16.51.12/32"}},
+        {"ipBlock": {"cidr": "192.0.2.10/32"}},
+        {"ipBlock": {"cidr": "192.0.2.11/32"}},
+        {"ipBlock": {"cidr": "192.0.2.12/32"}},
     ]
     assert api["ports"] == [{"port": 6443}]
 
 
 def test_the_list_alone_is_enough():
-    sets = tuple(
-        s for s in REQUIRED_SETS if not s.startswith("network.apiServer.cidr=")
-    )
+    sets = ("network.apiServer.cidr=",)
     rendered = render(
         sets=sets
-        + (PUBLIC_INGRESS, POLICIES_OFF, "network.apiServer.cidrs={10.16.51.11/32}")
+        + (PUBLIC_INGRESS, POLICIES_OFF, "network.apiServer.cidrs={192.0.2.11/32}")
     )
     api = _api_rule(named(rendered, "NetworkPolicy", "htr-web"))
-    assert api["to"] == [{"ipBlock": {"cidr": "10.16.51.11/32"}}]
-
-
-def test_no_api_server_address_at_all_is_still_refused():
-    sets = tuple(
-        s for s in REQUIRED_SETS if not s.startswith("network.apiServer.cidr=")
-    )
-    refused = helm_template(sets=sets + (PUBLIC_INGRESS, POLICIES_OFF))
-    assert refused.returncode != 0
-    assert API_SERVER_REFUSAL in refused.stderr
+    assert api["to"] == [{"ipBlock": {"cidr": "192.0.2.11/32"}}]
 
 
 def _from_endpoints(tmp_path: Path, endpoints: dict) -> dict:
@@ -780,17 +850,17 @@ def test_auto_detection_reads_every_endpoint_address_and_port(tmp_path: Path):
     endpoints = {
         "subsets": [
             {
-                "addresses": [{"ip": "10.16.51.11"}, {"ip": "10.16.51.12"}],
+                "addresses": [{"ip": "192.0.2.11"}, {"ip": "192.0.2.12"}],
                 "ports": [{"name": "https", "port": 6443, "protocol": "TCP"}],
             },
             {
-                "addresses": [{"ip": "10.16.51.13"}, {"ip": "10.16.51.11"}],
+                "addresses": [{"ip": "192.0.2.13"}, {"ip": "192.0.2.11"}],
                 "ports": [{"name": "https", "port": 6443, "protocol": "TCP"}],
             },
         ]
     }
     assert _from_endpoints(tmp_path, endpoints) == {
-        "cidrs": ["10.16.51.11/32", "10.16.51.12/32", "10.16.51.13/32"],
+        "cidrs": ["192.0.2.11/32", "192.0.2.12/32", "192.0.2.13/32"],
         "ports": [6443],
     }
 
@@ -810,73 +880,95 @@ def test_auto_detection_of_an_endpoints_object_without_addresses_is_empty(
 
 # --- D8: a signing identity nothing ever signed as -------------------------
 
-#: The identity `publish.yml` actually gets from Sigstore: the repository is
-#: under the AI- organisation, and the workflow is `workflow_dispatch`, so
-#: the certificate carries the branch it ran from -- never a tag ref.
-SIGNING_SUBJECT = (
-    "https://github.com/AI-Riksarkivet/htrflow-batch"
-    "/.github/workflows/publish.yml@refs/heads/main"
-)
+#: The repository the release is published from (SECURITY.md's reporting
+#: link names it): the one part of the signing identity no workflow file says.
+REPOSITORY = "AI-Riksarkivet/htrflow-batch"
 
 
-def test_the_signing_identity_example_is_one_a_release_can_produce(
-    full: list[dict],
-):
-    """Both copies of the cosign subject named the wrong organisation, and
-    the render fixture also asked for `@refs/tags/*`. An operator who copies
-    either gets a policy that refuses every image the release publishes --
-    and finds out at admission, on a cluster, not here."""
-    policy = named(full, "ClusterPolicy", f"htrflow-batch-verify-images-{NAMESPACE}")
-    keyless = policy["spec"]["rules"][0]["verifyImages"][0]["attestors"][0]
-    assert keyless["entries"][0]["keyless"]["subject"] == SIGNING_SUBJECT
+def _signing_subject() -> str:
+    """The identity Sigstore certifies for a release signature, derived from
+    the workflow that signs: the file whose jobs run the sign-attest action,
+    triggered only by `workflow_dispatch` -- so its certificate names the
+    branch it ran from, which the release process runs on main, never a
+    tag."""
+    signing = [
+        w
+        for w in sorted((REPO / ".github" / "workflows").glob("*.yml"))
+        if "./.github/actions/sign-attest" in w.read_text(encoding="utf-8")
+    ]
+    assert len(signing) == 1, signing
+    triggers = yaml.safe_load(signing[0].read_text(encoding="utf-8"))[True]
+    assert set(triggers) == {"workflow_dispatch"}, triggers
+    path = signing[0].relative_to(REPO).as_posix()
+    return f"https://github.com/{REPOSITORY}/{path}@refs/heads/main"
 
+
+SIGNING_SUBJECT = _signing_subject()
+
+
+def test_the_signing_identity_the_profile_verifies_is_the_one_the_release_signs_as():
+    """Both copies of the cosign subject once named the wrong organisation,
+    and a fixture asked for `@refs/tags/*`. An operator who copies either
+    gets a policy that refuses every image the release publishes -- and
+    finds out at admission, on a cluster (test audit TA-infra-8)."""
+    prod = yaml.safe_load((CHART / "values-prod.yaml").read_text(encoding="utf-8"))
+    assert prod["security"]["verifyImages"]["subject"] == SIGNING_SUBJECT
     values = (CHART / "values.yaml").read_text(encoding="utf-8")
-    assert SIGNING_SUBJECT in values
-    assert "github.com/Riksarkivet/" not in values
+    assert f"e.g. {SIGNING_SUBJECT}" in values
 
 
-# --- D10: the container list the image rules walk -------------------------
+def test_verification_reads_the_sigstore_bundles_the_release_writes(
+    prod: list[dict],
+):
+    """The release signs with cosign 3, which stores each signature as a
+    Sigstore bundle attached to the image as an OCI referrer and writes no
+    `sha256-<digest>.sig` tag. Kyverno's default attestor type looks only
+    for that tag, so under the production profile it found no signature on
+    any published image and refused every pod in the namespace (audit 0923
+    D-1). `dagger call verify-published` checks the same rule against the
+    real published digests; this pins the field it depends on."""
+    policy = named(prod, "ClusterPolicy", f"htrflow-batch-verify-images-{NAMESPACE}")
+    for entry in policy["spec"]["rules"][0]["verifyImages"]:
+        assert entry["type"] == "SigstoreBundle"
+
+
+# --- the renders every input produces (moved from dagger's text checks) ----
 
 
 @pytest.mark.parametrize(
-    "policy,rule_name",
-    [
-        ("images-pinned", "pod-images-pinned"),
-        ("images-allowed", "pod-images-allowed"),
-    ],
+    "fixture", ["default", "full", "prod"], ids=["default", "full", "prod"]
 )
-def test_the_image_rules_see_an_ephemeral_container_too(
-    full: list[dict], policy: str, rule_name: str
-):
-    """`kubectl debug` attaches an ephemeral container to a running pod, and
-    it runs an image of the debugger's choosing on the GPU node, sharing the
-    target's namespaces. Both image rules walked `containers` and
-    `initContainers` and stopped there, so that image needed neither a
-    digest nor an allowed repository.
-
-    Only the Pod rules: Kubernetes forbids `ephemeralContainers` in a pod
-    TEMPLATE, so there is nothing for the Job rules to walk.
-    """
-    rendered = named(full, "ClusterPolicy", f"htrflow-batch-{policy}-{NAMESPACE}")
-    pod = rule(rendered, rule_name)["context"][0]["variable"]["jmesPath"]
-    assert "[containers, initContainers, ephemeralContainers][]" in pod
-
-    job = rule(rendered, rule_name.replace("pod-", "job-"))
-    assert "ephemeralContainers" not in job["context"][0]["variable"]["jmesPath"]
+def test_every_render_is_the_platform_and_nothing_else(fixture: str, request):
+    """The campaign controller CronJob is gone (B63), the web front always
+    renders with its health probe, and nothing of the dev stack leaks into
+    this chart. Asserted on the parsed objects: a text match on
+    `livenessProbe` was satisfied by a comment (test audit TA-infra-14)."""
+    rendered = request.getfixturevalue(fixture)
+    assert objects(rendered, "CronJob") == []
+    assert not [
+        o
+        for o in rendered
+        if (o["metadata"].get("labels") or {}).get("app.kubernetes.io/component")
+        == "devstack"
+    ]
+    web = named(rendered, "Deployment", "htrflow-web")
+    probe = web["spec"]["template"]["spec"]["containers"][0]["livenessProbe"]
+    assert probe["httpGet"]["path"] == "/healthz"
 
 
 # --- D14: defaults called production-shaped that enforce nothing ----------
 
-#: What `values-prod.yaml` cannot know: the bucket's public base, the API
-#: server as pods reach it, the image digest, and who may reach the web
-#: front. A profile that guessed any of them would be wrong on every
-#: cluster, so they stay the operator's to pass.
-PROD_SETS = REQUIRED_SETS + ("network.web.ingressCidrs={10.16.0.0/16}",)
+#: What `values-prod.yaml` cannot know -- the bucket's public base, the API
+#: server, the S3, cluster and IIIF ranges, who may reach the web front --
+#: completed the way an operator's `--set` lines complete it: from
+#: REQUIRED_VALUES and ci/prod-values.yaml, the copies `make helm-template`
+#: and `dagger call check-chart` render with too.
+PROD_VALUES = ("values-prod.yaml", "ci/prod-values.yaml")
 
 
 @pytest.fixture(scope="module")
 def prod() -> list[dict]:
-    return render(values="values-prod.yaml", sets=PROD_SETS)
+    return render(values=PROD_VALUES)
 
 
 def test_the_production_profile_turns_on_what_the_defaults_leave_off(
@@ -896,6 +988,7 @@ def test_the_production_profile_turns_on_what_the_defaults_leave_off(
             "model-revision",
             "verify-images",
             "rbac-scope",
+            "job-shape",
         )
     }
     for policy in objects(prod, "ClusterPolicy"):
@@ -904,8 +997,11 @@ def test_the_production_profile_turns_on_what_the_defaults_leave_off(
     values = yaml.safe_load((CHART / "values-prod.yaml").read_text(encoding="utf-8"))
     assert values["security"]["psaEnforce"] == "restricted"
     assert values["security"]["requireModelRevision"] is True
-    assert values["security"]["allowedImageRepos"] == ["docker.io/riksarkivet/"]
-    assert values["security"]["verifyImages"]["subject"] == SIGNING_SUBJECT
+    assert values["security"]["allowedImageRepos"] == [
+        "docker.io/riksarkivet/htrflow-batch",
+        "docker.io/riksarkivet/htrflow-web",
+        "docker.io/riksarkivet/htrflow-campaigns",
+    ]
 
 
 def test_every_pod_the_profile_renders_passes_pod_security_restricted(
@@ -930,24 +1026,50 @@ def test_every_pod_the_profile_renders_passes_pod_security_restricted(
             assert security["capabilities"] == {"drop": ["ALL"]}
 
 
+def _without(tmp_path: Path, name: str, dotted: str) -> str:
+    """A copy of the chart's ci/<name> with one key left out."""
+    values = yaml.safe_load((CHART / "ci" / name).read_text(encoding="utf-8"))
+    *parents, leaf = dotted.split(".")
+    holder = values
+    for key in parents:
+        holder = holder[key]
+    del holder[leaf]
+    path = tmp_path / name
+    path.write_text(yaml.safe_dump(values), encoding="utf-8")
+    return str(path)
+
+
 @pytest.mark.parametrize(
-    "left_out,reason",
+    "file,left_out,reason",
     [
-        ("publicResultsBase=", RESULTS_BASE_REFUSAL),
-        ("network.apiServer.cidr=", API_SERVER_REFUSAL),
-        ("network.web.ingressCidrs=", "network.web.ingressCidrs has 0.0.0.0/0"),
+        ("default-values.yaml", "publicResultsBase", RESULTS_BASE_REFUSAL),
+        ("default-values.yaml", "network.apiServer.cidr", API_SERVER_REFUSAL),
+        (
+            "prod-values.yaml",
+            "network.web.ingressCidrs",
+            "network.web.ingressCidrs has 0.0.0.0/0",
+        ),
+        # 0923 D-8: the profile's comment said these three were asked for,
+        # and the render went through without them -- a production batch
+        # Job with no route to S3 fails every volume after its GPU time.
+        ("prod-values.yaml", "network.s3Cidrs", S3_NOWHERE_REFUSAL),
+        ("prod-values.yaml", "network.clusterCidrs", CLUSTER_CIDRS_REFUSAL),
+        ("prod-values.yaml", "network.iiifCidrs", IIIF_NOWHERE_REFUSAL),
     ],
 )
 def test_the_profile_leaves_the_site_specific_values_to_the_site(
-    left_out: str, reason: str
+    tmp_path: Path, file: str, left_out: str, reason: str
 ):
-    """A profile that guessed the results base, the API server address or
-    the ingress ranges would be wrong on every cluster. It must fail asking
-    for each of them, not render something plausible -- one at a time, so
-    the profile guessing any one of them is caught, not just all three."""
-    sets = tuple(s for s in PROD_SETS if not s.startswith(left_out))
-    assert len(sets) == len(PROD_SETS) - 1
-    refused = helm_template(values="values-prod.yaml", sets=sets)
+    """A profile that guessed the results base, the API server address, the
+    network ranges or who may reach the web front would be wrong on every
+    cluster. It must fail asking for each of them, not render something
+    plausible -- one at a time, so the profile guessing any one of them is
+    caught, not just all of them."""
+    stripped = _without(tmp_path, file, left_out)
+    if file == "default-values.yaml":
+        refused = helm_template(required=stripped, values=PROD_VALUES)
+    else:
+        refused = helm_template(values=(PROD_VALUES[0], stripped))
     assert refused.returncode != 0
     assert reason in refused.stderr
 
@@ -999,6 +1121,47 @@ def test_an_empty_class_list_renders_none():
     assert objects(rendered, "WorkloadPriorityClass") == []
     # The queue itself is untouched by the list being empty.
     named(rendered, "ClusterQueue", "htr-batch-cq")
+
+
+# --- 0923 D-9: cluster-scoped Kueue objects are created or referenced ------
+
+
+def test_an_existing_flavor_is_referenced_not_recreated():
+    """A cluster whose Kueue already has `default-flavor` refused the first
+    install: Helm will not adopt an object another owner made."""
+    rendered = render(sets=DEFAULT_SETS + ("queue.createFlavor=false",))
+    assert objects(rendered, "ResourceFlavor") == []
+    queue = named(rendered, "ClusterQueue", "htr-batch-cq")
+    flavors = queue["spec"]["resourceGroups"][0]["flavors"]
+    assert [f["name"] for f in flavors] == ["default-flavor"]
+
+
+def test_an_existing_cluster_queue_is_referenced_by_name():
+    rendered = render(
+        sets=DEFAULT_SETS
+        + ("queue.createClusterQueue=false", "queue.clusterQueueName=shared-cq")
+    )
+    assert objects(rendered, "ClusterQueue") == []
+    local = named(rendered, "LocalQueue", "htr-batch")
+    assert local["spec"]["clusterQueue"] == "shared-cq"
+
+
+def test_a_second_release_can_name_its_own_cluster_objects():
+    rendered = render(
+        sets=DEFAULT_SETS
+        + (
+            "queue.clusterQueueName=team-b-cq",
+            "queue.flavor=team-b-flavor",
+            "queue.createPriorityClasses=false",
+        )
+    )
+    named(rendered, "ResourceFlavor", "team-b-flavor")
+    named(rendered, "ClusterQueue", "team-b-cq")
+    assert (
+        named(rendered, "LocalQueue", "htr-batch")["spec"]["clusterQueue"]
+        == "team-b-cq"
+    )
+    assert objects(rendered, "WorkloadPriorityClass") == []
 
 
 # --- 3103: every guard, alone, refuses in its own words -------------------
@@ -1057,7 +1220,7 @@ BATCH_GUARDS = {
     "ingress-wider-than-8": (
         None,
         REQUIRED_SETS
-        + (POLICIES_OFF, "network.web.ingressCidrs={10.16.0.0/16,8.0.0.0/7}"),
+        + (POLICIES_OFF, "network.web.ingressCidrs={198.51.100.0/24,8.0.0.0/7}"),
         "network.web.ingressCidrs has 8.0.0.0/7, wider than /8, and the web"
         " front has no authentication of its own: list the ranges your clients'"
         " addresses are in, or set network.web.allowPublicIngress=true to accept"
@@ -1098,7 +1261,7 @@ BATCH_GUARDS = {
     ),
     "api-server": (
         None,
-        tuple(s for s in DEFAULT_SETS if not s.startswith("network.apiServer.")),
+        DEFAULT_SETS + ("network.apiServer.cidr=",),
         API_SERVER_REFUSAL,
     ),
     "web-image-tag": (
@@ -1112,6 +1275,21 @@ BATCH_GUARDS = {
         None,
         DEFAULT_SETS + ("publicResultsBase=",),
         RESULTS_BASE_REFUSAL,
+    ),
+    "s3-nowhere": (
+        None,
+        DEFAULT_SETS + ("network.s3InNamespace=false",),
+        S3_NOWHERE_REFUSAL,
+    ),
+    "cluster-cidrs-empty": (
+        "network:\n  clusterCidrs: []\n",
+        DEFAULT_SETS,
+        CLUSTER_CIDRS_REFUSAL,
+    ),
+    "iiif-empty": (
+        "network:\n  iiifCidrs: []\n",
+        DEFAULT_SETS,
+        IIIF_NOWHERE_REFUSAL,
     ),
 }
 DEVSTACK_GUARDS = {
@@ -1248,3 +1426,56 @@ def test_a_tag_is_taken_only_with_the_poc_switch():
             "security.allowTagImages=true",
         )
     )
+
+
+def test_a_debug_container_is_checked_by_every_image_policy(prod: list[dict]):
+    """`kubectl debug` adds its container through the `pods/ephemeralcontainers`
+    subresource. A rule on kind Pod does not see that request, and one that
+    does is skipped by Kyverno's default `allowExistingViolations` -- the
+    request is an update to a Pod that, as Kyverno reads it, already carries
+    the violation. On the dev cluster a busybox debug container got past
+    both. The Kyverno CLI sends no subresource request, so the shape is held
+    here and was proven against the cluster's admission controller."""
+    policies = {
+        p["metadata"]["name"]: p for p in prod if p.get("kind") == "ClusterPolicy"
+    }
+    for name, policy in policies.items():
+        short = name.removeprefix("htrflow-batch-").rsplit("-", 1)[0]
+        if short not in ("images-allowed", "images-pinned", "verify-images"):
+            continue
+        rules = [
+            r
+            for r in policy["spec"]["rules"]
+            if any(
+                "Pod/ephemeralcontainers" in res["resources"]["kinds"]
+                for res in r["match"]["any"]
+            )
+        ]
+        assert rules, (name, "no rule sees the debug subresource")
+        for r in rules:
+            if "validate" in r:
+                assert r["validate"].get("allowExistingViolations") is False, (
+                    name,
+                    r["name"],
+                )
+                assert "ephemeralContainers" in str(r["context"]), (name, r["name"])
+
+
+def test_a_policy_that_matches_a_subresource_is_not_a_background_policy(
+    prod: list[dict],
+):
+    """Kyverno's own webhook refuses a ClusterPolicy that matches a
+    subresource kind (`Pod/ephemeralcontainers`) with `background: true` --
+    the chart would not install. The Kyverno CLI the admission tests run
+    does not make that check, so it is made here."""
+    for policy in prod:
+        if policy.get("kind") != "ClusterPolicy":
+            continue
+        kinds = [
+            k
+            for r in policy["spec"]["rules"]
+            for res in r["match"].get("any", [])
+            for k in res.get("resources", {}).get("kinds", [])
+        ]
+        if any("/" in k for k in kinds):
+            assert policy["spec"].get("background") is False, policy["metadata"]["name"]

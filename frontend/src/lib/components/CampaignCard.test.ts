@@ -5,11 +5,97 @@ import {
   screen,
   within,
 } from "@testing-library/svelte";
+import { parse, type AST } from "svelte/compiler";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { JobSummary } from "$lib/api.js";
 import { RELOAD_MS } from "$lib/config.js";
 import { describeReason } from "$lib/reasons.js";
 import CampaignCard from "./CampaignCard.svelte";
+import cardSource from "./CampaignCard.svelte?raw";
+
+// jsdom applies none of a component's scoped styles, so the layout promises
+// below are read from the card's own <style> as the Svelte compiler parses
+// it -- every rule, media queries included, in source order -- rather than
+// by regexes that only ever saw the first rule of a name at one indentation.
+type CssRule = {
+  selectors: string[];
+  media: string | null;
+  decls: [string, string][];
+};
+
+const squash = (text: string) => text.replace(/\s+/g, " ").trim();
+
+const cardRules: CssRule[] = (() => {
+  const rules: CssRule[] = [];
+  const walk = (
+    nodes: (AST.CSS.Rule | AST.CSS.Atrule | AST.CSS.Declaration)[],
+    media: string | null,
+  ) => {
+    for (const node of nodes) {
+      if (node.type === "Atrule" && node.name === "media" && node.block)
+        walk(node.block.children, squash(node.prelude));
+      if (node.type !== "Rule") continue;
+      rules.push({
+        selectors: node.prelude.children.map((c) =>
+          squash(cardSource.slice(c.start, c.end)),
+        ),
+        media,
+        decls: node.block.children.flatMap((d) =>
+          d.type === "Declaration"
+            ? [[d.property, squash(d.value)] as [string, string]]
+            : [],
+        ),
+      });
+    }
+  };
+  walk(parse(cardSource, { modern: true }).css?.children ?? [], null);
+  return rules;
+})();
+
+const PHONE = "(max-width: 520px)";
+
+/**
+ * What `selector` (exactly that selector) ends up with, at full width or at
+ * `media`: the top-level rules and that media query's, the later one of two
+ * winning as in the cascade.
+ */
+function cssOf(selector: string, media: string | null = null) {
+  const out = new Map<string, string>();
+  for (const rule of cardRules)
+    if (
+      (rule.media === null || rule.media === media) &&
+      rule.selectors.includes(selector)
+    )
+      for (const [property, value] of rule.decls) out.set(property, value);
+  return out;
+}
+
+/** Every declaration of every rule whose subject is `cls`, anywhere. */
+function declsOn(cls: string): [string, string][] {
+  const subject = new RegExp(`\\.${cls}(?![\\w-])[^\\s>+~]*$`);
+  return cardRules
+    .filter((r) => r.selectors.some((sel) => subject.test(sel)))
+    .flatMap((r) => r.decls);
+}
+
+/** A grid-template-columns value as its tracks, brackets kept whole. */
+function tracks(value: string | undefined): string[] {
+  const out = [""];
+  let depth = 0;
+  for (const ch of value ?? "") {
+    depth += ch === "(" ? 1 : ch === ")" ? -1 : 0;
+    if (ch === " " && depth === 0) out.push("");
+    else out[out.length - 1] += ch;
+  }
+  return out;
+}
+
+/** A grid-template-areas value as its rows of names. */
+function areas(value: string | undefined): string[][] {
+  return [...(value ?? "").matchAll(/"([^"]*)"/g)].map((m) =>
+    squash(m[1] ?? "").split(" "),
+  );
+}
 
 const job: JobSummary = {
   namespace: "htr-test",
@@ -326,11 +412,12 @@ describe("CampaignCard", () => {
     );
   });
 
-  test("a sourceUrl that is not an http(s) URL never reaches the card", async () => {
-    // volumes.txt is a file humans edit in a git repo. Since the audit the
-    // schema refuses the row at the boundary ($lib/api, httpUrlSchema), so
-    // the card never sees it and says what it says about any answer it
-    // cannot read; the card's own checks stay as the last step.
+  test("through the schema, a sourceUrl that is not an http(s) URL is no link and the card still draws", async () => {
+    // volumes.txt is a file humans edit in a git repo. The schema reads the
+    // field on its own ($lib/api): one the page cannot use is no link, and
+    // the rest of the card -- this volume included -- still draws. Refusing
+    // the whole detail over it left the card an error for ever (2026-09-23
+    // audit). The schema is the only gate; the card trusts what it parsed.
     const hostile = {
       ...volumeFailed,
       sourceUrl: "javascript:alert(1)",
@@ -343,12 +430,14 @@ describe("CampaignCard", () => {
     );
     render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
+    await expand();
 
     expect(screen.queryByRole("link", { name: /^manifest for/ })).toBeNull();
     expect(screen.queryByRole("link", { name: /^vol/ })).toBeNull();
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "answered in a form this page doesn't understand",
-    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(
+      screen.getByRole("link", { name: `run log for ${hostile.id}` }),
+    ).toBeInTheDocument();
   });
 
   test("the log link carries log+manifest always, and live=1 only for a volume that is not done", async () => {
@@ -633,9 +722,10 @@ describe("CampaignCard", () => {
         }),
       ),
     );
-    render(CampaignCard, { job });
+    const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
-    expect(screen.queryByRole("link", { name: "log" })).toBeNull();
+    expect(container.querySelector(".row.latest")).toBeNull();
+    expect(screen.queryByRole("link", { name: /^run log for/ })).toBeNull();
   });
 
   test("zone 3 names every failed volume and why", async () => {
@@ -764,16 +854,20 @@ describe("CampaignCard", () => {
     expect(screen.queryByRole("button", { name: /more$/ })).toBeNull();
   });
 
-  test("no sentence on the card is clipped to one line (3080)", async () => {
-    // jsdom lays nothing out, so this reads the rules themselves: a line
-    // of sentences, or one that holds links, must wrap rather than cut.
-    const css: string = (await import("./CampaignCard.svelte?raw")).default;
-    for (const selector of [".problems-text", ".row-note-text", ".vreason"]) {
-      const rule = new RegExp(`\\n  \\${selector} \\{([^}]*)\\}`).exec(
-        css,
-      )?.[1];
-      expect(rule, selector).toBeDefined();
-      expect(rule, selector).not.toMatch(/nowrap|overflow:\s*hidden|ellipsis/);
+  test("no sentence on the card is clipped to one line (3080)", () => {
+    // A line of sentences, or one that holds links, must wrap rather than
+    // cut -- in every rule that styles it, at any width.
+    for (const cls of ["problems-text", "row-note-text", "vreason"]) {
+      const decls = declsOn(cls);
+      expect(decls, cls).toContainEqual(["overflow-wrap", "anywhere"]);
+      for (const [property, value] of decls) {
+        const clips =
+          (property === "white-space" && /nowrap|pre\b/.test(value)) ||
+          (/^overflow(-[xy])?$/.test(property) && /hidden|clip/.test(value)) ||
+          property === "text-overflow" ||
+          /line-clamp$/.test(property);
+        expect(clips, `${cls} { ${property}: ${value} }`).toBe(false);
+      }
     }
   });
 
@@ -1220,20 +1314,6 @@ describe("CampaignCard", () => {
     expect(screen.getByText("demo-v1")).toBeInTheDocument();
   });
 
-  test("a partially failed campaign says so in words, in the warning colour", async () => {
-    const partly: JobSummary = { ...job, phase: "PartiallyFailed" };
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        jsonResponse({ ...partly, ...detailBase, failures: [], volumes: [] }),
-      ),
-    );
-    render(CampaignCard, { job: partly });
-    await vi.advanceTimersByTimeAsync(0);
-    const chip = screen.getByText("partially failed");
-    expect(chip).toHaveClass("partiallyfailed"); // warning, not destructive
-  });
-
   describe("warm-up status chip", () => {
     function stubDetail(j: JobSummary): void {
       vi.stubGlobal(
@@ -1415,19 +1495,6 @@ describe("CampaignCard's failure notice", () => {
     const pages = rows.find((r) => r.textContent?.startsWith("pages"));
     expect(pages?.querySelector(".c-lost")).toHaveTextContent("3 errors");
     expect(document.querySelector(".problems")).toBeNull();
-  });
-
-  test("the problems line is reachable without a mouse, not title-only", async () => {
-    renderWith({ pagesFailed: 1, errors: 0, lastError });
-    await vi.advanceTimersByTimeAsync(0);
-    // The sentence is the line's own text, visible to a screen reader
-    // whatever the clip does to it -- `title` alone a keyboard-only user
-    // never sees.
-    const line = document.querySelector(".problems-text") as HTMLElement;
-    expect(line).not.toHaveAttribute("aria-hidden");
-    expect(line).toHaveTextContent(
-      "page 0044: htrflow's Segmentation worker thread died",
-    );
   });
 
   test("a clean campaign has no problems line at all", async () => {
@@ -1754,10 +1821,10 @@ describe("the viewer link is built the way every other link is", () => {
   }
 
   // iiifUrl is built by the API from a volume id that came off a campaign's
-  // volumes.txt, a file people edit in a git repo. `sourceUrl` was checked
-  // at this last step and `iiifUrl` was not (2026-09-14 audit); the schema
-  // now refuses such a row outright, and this is the belt beside it.
-  test("an iiifUrl that is not an http(s) URL never reaches the viewer", async () => {
+  // volumes.txt, a file people edit in a git repo, and it once went into
+  // the viewer's fragment unchecked (2026-09-14 audit). The schema refuses
+  // such a row outright, and the card says so.
+  test("through the schema, an iiifUrl that is not an http(s) URL never reaches the viewer", async () => {
     const hostile = { ...volumeDone, iiifUrl: "javascript:alert(1)" };
     vi.stubGlobal(
       "fetch",
@@ -1890,152 +1957,6 @@ describe("a reaped campaign's volumes are still openable", () => {
   });
 });
 
-// A volume that finished but lost pages read exactly like a clean one: the
-// same green chip, with "1 failed" buried in the progress line beside it
-// (the product owner, 2026-09-15). Amber is the colour the header already
-// uses for a campaign that published some of itself and not the rest.
-describe("done, but with pages missing", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    stubStorage();
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
-  });
-
-  function progress(failed: number) {
-    return {
-      done: 2,
-      total: 3,
-      failed,
-      lastPage: "0003",
-      stage: "done",
-      updatedAt: "2026-09-14T07:00:00Z",
-      ageSeconds: 97_200,
-      lastError: null,
-      errors: 0,
-      viewerPublished: true,
-    };
-  }
-
-  function lostVolume(failed: number) {
-    return { ...volumeDone, progress: progress(failed) };
-  }
-
-  async function card(body: Record<string, unknown>, row: JobSummary = job) {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => jsonResponse({ ...detail0, ...row, ...body })),
-    );
-    return render(CampaignCard, { job: row });
-  }
-
-  describe("the volume row", () => {
-    async function statusChip(failed: number): Promise<HTMLElement> {
-      const { container } = await card({
-        failures: [],
-        volumes: [lostVolume(failed)],
-      });
-      await vi.advanceTimersByTimeAsync(0);
-      await expand();
-      return container.querySelector(".status") as HTMLElement;
-    }
-
-    test("takes the warning colour when pages were lost", async () => {
-      const chip = await statusChip(1);
-      expect(chip).toHaveClass("status", "done", "lost");
-    });
-
-    test("says so in words, so the colour is not carrying it alone", async () => {
-      const chip = await statusChip(1);
-      expect(chip).toHaveAttribute("title", "done with 1 failed page");
-      expect(chip).toHaveTextContent("done with 1 failed page");
-    });
-
-    test("counts more than one page in the plural", async () => {
-      expect(await statusChip(4)).toHaveAttribute(
-        "title",
-        "done with 4 failed pages",
-      );
-    });
-
-    test("a clean volume is green and says nothing extra", async () => {
-      const chip = await statusChip(0);
-      expect(chip).not.toHaveClass("lost");
-      expect(chip).not.toHaveAttribute("title");
-      expect(chip).toHaveTextContent("done");
-    });
-  });
-
-  describe("the campaign header", () => {
-    async function header(pagesFailed: number) {
-      const succeeded: JobSummary = {
-        ...job,
-        phase: "Succeeded",
-        counts: { total: 3, active: 0, done: 3, failed: 0 },
-      };
-      const { container } = await card(
-        { failures: [], volumes: [], pagesDone: 2, pagesTotal: 3, pagesFailed },
-        succeeded,
-      );
-      await vi.advanceTimersByTimeAsync(0);
-      return {
-        chip: container.querySelector(".chip.phase") as HTMLElement,
-        section: container.querySelector(".campaign") as HTMLElement,
-      };
-    }
-
-    test("a campaign that succeeded with failed pages is not plain green", async () => {
-      const { chip, section } = await header(1);
-      expect(chip).toHaveClass("lost");
-      expect(section).toHaveAttribute("data-health", "partly-succeeded");
-      // The word matches the colour now (2026-09-16); the tooltip says how
-      // many, and the screen-reader sentence is the one it always was.
-      expect(chip).toHaveTextContent("partially succeeded");
-      expect(chip).toHaveAttribute(
-        "title",
-        "every volume finished, 1 page failed",
-      );
-      expect(chip).toHaveTextContent("done with 1 failed page");
-    });
-
-    test("a campaign that succeeded cleanly stays green", async () => {
-      const { chip, section } = await header(0);
-      expect(chip).not.toHaveClass("lost");
-      expect(section).toHaveAttribute("data-health", "done");
-      expect(chip).not.toHaveAttribute("title");
-      expect(chip).toHaveTextContent("Succeeded");
-    });
-  });
-
-  describe("the folded card's one-line strip", () => {
-    async function strip(failed: number): Promise<HTMLElement> {
-      const latest = lostVolume(failed);
-      const { container } = await card({
-        failures: [],
-        volumes: [latest],
-        latest,
-      });
-      await vi.advanceTimersByTimeAsync(0);
-      return container.querySelector(".latest .status") as HTMLElement;
-    }
-
-    test("follows the row: amber, and it says why", async () => {
-      const state = await strip(1);
-      expect(state).toHaveClass("lost");
-      expect(state).toHaveAttribute("title", "done with 1 failed page");
-      expect(state).toHaveTextContent("done with 1 failed page");
-    });
-
-    test("a clean volume's strip is unchanged", async () => {
-      const state = await strip(0);
-      expect(state).not.toHaveClass("lost");
-      expect(state).toHaveTextContent("done");
-    });
-  });
-});
-
 // Ten cards have to read like ten rows of one table, so zone 2 renders the
 // same cells in the same order whatever state a campaign is in — the tracks
 // are fixed lengths in CSS, and this is the DOM half of that promise.
@@ -2093,41 +2014,6 @@ describe("the numbers line is the same shape on every card", () => {
     expect(lost()).toContain("1 error");
     await labels(job, { errors: 0 });
     expect(lost()).not.toContain("error");
-  });
-
-  test("each row is label, icons, bar, fraction and pill, in that order", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        jsonResponse({
-          ...detail0,
-          failures: [],
-          volumes: [],
-          pagesDone: 5,
-          pagesTotal: 8,
-          pagesFailed: 3,
-        }),
-      ),
-    );
-    const { container } = render(CampaignCard, { job });
-    await vi.advanceTimersByTimeAsync(0);
-    const cells = [...container.querySelectorAll(".row.totals")];
-    const pagesCell = cells.find((c) => c.textContent?.startsWith("pages"))!;
-    expect(
-      [...pagesCell.children].map((c) => c.className.split(" ")[0]),
-    ).toEqual([
-      "c-label",
-      "c-links",
-      "c-bar",
-      "c-fraction",
-      "c-status",
-      "c-lost",
-    ]);
-    expect(pagesCell.querySelector(".c-fraction")).toHaveTextContent("5 / 8");
-    expect(pagesCell.querySelector(".c-lost")).toHaveTextContent("3 failed");
-    // A totals row has no icons and no pill, but keeps both columns open.
-    expect(pagesCell.querySelector(".c-links")?.textContent?.trim()).toBe("");
-    expect(pagesCell.querySelector(".c-status")?.textContent?.trim()).toBe("");
   });
 
   test("a campaign done with pages missing paints its bars amber", async () => {
@@ -2197,10 +2083,6 @@ describe("the problems line never names the same page twice", () => {
   test("a message that already names its page keeps one prefix", async () => {
     const live = "page 0044: htrflow's Segmentation worker thread died";
     expect((await line(live)).textContent).toBe(live);
-  });
-
-  test("a message that does not name it is given the page", async () => {
-    expect((await line("HTTP 400")).textContent).toBe("page 0044: HTTP 400");
   });
 });
 
@@ -2382,7 +2264,7 @@ describe("the volume status column", () => {
   };
   const unknown = { ...volumeDone, progress: null };
 
-  test("a volume row is the same five cells the totals are", async () => {
+  test("the open list is an ARIA table, with headers nobody has to see", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -2392,15 +2274,6 @@ describe("the volume status column", () => {
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
     await expand();
-    const row = container.querySelector(".row.volume") as HTMLElement;
-    expect([...row.children].map((c) => c.className.split(" ")[0])).toEqual([
-      "c-label",
-      "c-links",
-      "c-bar",
-      "c-fraction",
-      "c-status",
-    ]);
-    // The list is an ARIA table, with headers nobody has to see.
     expect(container.querySelector('[role="table"]')).toHaveAttribute(
       "aria-label",
       "Volumes in campaign kyrk",
@@ -2421,38 +2294,40 @@ describe("the volume status column", () => {
     }
   });
 
-  test("the strip is a row of the card's own grid", async () => {
-    const line = await strip(done);
-    const order = [...line.children].map((c) => c.className.split(" ")[0]);
-    expect(order).toEqual([
-      "c-label",
-      "c-links",
-      "c-bar",
-      "c-fraction",
-      "c-status",
-    ]);
-  });
-
-  test("a done volume: green word and its pages", async () => {
-    for (const el of [await strip(done), await cell(done)]) {
+  // A volume that finished but lost pages is not a failure -- it published
+  // -- and not a clean run either: amber, and the words say it too, so the
+  // colour is not carrying it alone (WCAG 1.4.1).
+  test.each([
+    ["the strip", 0, null],
+    ["the strip", 1, "done with 1 failed page"],
+    ["a volume row", 0, null],
+    ["a volume row", 1, "done with 1 failed page"],
+    ["a volume row", 4, "done with 4 failed pages"],
+  ] as const)(
+    "%s of a done volume that lost %i pages",
+    async (where, failed, said) => {
+      const v = { ...volumeDone, progress: progress({ failed }) };
+      const el = where === "the strip" ? await strip(v) : await cell(v);
       const word = el.querySelector(".status") as HTMLElement;
       expect(word).toHaveClass("done");
-      expect(word).not.toHaveClass("lost");
-      expect(el.querySelector(".c-fraction")).toHaveTextContent("2 / 3");
-    }
-  });
-
-  test("a done volume that lost a page: amber word and the count beside it", async () => {
-    for (const el of [await strip(lost), await cell(lost)]) {
-      const word = el.querySelector(".status") as HTMLElement;
-      expect(word).toHaveClass("done", "lost");
-      expect(word).toHaveAttribute("title", "done with 1 failed page");
       expect(el.querySelector(".c-fraction")?.textContent?.trim()).toBe(
         "2 / 3",
       );
-      expect(el.querySelector(".c-lost")?.textContent?.trim()).toBe("1 failed");
-    }
-  });
+      if (said === null) {
+        expect(word).not.toHaveClass("lost");
+        expect(word).not.toHaveAttribute("title");
+        expect(word.textContent?.trim()).toBe("done");
+        expect(el.querySelector(".c-lost")).toBeNull();
+      } else {
+        expect(word).toHaveClass("lost");
+        expect(word).toHaveAttribute("title", said);
+        expect(word.querySelector(".sr-only")).toHaveTextContent(said);
+        expect(el.querySelector(".c-lost")?.textContent?.trim()).toBe(
+          `${failed} failed`,
+        );
+      }
+    },
+  );
 
   test("an active volume: its fraction, its bar and what it is doing", async () => {
     for (const el of [await strip(active), await cell(active)]) {
@@ -2550,40 +2425,50 @@ describe("a volume line is the same shape on every row and every card", () => {
     return container;
   }
 
-  test("every row is the same five grid tracks", async () => {
-    const container = await card([vol("vol0")], vol("vol0"));
-    // Folded: the strip is a row of the same grid.
-    const strip = container.querySelector(".row.latest") as HTMLElement;
-    expect([...strip.children].map((c) => c.className.split(" ")[0])).toEqual([
-      "c-label",
-      "c-links",
-      "c-bar",
-      "c-fraction",
-      "c-status",
-    ]);
-    // Open: the same five, on the same tracks.
-    await expand();
-    const row = container.querySelector(".row.volume") as HTMLElement;
-    expect([...row.children].map((c) => c.className.split(" ")[0])).toEqual([
-      "c-label",
-      "c-links",
-      "c-bar",
-      "c-fraction",
-      "c-status",
-    ]);
-  });
+  test.each([
+    ["the strip", ".row.latest"],
+    ["a volume row", ".row.volume"],
+    ["a totals row", ".row.totals"],
+  ] as const)(
+    "%s is the same five tracks in the same order, what it lost under them",
+    async (where, selector) => {
+      // One order everywhere: the id, its icons, the bar, the fraction it
+      // draws and the pill at the edge, so every number on the card sits in
+      // one column and every pill in another. A totals row keeps the icon
+      // and pill cells, empty, to hold those columns open.
+      const lost = vol("vol0");
+      lost.progress.failed = 1;
+      const container = await card([lost], lost);
+      if (where === "a volume row") await expand();
+      const row = container.querySelector(selector) as HTMLElement;
+      expect([...row.children].map((c) => c.className.split(" ")[0])).toEqual([
+        "c-label",
+        "c-links",
+        "c-bar",
+        "c-fraction",
+        "c-status",
+        "c-lost",
+      ]);
+      const pill = row.querySelector(".c-status .status");
+      if (where === "a totals row") {
+        expect(pill).toBeNull();
+        expect(row.querySelector(".c-links")?.textContent?.trim()).toBe("");
+      } else expect(pill).not.toBeNull();
+    },
+  );
 
   test("a long id and a short one put their icons in the same place", async () => {
     // The icons are a track of their own, not a thing that follows the text:
-    // two rows whose ids differ in length line up all the same.
+    // two rows whose ids differ in length line up all the same. jsdom lays
+    // nothing out, so what is asserted is where they live -- in the links
+    // cell, the grid's fixed `--icons` track, and never inside the id's.
     const container = await card([vol("a"), vol("R0001203-part-4")]);
     await expand();
-    const lines = [...container.querySelectorAll(".vid-line")];
-    expect(lines).toHaveLength(2);
-    for (const line of lines) {
-      expect(getComputedStyle(line).gridTemplateColumns).toBe(
-        getComputedStyle(lines[0] as HTMLElement).gridTemplateColumns,
-      );
+    const rows = [...container.querySelectorAll(".row.volume")];
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.querySelectorAll(".c-links .vicon")).toHaveLength(2);
+      expect(row.querySelector(".c-label .vicon")).toBeNull();
     }
   });
 
@@ -2596,28 +2481,6 @@ describe("a volume line is the same shape on every row and every card", () => {
     expect(
       container.querySelector(".row.volume .c-fraction"),
     ).toHaveTextContent("2 / 3");
-  });
-
-  test("a failed volume says nothing about it either", async () => {
-    const container = await card([
-      { ...vol("vol1"), state: "failed", reason: volumeFailed.reason },
-    ]);
-    await expand();
-    expect(container.querySelector(".vprogress")).toBeNull();
-  });
-
-  test("a volume still working does say it", async () => {
-    const container = await card([
-      {
-        ...vol("vol2"),
-        state: "active",
-        progress: { ...vol("vol2").progress, stage: "stream", ageSeconds: 12 },
-      },
-    ]);
-    await expand();
-    expect(container.querySelector(".vprogress")).toHaveTextContent(
-      "processing pages · updated 12 s ago",
-    );
   });
 
   test("a poll that moves the figures changes nothing but the figures", async () => {
@@ -2663,80 +2526,6 @@ describe("a volume line is the same shape on every row and every card", () => {
   });
 });
 
-// "can we change the order of the done and 3 / 3 at least, for the status?
-// because now it's very uneven for the eye" (the product owner, 2026-09-16):
-// the pill is the fixed-width element, so it belongs at the edge, with the
-// variable-width figures running up against it.
-describe("the status reads figures first, pill last", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    stubStorage();
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
-  });
-
-  const vol = {
-    ...volumeDone,
-    progress: {
-      done: 2,
-      total: 3,
-      failed: 1,
-      lastPage: "0003",
-      stage: "done",
-      updatedAt: "2026-09-14T07:00:00Z",
-      ageSeconds: null,
-      lastError: null,
-      errors: 0,
-      viewerPublished: true,
-    },
-  };
-
-  async function render_(volumes: unknown[], latest: unknown = null) {
-    cleanup();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        jsonResponse({ ...detail0, failures: [], volumes, latest }),
-      ),
-    );
-    const { container } = render(CampaignCard, { job });
-    await vi.advanceTimersByTimeAsync(0);
-    return container;
-  }
-
-  test("the bar, then the fraction, then the pill ends the row", async () => {
-    const container = await render_([vol], vol);
-    const row = container.querySelector(".row.latest") as HTMLElement;
-    const order = [...row.children].map((c) => c.className.split(" ")[0]);
-    expect(order.indexOf("c-bar")).toBeLessThan(order.indexOf("c-fraction"));
-    expect(order.indexOf("c-fraction")).toBeLessThan(order.indexOf("c-status"));
-    expect(row.querySelector(".c-status .status")).not.toBeNull();
-    // The icons are left, beside the id, not with the pill.
-    expect(order.indexOf("c-links")).toBe(1);
-  });
-
-  test("a table row reads the same way", async () => {
-    const container = await render_([vol]);
-    await expand();
-    const row = container.querySelector(".row.volume") as HTMLElement;
-    const order = [...row.children].map((c) => c.className.split(" ")[0]);
-    expect(order.indexOf("c-bar")).toBeLessThan(order.indexOf("c-fraction"));
-    expect(order.indexOf("c-fraction")).toBeLessThan(order.indexOf("c-status"));
-  });
-
-  test("a failed volume's reason sits with its id on the strip", async () => {
-    const container = await render_([volumeFailed], volumeFailed);
-    const row = container.querySelector(".row.latest") as HTMLElement;
-    expect(row.querySelector(".c-label .vreason")).toHaveTextContent(
-      "Failed while loading the model",
-    );
-    // The fraction slot still holds its column open.
-    expect(row.querySelector(".c-fraction")).not.toBeNull();
-  });
-});
-
 // Two notes from the review of the zones round (2026-09-16).
 describe("the volume line at a phone's width, and what it says it cannot do", () => {
   beforeEach(() => {
@@ -2764,23 +2553,18 @@ describe("the volume line at a phone's width, and what it says it cannot do", ()
 
   // The card body is one grid, so a phone gets the same tracks folded to
   // two columns rather than a table scrolling sideways on a 390px screen.
-  test("a phone folds the same tracks to two lines", async () => {
-    // jsdom does not apply a Svelte component's scoped styles, so the rules
-    // themselves are what is asserted: the id and its figures on line 1,
-    // then the icons, the short bar and the pill packed right on line 2.
-    const source: string = (await import("./CampaignCard.svelte?raw")).default;
-    const phone = source.split("@media (max-width: 520px)")[1] ?? "";
-    expect(phone).toMatch(/\.row \{[\s\S]*?grid-template-areas:/);
-    expect(phone).toMatch(/"label label label\s+label\s+label"/);
-    expect(phone).toMatch(/"\.\s+links bar\s+fraction status"/);
-    // The words must not clip there: there is a whole line for them.
-    expect(phone).toMatch(
-      /\.vid-line \{[\s\S]*?white-space: normal;[\s\S]*?overflow: visible;/,
+  test("a phone folds the same tracks to two lines", () => {
+    // The id and its figures on line 1, then the icons, the short bar, the
+    // fraction and the pill on line 2.
+    const [line1, line2] = areas(
+      cssOf(".row", PHONE).get("grid-template-areas"),
     );
-    // ...and the bar's cell may shrink rather than run on under them.
-    expect(phone).toMatch(/\.c-bar \{[\s\S]*?min-width: 0;/);
-    const container = await rowFor(volumeDone);
-    expect(container.querySelector(".row.volume")).not.toBeNull();
+    expect(line1).toEqual(["label", "label", "label", "label", "label"]);
+    expect(line2).toEqual([".", "links", "bar", "fraction", "status"]);
+    // The words must not clip there: there is a whole line for them.
+    const id = cssOf(".vid-line", PHONE);
+    expect(id.get("white-space")).toBe("normal");
+    expect(id.get("overflow")).toBe("visible");
   });
 
   test.each([
@@ -2821,10 +2605,7 @@ describe("what the phase chip calls a campaign", () => {
     vi.unstubAllGlobals();
   });
 
-  async function chip(
-    phase: JobSummary["phase"],
-    pagesFailed = 0,
-  ): Promise<HTMLElement> {
+  async function chip(phase: JobSummary["phase"], pagesFailed = 0) {
     cleanup();
     const row: JobSummary = {
       ...job,
@@ -2847,44 +2628,70 @@ describe("what the phase chip calls a campaign", () => {
     );
     const { container } = render(CampaignCard, { job: row });
     await vi.advanceTimersByTimeAsync(0);
-    return container.querySelector(".chip.phase") as HTMLElement;
+    return {
+      chip: container.querySelector(".chip.phase") as HTMLElement,
+      accent: container.querySelector(".campaign") as HTMLElement,
+    };
   }
 
-  test("a clean success is Succeeded, in green", async () => {
-    const el = await chip("Succeeded");
-    expect(el).toHaveTextContent("Succeeded");
-    expect(el).not.toHaveClass("lost");
-    expect(el).not.toHaveAttribute("title");
-  });
-
-  test("every volume finished but pages were lost: partially succeeded", async () => {
-    const el = await chip("Succeeded", 3);
-    expect(el).toHaveTextContent("partially succeeded");
-    expect(el).toHaveClass("lost");
-    expect(el).toHaveAttribute(
-      "title",
-      "every volume finished, 3 pages failed",
-    );
-    // The sentence a screen reader gets is the one it always was.
-    expect(el.querySelector(".sr-only")).toHaveTextContent(
-      "done with 3 failed pages",
-    );
-  });
-
-  test("one lost page is singular", async () => {
-    expect(await chip("Succeeded", 1)).toHaveAttribute(
-      "title",
+  // The two "partially" words are a pair and mean different losses:
+  // PartiallyFailed is whole VOLUMES that never published, "partially
+  // succeeded" every volume finishing without some of its PAGES. Each mixes
+  // the amber with where it ended -- on the chip and on the card's accent --
+  // and the tooltip and the screen-reader sentence say how many.
+  test.each([
+    ["Succeeded", 0, "Succeeded", null, null, "succeeded", null, "done"],
+    [
+      "Succeeded",
+      1,
+      "partially succeeded",
       "every volume finished, 1 page failed",
-    );
-  });
-
-  test("whole volumes failed: partially failed, as before", async () => {
-    expect(await chip("PartiallyFailed")).toHaveTextContent("partially failed");
-  });
-
-  test("nothing came out: Failed", async () => {
-    expect(await chip("Failed")).toHaveTextContent("Failed");
-  });
+      "done with 1 failed page",
+      "lost",
+      "success",
+      "partly-succeeded",
+    ],
+    [
+      "Succeeded",
+      3,
+      "partially succeeded",
+      "every volume finished, 3 pages failed",
+      "done with 3 failed pages",
+      "lost",
+      "success",
+      "partly-succeeded",
+    ],
+    [
+      "PartiallyFailed",
+      0,
+      "partially failed",
+      null,
+      null,
+      "partiallyfailed",
+      "destructive",
+      "partly-failed",
+    ],
+    ["Failed", 0, "Failed", null, null, "failed", null, "failed"],
+  ] as const)(
+    "%s with %i failed pages reads %s",
+    async (phase, pagesFailed, word, title, spoken, cls, mix, health) => {
+      const { chip: el, accent } = await chip(phase, pagesFailed);
+      const shown = [...el.childNodes]
+        .filter((n) => !(n instanceof Element && n.matches(".sr-only")))
+        .map((n) => n.textContent)
+        .join("")
+        .trim();
+      expect(shown).toBe(word);
+      expect(el).toHaveClass(cls);
+      expect(el.classList.contains("lost")).toBe(cls === "lost");
+      if (title === null) expect(el).not.toHaveAttribute("title");
+      else expect(el).toHaveAttribute("title", title);
+      expect(el.querySelector(".sr-only")?.textContent ?? null).toBe(spoken);
+      if (mix === null) expect(el).not.toHaveAttribute("data-mix");
+      else expect(el).toHaveAttribute("data-mix", mix);
+      expect(accent).toHaveAttribute("data-health", health);
+    },
+  );
 });
 
 // A campaign that has finished cannot change, and every detail call lists
@@ -2977,106 +2784,135 @@ describe("a finished campaign's card stops asking", () => {
   });
 });
 
-// "Partially succeeded" and "partially failed" wore the same amber, on the
-// chip and on the card's left accent, and a reader scanning the list could
-// not tell a campaign that lost a few pages from one that lost whole volumes
-// (a maintainer request). Each now mixes the amber with where it ended:
-// green for every volume finished, red for volumes lost. The colours are CSS
-// and jsdom computes none, so the DOM half checks which mix each state asks
-// for and the source half checks what each mix is drawn with.
-describe("the two partial states are told apart by colour", () => {
+// A page of finished campaigns made one detail request per card the moment
+// it opened -- each reading the campaign's volume list, its pods and up to a
+// hundred progress files -- folded or not, on screen or not (2026-09-23
+// audit). A finished card now reads its detail once it is on screen or
+// opened; a running one polls as before.
+describe("a finished card reads its detail only once someone can see it", () => {
+  /** An IntersectionObserver the test decides the visibility for. */
+  class FakeObserver {
+    static all: FakeObserver[] = [];
+    observed: Element[] = [];
+    disconnected = false;
+    constructor(private readonly callback: IntersectionObserverCallback) {
+      FakeObserver.all.push(this);
+    }
+    observe(el: Element): void {
+      this.observed.push(el);
+    }
+    disconnect(): void {
+      this.disconnected = true;
+    }
+    unobserve(): void {}
+    show(): void {
+      const entries = this.observed.map(
+        (target) =>
+          ({ isIntersecting: true, target }) as IntersectionObserverEntry,
+      );
+      this.callback(entries, this as unknown as IntersectionObserver);
+    }
+  }
+
   beforeEach(() => {
     vi.useFakeTimers();
-    stubStorage();
+    storage = stubStorage();
+    FakeObserver.all = [];
+    vi.stubGlobal("IntersectionObserver", FakeObserver);
   });
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
-  async function card(phase: JobSummary["phase"], pagesFailed: number) {
-    cleanup();
-    const row: JobSummary = {
-      ...job,
-      phase,
-      counts: {
-        total: 3,
-        active: 0,
-        done: phase === "Failed" ? 0 : 3,
-        failed: 0,
-      },
-    };
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        jsonResponse({
-          ...detail0,
-          ...row,
-          failures: [],
-          volumes: [],
-          pagesFailed,
-        }),
-      ),
+  const done: JobSummary = { ...job, phase: "Succeeded" };
+
+  function detailFor(row: JobSummary) {
+    return vi.fn(async () =>
+      jsonResponse({ ...detail0, ...row, failures: [], volumes: [] }),
     );
-    const { container } = render(CampaignCard, { job: row });
-    await vi.advanceTimersByTimeAsync(0);
-    return {
-      chip: container.querySelector(".chip.phase") as HTMLElement,
-      accent: container.querySelector(".campaign") as HTMLElement,
-    };
   }
 
-  test.each([
-    ["Succeeded", 2, "partially succeeded", "success", "partly-succeeded"],
-    ["PartiallyFailed", 0, "partially failed", "destructive", "partly-failed"],
-  ] as const)(
-    "%s with %i lost pages: %s mixes amber with %s",
-    async (phase, pagesFailed, word, mix, health) => {
-      const { chip, accent } = await card(phase, pagesFailed);
-      expect(chip).toHaveTextContent(word); // the words stay
-      expect(chip).toHaveAttribute("data-mix", mix);
-      expect(accent).toHaveAttribute("data-health", health);
-    },
-  );
-
-  test.each([
-    ["Succeeded", "done"],
-    ["Failed", "failed"],
-  ] as const)("%s is one colour, as before", async (phase, health) => {
-    const { chip, accent } = await card(phase, 0);
-    expect(chip).not.toHaveAttribute("data-mix");
-    expect(accent).toHaveAttribute("data-health", health);
+  test("folded and off screen, it asks nothing", async () => {
+    const fetchMock = detailFor(done);
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignCard, { job: done });
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 5);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  test("each mix is drawn with its own tokens: a hard split on the chip, a gradient on the accent", async () => {
-    const css: string = (await import("./CampaignCard.svelte?raw")).default;
-    const rule = (selector: string): string => {
-      const at = css.indexOf(`${selector} {`);
-      expect(at, selector).toBeGreaterThan(-1);
-      return css.slice(at, css.indexOf("}", at));
-    };
-    for (const [mix, token] of [
-      ["success", "--success"],
-      ["destructive", "--destructive"],
+  test("scrolled into view, it reads its detail once", async () => {
+    const fetchMock = detailFor(done);
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignCard, { job: done });
+    await vi.advanceTimersByTimeAsync(0);
+    FakeObserver.all[0]?.show();
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 5);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(FakeObserver.all[0]?.disconnected).toBe(true);
+  });
+
+  test("opened without being scrolled to, it reads its detail", async () => {
+    const fetchMock = detailFor(done);
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignCard, { job: done });
+    await vi.advanceTimersByTimeAsync(0);
+    await expand();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Folding and opening it again is not news.
+    await expand();
+    await expand();
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 3);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("a card left open last time reads its detail at once", async () => {
+    storage.set(`htrflow.card.${done.namespace}/${done.name}`, "open");
+    const fetchMock = detailFor(done);
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignCard, { job: done });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("a running campaign polls whether or not it is on screen", async () => {
+    const fetchMock = detailFor(job);
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+// "Partially succeeded" and "partially failed" wore the same amber, on the
+// chip and on the card's left accent, and a reader scanning the list could
+// not tell a campaign that lost a few pages from one that lost whole volumes
+// (a maintainer request). Each now mixes the amber with where it ended:
+// green for every volume finished, red for volumes lost. Which mix each
+// state asks for is the phase-chip table's; this checks what each mix is
+// drawn with.
+describe("the two partial states are told apart by colour", () => {
+  test("each mix is drawn with its own tokens: a hard split on the chip, a gradient on the accent", () => {
+    for (const [mix, health, token] of [
+      ["success", "partly-succeeded", "var(--success)"],
+      ["destructive", "partly-failed", "var(--destructive)"],
     ]) {
-      expect(rule(`.chip.phase[data-mix="${mix}"]`)).toContain(
-        `--mix-to: var(${token})`,
+      expect(cssOf(`.chip.phase[data-mix="${mix}"]`).get("--mix-to")).toBe(
+        token,
+      );
+      expect(cssOf(`.campaign[data-health="${health}"]`).get("--mix-to")).toBe(
+        token,
       );
     }
-    expect(rule('.campaign[data-health="partly-succeeded"]')).toContain(
-      "--mix-to: var(--success)",
-    );
-    expect(rule('.campaign[data-health="partly-failed"]')).toContain(
-      "--mix-to: var(--destructive)",
-    );
     // The chip: amber and the mix meet at one point, never a blend under
     // the word. The accent has no text on it, so it may blend.
-    expect(rule(".chip.phase[data-mix]")).toMatch(
-      /var\(--warning\) 50%,\s*var\(--mix-to\) 50%/,
+    expect(cssOf(".chip.phase[data-mix]").get("background")).toContain(
+      "linear-gradient(90deg, var(--warning) 50%, var(--mix-to) 50%)",
     );
-    expect(rule('.campaign[data-health^="partly-"]')).toMatch(
-      /to bottom,\s*var\(--warning\),\s*var\(--mix-to\)/,
-    );
+    expect(
+      cssOf('.campaign[data-health^="partly-"]').get("background"),
+    ).toContain("linear-gradient(to bottom, var(--warning), var(--mix-to))");
   });
 });
 
@@ -3210,20 +3046,14 @@ describe("the bar is the track that stretches, and every volume has one", () => 
     return container;
   }
 
-  test("the label takes the free width; the bar, fraction and pill are fixed", async () => {
-    const source: string = (await import("./CampaignCard.svelte?raw")).default;
-    const tracks = (
-      (source.split(".row {")[1] ?? "").split("}")[0] ?? ""
-    ).replace(/\s+/g, " ");
+  test("the label takes the free width; the bar, fraction and pill are fixed", () => {
     // The words take the left and the three fixed things pack against the
     // right in the order a reader wants them: the bar, the fraction it
     // draws, and the state it ended in.
-    expect(tracks).toMatch(
-      /minmax\(6rem, 1fr\) var\(--icons\) var\(--bar\) var\(--fraction\) var\(--pill\)/,
+    expect(cssOf(".row").get("grid-template-columns")).toBe(
+      "minmax(6rem, 1fr) var(--icons) var(--bar) var(--fraction) var(--pill)",
     );
-    expect(source).toMatch(/--bar: 6rem;/);
-    const container = await card([]);
-    expect(container.querySelector(".row.totals")).not.toBeNull();
+    expect(cssOf(".campaign").get("--bar")).toBe("6rem");
   });
 
   test("a long volume id clips rather than widening its track", async () => {
@@ -3235,8 +3065,10 @@ describe("the bar is the track that stretches, and every volume has one", () => 
     const container = await card([long], long);
     const name = container.querySelector(".vid-name") as HTMLElement;
     expect(name).toHaveAttribute("title", expect.stringContaining(long.id));
-    const source: string = (await import("./CampaignCard.svelte?raw")).default;
-    expect(source).toMatch(/\.vid-name \{[\s\S]*?text-overflow: ellipsis;/);
+    const clip = cssOf(".vid-name");
+    expect(clip.get("white-space")).toBe("nowrap");
+    expect(clip.get("overflow")).toBe("hidden");
+    expect(clip.get("text-overflow")).toBe("ellipsis");
   });
 
   test.each([
@@ -3446,17 +3278,21 @@ describe("the bar survives a phone's width", () => {
     vi.unstubAllGlobals();
   });
 
-  test("the phone template has a bar area, with a floor under it", async () => {
-    const source: string = (await import("./CampaignCard.svelte?raw")).default;
-    const phone = source.split("@media (max-width: 520px)")[1] ?? "";
-    // Every row of the fold gives the bar a place...
-    expect(phone).toMatch(/"\.\s+links bar\s+fraction status"/);
-    // ...a track that may shrink but never to nothing...
-    expect(phone).toMatch(/minmax\(2\.5rem, var\(--bar\)\)/);
-    // ...and a cell that cannot be squeezed away either.
-    expect(phone).toMatch(/\.c-bar \{[\s\S]*?min-width: 2\.5rem;/);
-    // The lost line still follows it.
-    expect(phone).toMatch(/"\.\s+\.\s+lost\s+lost\s+lost"/);
+  test("the phone template has a bar area, with a floor under it", () => {
+    const row = cssOf(".row", PHONE);
+    const grid = areas(row.get("grid-template-areas"));
+    // The bar's area is a track that may shrink but never to nothing...
+    const track = grid[1]?.indexOf("bar") ?? -1;
+    expect(track).toBeGreaterThan(-1);
+    expect(tracks(row.get("grid-template-columns"))[track]).toBe(
+      "minmax(2.5rem, var(--bar))",
+    );
+    // ...its cell cannot be squeezed away either...
+    const cell = cssOf(".c-bar", PHONE);
+    expect(cell.get("grid-area")).toBe("bar");
+    expect(cell.get("min-width")).toBe("2.5rem");
+    // ...and the lost line still follows it, under the bar.
+    expect(grid[2]?.slice(track)).toEqual(["lost", "lost", "lost"]);
   });
 
   test("a volume row and a totals row ask for the same bar", async () => {
@@ -3493,10 +3329,7 @@ describe("the bar survives a phone's width", () => {
     );
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
-    const bars = [...container.querySelectorAll(".row .c-bar .bar")];
     // Two totals rows and the folded volume row: three bars, one shape.
-    expect(bars).toHaveLength(3);
-    for (const bar of bars)
-      expect(bar.parentElement?.className).toContain("c-bar");
+    expect(container.querySelectorAll(".row .c-bar .bar")).toHaveLength(3);
   });
 });

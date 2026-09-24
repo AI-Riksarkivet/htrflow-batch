@@ -16,16 +16,20 @@ them, and never removes a field this tool stopped rendering.
 """
 
 import json
+import re
+from pathlib import Path
 
 import pytest
 from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 from urllib3.exceptions import MaxRetryError, ReadTimeoutError
 
+from htrflow_converter import cluster as cluster_mod
 from htrflow_converter.cluster import (
     APPLY_PATCH,
     FIELD_MANAGER,
     REQUEST_TIMEOUT,
+    SUSPEND_HOLDER,
     Cluster,
     ClusterError,
     Unreachable,
@@ -103,6 +107,44 @@ def test_apply_is_a_server_side_apply_patch(cluster, obj, path):
     assert call["query"]["fieldManager"] == FIELD_MANAGER
     assert call["query"]["force"] is True
     assert call["body"] is obj, "the manifest itself is the patch"
+
+
+def _suspended(*managers: str) -> dict:
+    fields = {"f:spec": {"f:suspend": {}}}
+    return {
+        "metadata": {
+            "name": "kyrk",
+            "managedFields": [{"manager": m, "fieldsV1": fields} for m in managers],
+        },
+        "spec": {"suspend": True},
+    }
+
+
+def test_holding_suspend_is_an_unforced_apply_of_that_field_alone(cluster):
+    """The hand-over server-side apply prescribes: the same value, under a
+    manager of its own, never forced -- so it can never take the field from
+    Kueue, only share it with the apply's own manager."""
+    cluster.hold_suspend(_suspended(FIELD_MANAGER))
+    (call,) = cluster.calls
+    assert call["path"] == "/apis/batch/v1/namespaces/htr-batch/jobs/kyrk"
+    assert call["content_type"] == APPLY_PATCH
+    assert call["query"]["fieldManager"] == SUSPEND_HOLDER
+    assert call["query"]["force"] is False
+    assert call["body"]["spec"] == {"suspend": True}
+
+
+def test_suspend_is_held_only_when_the_apply_alone_owns_it(cluster):
+    cluster.hold_suspend(_suspended(FIELD_MANAGER, "kueue"))  # Kueue holds it
+    cluster.hold_suspend({**_suspended(FIELD_MANAGER), "spec": {"suspend": False}})
+    assert cluster.calls == []
+
+
+def test_a_conflict_while_holding_suspend_means_kueue_has_it(cluster, monkeypatch):
+    def conflict(*args, **kwargs):
+        raise ApiException(status=409, reason="Conflict")
+
+    monkeypatch.setattr(client.ApiClient, "call_api", conflict)
+    cluster.hold_suspend(_suspended(FIELD_MANAGER))  # no exception
 
 
 def test_a_dry_run_apply_is_the_same_patch_with_dry_run_all(cluster):
@@ -200,6 +242,7 @@ def test_the_other_api_error_sentences():
 
     missing = _api_error("list", "Workload", "", "htr-batch", ApiException(status=404))
     assert str(missing).startswith("Kueue is not installed in this cluster")
+    assert "kueue.x-k8s.io/v1beta2" in str(missing), "a version not served 404s too"
     # a 404 on the patch means the Workload went away, not that Kueue did
     gone = _api_error(
         "patch", "Workload", "wl-x", "htr-batch", ApiException(status=404)
@@ -306,9 +349,22 @@ def test_the_workload_is_found_by_the_jobs_uid(cluster):
     assert cluster.sync_pause({"metadata": {"name": "k", "uid": "u9"}}, False, 0) == 0
     (call,) = cluster.calls
     assert call["path"] == (
-        "/apis/kueue.x-k8s.io/v1beta1/namespaces/htr-batch/workloads"
+        "/apis/kueue.x-k8s.io/v1beta2/namespaces/htr-batch/workloads"
     )
     assert call["query"]["labelSelector"] == "kueue.x-k8s.io/job-uid=u9"
+
+
+def test_the_pause_sync_speaks_the_kueue_version_the_chart_installs_objects_in():
+    """The chart creates the queue in one Kueue API version and the pause
+    sync patched Workloads in another, older one. Kueue serves a deprecated
+    version only until it drops it, and on that day the list 404s -- read as
+    "Kueue is not installed" -- and a campaign git says is paused keeps
+    running. One version, and a rename on either side fails here."""
+    template = Path(__file__).parents[3] / "charts/htrflow-batch/templates/kueue.yaml"
+    versions = set(
+        re.findall(r"^apiVersion:\s*(kueue\.x-k8s\.io/\S+)", template.read_text(), re.M)
+    )
+    assert versions == {"/".join(cluster_mod._KUEUE)}
 
 
 def _immutable_refusal(field: str = "spec.template") -> ApiException:
@@ -569,3 +625,58 @@ def test_a_server_that_stays_gone_is_unreachable_not_refused(
     with pytest.raises(Unreachable):
         cluster.get("Job", "kyrk")
     assert slept == [1, 2, 4]
+
+
+@pytest.mark.parametrize("status", [401, 403, 409, 422])
+def test_a_read_the_server_refused_is_an_error_never_no_object(
+    cluster, monkeypatch, status
+):
+    """``get`` is how the apply tells a campaign nobody ran from a finished
+    one whose Job was reaped, and whether a live check has anything to hold
+    against. Only a 404 is "there is none"; a refused read taken for one
+    re-runs a finished campaign and skips the check (3093)."""
+
+    def call_api(self, *a, **kw):
+        raise ApiException(status=status, reason="refused")
+
+    monkeypatch.setattr(client.ApiClient, "call_api", call_api)
+    with pytest.raises(ClusterError) as exc:
+        cluster.get("Job", "kyrk")
+    assert "Job/kyrk" in str(exc.value)
+
+
+def test_a_read_answered_404_is_no_object(cluster, monkeypatch):
+    def call_api(self, *a, **kw):
+        raise ApiException(status=404, reason="Not Found")
+
+    monkeypatch.setattr(client.ApiClient, "call_api", call_api)
+    assert cluster.get("Job", "kyrk") is None
+
+
+def test_the_lease_is_a_coordination_lease_created_then_released(cluster, monkeypatch):
+    """One apply at a time: a GET that finds no Lease, a POST that creates
+    it holding this process, and a PUT on the way out that lets it go --
+    carrying the resourceVersion the POST answered, so a Lease taken over in
+    between is a 409, not a second holder."""
+    sent: list[tuple[str, str, dict | None]] = []
+
+    def call_api(self, resource_path, method, path_params=None, *args, **kwargs):
+        path = resource_path.format(**(path_params or {}))
+        sent.append((method, path, kwargs.get("body")))
+        if method == "GET":
+            raise ApiException(status=404, reason="Not Found")
+        body = json.loads(json.dumps(kwargs["body"]))
+        body["metadata"]["resourceVersion"] = "41"
+        return _Response(body)
+
+    monkeypatch.setattr(client.ApiClient, "call_api", call_api)
+    with cluster.lease():
+        pass
+    base = "/apis/coordination.k8s.io/v1/namespaces/htr-batch/leases"
+    (get, _, _), (post, post_path, created), (put, put_path, released) = sent
+    assert (get, post, post_path) == ("GET", "POST", base)
+    assert created["spec"]["holderIdentity"]
+    assert created["spec"]["leaseDurationSeconds"] == cluster_mod.LEASE_SECONDS
+    assert (put, put_path) == ("PUT", f"{base}/{cluster_mod.LEASE}")
+    assert released["spec"]["holderIdentity"] is None
+    assert released["metadata"]["resourceVersion"] == "41"

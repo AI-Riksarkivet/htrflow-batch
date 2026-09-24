@@ -46,9 +46,7 @@ which a browser on the host cannot resolve.
 
 The stack's RustFS credentials are throwaway values from `.env.example`
 (`HTR_DEV_S3_ACCESS_KEY`, `HTR_DEV_S3_SECRET_KEY`). Never reuse them for a
-cluster. The compose project is named `htrflow-batch-smoke`, so
-`docker compose down` cannot touch another project that also runs from a
-directory called `.docker`.
+cluster.
 
 ## On a dev cluster: the devstack chart
 
@@ -67,9 +65,9 @@ credentials. The [Security](../how-it-works/security.md) page lists its
 caveats.
 
 You need a Kubernetes cluster with one NVIDIA GPU node that the htrflow
-image's CUDA build supports, a kubeconfig for it, and `kubectl`, `helm`,
-`make` and `uv`. The published, signed images are used, so nothing has to be
-built.
+image's CUDA build supports ([Prerequisites](index.md)), a kubeconfig for
+it, and `kubectl`, `helm`, `make` and `uv`. The published, signed images are
+used, so nothing has to be built.
 
 ### 1. Install the prerequisites and the devstack
 
@@ -89,13 +87,12 @@ that namespace.
 
 - `KYVERNO=false` skips Kyverno.
 - `NVIDIA_DEVICE_PLUGIN=false` leaves the device plugin and RuntimeClass out,
-  for a cluster that already has them. The target refuses this while GPU
-  pods are running, because deleting the RuntimeClass and DaemonSet takes
-  those pods down. It also refuses when it cannot list the cluster's pods
-  to find out. `FORCE=1` overrides the check.
-- A device plugin or RuntimeClass that was applied by hand must first be
-  adopted into the release, or kept outside it. The commands are under
-  "Adopting hand-applied resources" in `charts/htrflow-devstack/README.md`.
+  for a cluster that already has them. The target refuses while GPU pods are
+  running (or when it cannot list pods), since removing them takes those
+  pods down; `FORCE=1` overrides.
+- A device plugin or RuntimeClass applied by hand must first be adopted into
+  the release, or kept outside it: "Adopting hand-applied resources" in
+  `charts/htrflow-devstack/README.md`.
 
 ### 2. Install htrflow-batch
 
@@ -111,40 +108,26 @@ helm upgrade --install htr charts/htrflow-batch -n <namespace> \
 make psa-labels
 ```
 
-- `<node-address>` is the address your browser reaches the node at. The
-  browser loads the web front from port 30800 and every result from port
-  30900.
+- `<node-address>` is where your browser reaches the node: the web front on
+  port 30800, every result on port 30900.
 - `web.internalResultsBase` points the read API at RustFS's in-cluster
-  Service. Without it, the read API resolves `publicResultsBase` from inside
-  its pod and shows no progress for any campaign.
-- `<apiserver-address>` is the API server as pods reach it. On a single-node
-  cluster this is usually the node's address.
+  Service. Without it the read API shows no progress for any campaign.
+- `<apiserver-address>` is the API server as pods reach it; on one node,
+  usually the node's address.
 - `network.iiifCidrs` must cover the host you transcribe from. Campaign pods
   can reach nothing else.
-- `network.web.allowPublicIngress` accepts the default ingress list, which is
-  every address: the web front has no authentication of its own, so the chart
-  will not render that silently. On a dev cluster it is what you want; in
-  front of anything real, list `network.web.ingressCidrs` instead.
-- `security.policies.allowDisabled` accepts running without the Kyverno
-  policies, which are off by default. The chart refuses to render with them
-  off unless this says so. Turn them on with `security.policies.enabled=true`
-  once Kyverno is running, as the [Deploy](deploy.md) profile does.
+- `network.web.allowPublicIngress` accepts ingress from every address. The
+  web front has no authentication, so in front of anything real list
+  `network.web.ingressCidrs` instead.
+- `security.policies.allowDisabled` accepts running with the Kyverno
+  policies off (their default); the chart refuses to render otherwise.
 
-The security policies stay off here. Kyverno is installed, but no policy is
-rendered. To turn them on, allow the images this namespace runs:
-
-```bash
-  --set security.policies.enabled=true \
-  --set security.allowedImageRepos='{docker.io/riksarkivet/,rustfs/,docker.io/amazon/aws-cli}'
-```
-
-Add `<registry>/` when you run images from the devstack registry. `make
-poc-push` builds the wrapper and web images for the architecture of the
-machine it runs on, pushes them to the registry named by `HTR_REGISTRY` in
-`.env`, and prints the digests to pin.
-While iterating on the web front, `--set security.allowTagImages=true` lets
-`web.image` be a tag, which is then pulled on every rollout.
-[Dev cluster](../development/dev-cluster.md) covers that loop.
+To turn the policies on, add `--set security.policies.enabled=true` and
+allow the images this namespace runs with
+`--set security.allowedImageRepos='{docker.io/riksarkivet/,rustfs/,docker.io/amazon/aws-cli}'`
+(plus `<registry>/` for images from the devstack registry). Building and
+pushing your own images is covered in
+[Dev cluster](../development/dev-cluster.md).
 
 ### 3. Describe what to transcribe
 
@@ -167,8 +150,9 @@ volumes:
 ```
 
 A bare string instead of `id:` plus `manifest:` is a reference code, expanded
-through `source_template` in `converter.yaml`. Set that template for your
-source before you use bare references.
+through `source_template` in `converter.yaml`. That template has no default:
+set it for your source before you use bare references, or `validate` refuses
+them.
 [Campaign & Pipeline YAML](../reference/campaign-yaml.md) has every format.
 
 ```bash
@@ -207,6 +191,7 @@ does not redo the published pages, and the index still reaches `Complete`.
 
 ## Next
 
-- [Deploy](deploy.md): your own S3, the policies on, the hardening steps.
+- [Prerequisites](index.md) and [Deploy](deploy.md): your own S3, the
+  policies on, the hardening steps.
 - [Run a campaign](campaigns.md): a campaigns repo of your own, applied
   through CI.

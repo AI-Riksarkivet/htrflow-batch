@@ -180,17 +180,11 @@ class _StoredAlto:
     """A store with no dims of its own: every page was published earlier."""
 
     def __init__(self):
-        self.reads, self.puts, self.page_dims = [], {}, {}
+        self.reads, self.page_dims = [], {}
 
     def get_bytes(self, key):
         self.reads.append(key)
         return ALTO.encode()
-
-    def put_json(self, key, obj):
-        self.puts[key] = obj
-
-    def put_text(self, key, text, content_type):
-        self.puts[key] = text
 
 
 def test_alto_dims_reads_every_page_back_from_the_store(tmp_path):
@@ -204,3 +198,33 @@ def test_alto_dims_reads_every_page_back_from_the_store(tmp_path):
 
     assert dims == {"0001": (2500, 3538), "0002": (2500, 3538)}
     assert store.reads == ["alto/0001.xml", "alto/0002.xml"]
+
+
+def test_a_store_error_reading_a_stored_alto_fails_the_publish(tmp_path):
+    """Audit 0923 W-6: a transient GET error on a resumed page's ALTO was
+    swallowed, and that canvas dropped out of the final iiif.json for good
+    -- manifest.json went out after it, so nothing ever wrote it again. The
+    store's error propagates now: the run exits 1 and the retry redoes only
+    the publish."""
+    import pytest
+
+    cfg = _cfg(tmp_path)
+    store = _StoredAlto()
+
+    def get_bytes(key):
+        raise ConnectionError("SlowDown")
+
+    store.get_bytes = get_bytes
+    with pytest.raises(ConnectionError, match="SlowDown"):
+        publish.alto_dims(cfg, store, _pages(), {"0001", "0002"})
+
+
+def test_a_stored_alto_that_does_not_parse_is_still_left_out(tmp_path):
+    """The one thing a retry cannot change: that page has no dimensions."""
+    cfg = _cfg(tmp_path)
+    store = _StoredAlto()
+    store.get_bytes = lambda key: b"<alto" if key == "alto/0001.xml" else ALTO.encode()
+
+    assert publish.alto_dims(cfg, store, _pages(), {"0001", "0002"}) == {
+        "0002": (2500, 3538)
+    }

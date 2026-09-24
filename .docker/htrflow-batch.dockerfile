@@ -29,11 +29,13 @@
 # Reproducibility (audit W8/S7, finding 3060): every input is pinned.
 #   * images and the uv binary by digest, htrflow by commit;
 #   * every Python package from a lockfile, with hashes: htrflow and torch
-#     from the base lock (torch 2.9.1/torchvision 0.24.1 from PyTorch's
-#     cu128 index on amd64, for Blackwell sm_120 kernels on CUDA 12 drivers;
-#     2.13.0/0.28.0 from PyPI on arm64, CUDA 13), the wrapper's dependencies
+#     from the base lock (torch 2.13.0/torchvision 0.28.0 on both: from
+#     PyTorch's cu129 index on amd64, for Blackwell sm_120 kernels on CUDA
+#     12 drivers; from PyPI on arm64, CUDA 13), the wrapper's dependencies
 #     and the leaf overrides from the workspace lock, the transformers line
-#     from a hashed requirements file. Nothing is resolved at build time;
+#     from a hashed requirements file, and the build backend of the packages
+#     built here (htrflow, the wrapper) from .docker/build-constraints.txt.
+#     Nothing is resolved at build time;
 #   * apt packages stay unpinned: Ubuntu's archive drops superseded
 #     versions, so an exact apt pin breaks the build on the next security
 #     update (a snapshot mirror is the real fix, out of scope here).
@@ -41,8 +43,8 @@
 # `make lock-htrflow-base` after moving HTRFLOW_REF or the overlay.
 #
 # Build args:
-#   HTRFLOW_REF            the htrflow commit the base is built from. Renovate
-#                          tracks it; a new one needs `make lock-htrflow-base`
+#   HTRFLOW_REF            the htrflow commit the base is built from, moved by
+#                          hand; a new one needs `make lock-htrflow-base`
 #                          in the same change, or the build refuses it.
 #   HTRFLOW_BASE_REVISION  what the image says it runs, stamped into the
 #                          `se.riksarkivet.htrflow.base.revision` label and
@@ -78,10 +80,23 @@ COPY --from=htrflow-src pyproject.toml /tmp/htrflow-pyproject.toml
 RUN cat /tmp/htrflow-pyproject.toml /tmp/overlay.toml | cmp -s - /app/pyproject.toml \
     || { echo "htrflow's pyproject.toml is not the one .docker/htrflow-base/uv.lock was made" \
               "for: run make lock-htrflow-base for this HTRFLOW_REF"; exit 1; }
-RUN uv sync --locked --no-install-project
+# The dependencies come from the lock, hashed, as wheels: --no-build fails
+# the step instead of building an sdist whose build requirements no lock
+# pins.
+RUN uv sync --locked --no-install-project --no-build
+# htrflow itself is built here, and its build backend is not in uv.lock
+# (a lock pins what is installed, not what builds it). `uv build` takes it
+# from .docker/build-constraints.txt with --require-hashes, which refuses any
+# build requirement that is not pinned and hashed there (audit 0923 D-11).
+# A wheel, not an editable install: the image runs the installed package, so
+# the source tree stays in this stage.
 COPY --from=htrflow-src src/ /app/src/
 COPY --from=htrflow-src LICENSE README.md /app/
-RUN uv sync --locked
+RUN --mount=type=bind,source=.docker/build-constraints.txt,target=/tmp/build-constraints.txt \
+    uv build --wheel --python /app/.venv/bin/python --require-hashes \
+         --build-constraints /tmp/build-constraints.txt -o /tmp/dist . \
+    && uv pip install --python /app/.venv/bin/python --no-build --no-deps /tmp/dist/*.whl \
+    && rm -rf /tmp/dist
 
 FROM nvidia/cuda:12.1.0-base-ubuntu22.04@sha256:40042016a816cbbe0504dd0a396e7cfc036a8aa43f5694af60dd6f8f87d24e52 AS htrflow-base
 ARG DEBIAN_FRONTEND=noninteractive
@@ -91,9 +106,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=htrflow-builder /app/.venv /app/.venv
-COPY --from=htrflow-builder /app/src /app/src
-ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONPATH="/app:"
+# No PYTHONPATH: htrflow is an installed wheel in the venv, and /app holds
+# nothing but the venv (an empty entry would also put the working directory
+# on sys.path).
+ENV PATH="/app/.venv/bin:$PATH"
 ARG HTRFLOW_REF
 ARG HTRFLOW_BASE_REVISION=${HTRFLOW_REF}
 LABEL org.opencontainers.image.source.htrflow="https://github.com/AI-Riksarkivet/htrflow/tree/${HTRFLOW_REF}" \
@@ -104,7 +120,6 @@ ENV HTRFLOW_BASE_REVISION=${HTRFLOW_BASE_REVISION}
 
 FROM htrflow-base AS runtime
 LABEL org.opencontainers.image.licenses="EUPL-1.2"
-ARG TARGETARCH
 
 # uv 0.12.6 (multi-arch index digest)
 COPY --from=ghcr.io/astral-sh/uv:0.12.6@sha256:88bc6eb1ccd4b82efd0e1b530caffabddf50dc2bf612e66c14ea25b8ee8a4d3d /uv /bin/uv
@@ -137,21 +152,35 @@ RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
     cd /opt/workspace \
     && uv export --locked --package htrflow-batch-wrapper --no-dev --no-emit-project \
          -o /tmp/wrapper-requirements.txt \
-    && uv pip install --python /app/.venv/bin/python --no-cache --require-hashes \
+    && uv pip install --python /app/.venv/bin/python --no-build --no-cache --require-hashes \
          -r /tmp/wrapper-requirements.txt \
     && rm /tmp/wrapper-requirements.txt
-COPY packages/wrapper /opt/wrapper
-RUN uv pip install --python /app/.venv/bin/python --no-cache --no-deps /opt/wrapper
+# The package itself is built with its build backend pinned and hashed, the
+# same way as htrflow in the builder stage (audit 0923 D-11), from a bind
+# mount: only the wheel goes into the image, not the source and its tests.
+RUN --mount=type=bind,source=.docker/build-constraints.txt,target=/tmp/build-constraints.txt \
+    --mount=type=bind,source=packages/wrapper,target=/opt/wrapper \
+    uv build --wheel --python /app/.venv/bin/python --no-cache --require-hashes \
+         --build-constraints /tmp/build-constraints.txt -o /tmp/dist /opt/wrapper \
+    && uv pip install --python /app/.venv/bin/python --no-build --no-cache --no-deps /tmp/dist/*.whl \
+    && rm -rf /tmp/dist
 
-# arm64 only: triton JIT-compiles its CUDA utils (a CPython extension) at
-# runtime, so it needs a C compiler and Python headers or TrOCR generation
-# dies with "Failed to find C compiler" on the GPU path. The locally built
-# base does not carry them.
-RUN if [ "$TARGETARCH" = "arm64" ]; then \
-      apt-get update && apt-get install -y --no-install-recommends \
-        gcc libc6-dev python3.10-dev \
-      && rm -rf /var/lib/apt/lists/*; \
-    fi
+# No compiler in this image, and no code generated at run time. torch 2.13
+# (both architectures) routes some operators through its own Triton kernels
+# (torch._native: TrOCR's attention bmm is one), and the first such call
+# JIT-compiles Triton's CUDA launcher, a CPython extension, with the system C
+# compiler. Without one TrOCR generation dies with "Failed to find C
+# compiler"; with one the image carries gcc and the kernel headers for it
+# (linux-libc-dev, a steady stream of kernel CVEs). TORCH_DISABLE_NATIVE_JIT
+# keeps those operators on torch's precompiled ATen/cuBLAS kernels, so
+# nothing writes, compiles or loads new machine code under the read-only
+# root filesystem; the check at the end of this file proves the switch
+# still works. Nothing else JIT-compiles by default:
+# htrflow does not call torch.compile, and ultralytics leaves it off. A
+# pipeline that opts into compilation (ultralytics' `compile`, a static
+# cache in transformers' generation settings) is unsupported: it fails for
+# want of a compiler, on every architecture.
+ENV TORCH_DISABLE_NATIVE_JIT=1
 
 # The transformers line, both architectures, pinned here so the image says
 # which one it runs. Two lines exist because the models do not agree: a
@@ -170,8 +199,9 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
 # it to convert, and 5.x dropped that conversion) and protobuf (transformers
 # only imports it on the error path of loading a slow tokenizer, and without
 # it that path reports "requires the protobuf library" INSTEAD of the real
-# error). They go in with --no-deps --require-hashes, so nothing here is
-# resolved at build time and nothing else in the base moves; the check at
+# error). They go in with --no-deps --require-hashes --no-build, so nothing
+# here is resolved or built from source at build time and nothing else in the
+# base moves; the check at
 # the end of this file proves their own requirements are met. A
 # TRANSFORMERS_VERSION the file does not pin fails the build.
 ARG TRANSFORMERS_VERSION=4.57.6
@@ -180,7 +210,7 @@ RUN --mount=type=bind,source=.docker/transformers,target=/opt/transformers \
     && { grep -q "^transformers==${TRANSFORMERS_VERSION} " "$req" \
          || { echo "TRANSFORMERS_VERSION=${TRANSFORMERS_VERSION} is not the version" \
                    ".docker/transformers/ pins for its line"; exit 1; }; } \
-    && uv pip install --python /app/.venv/bin/python --no-cache --no-deps --require-hashes \
+    && uv pip install --python /app/.venv/bin/python --no-build --no-cache --no-deps --require-hashes \
          -r "$req"
 
 # Packages of the base's venv with published fixes that htrflow's own lock
@@ -197,7 +227,7 @@ RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
     cd /opt/workspace \
     && uv export --locked --only-group wrapper-image --no-emit-project \
          -o /tmp/image-requirements.txt \
-    && uv pip install --python /app/.venv/bin/python --no-cache --no-deps --require-hashes \
+    && uv pip install --python /app/.venv/bin/python --no-build --no-cache --no-deps --require-hashes \
          -r /tmp/image-requirements.txt \
     && rm /tmp/image-requirements.txt
 
@@ -236,6 +266,20 @@ for dist in ("htrflow-batch-wrapper", "transformers", "huggingface-hub"):
 if bad:
     sys.exit("requirements not satisfied:\n  " + "\n  ".join(bad))
 print("wrapper and transformers requirements satisfied")
+
+# TORCH_DISABLE_NATIVE_JIT (above) is read by torch's private torch._native
+# layer, so a torch bump could rename it, or register a JIT-compiled
+# override some other way, and nothing would notice until a GPU job died
+# for want of a compiler. The overrides register at import, with no GPU, so
+# this asserts the outcome: none but the precompiled "native" kind. Both
+# architectures run a torch with the layer, so a torch without it, or a
+# layer that no longer has this table, fails: the check cannot go stale.
+from torch._native import registry
+
+jit = set(registry._dsl_name_to_lib_graph) - {"native"}
+if jit:
+    sys.exit(f"torch registers JIT-compiled operator overrides: {sorted(jit)}")
+print("torch registers no JIT-compiled operator overrides")
 CHECK
 
 # The release this image is published under: the publish workflow passes its

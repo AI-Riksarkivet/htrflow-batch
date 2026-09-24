@@ -19,8 +19,13 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
+import socket
 import sys
 import time
+import uuid
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 from kubernetes import client, config
@@ -35,9 +40,18 @@ from .render import CAMPAIGN_SELECTOR, WARMUP_PREFIX
 #: `last-applied-configuration` annotation played, kept by the API server.
 FIELD_MANAGER = "htrflow-campaigns"
 APPLY_PATCH = "application/apply-patch+yaml"
+#: Holds a resuming campaign Job's ``spec.suspend: true`` for Kueue
+#: (``Cluster.hold_suspend``). A manager of its own, so that the apply's
+#: own manager can stop sending the field without the field going away.
+SUSPEND_HOLDER = "htrflow-campaigns-suspend"
 MERGE_PATCH = "application/merge-patch+json"
 
-_KUEUE = ("kueue.x-k8s.io", "v1beta1")
+#: The Kueue API version the chart creates its queue objects in, and the one
+#: Kueue stores Workloads in: v1beta1 is served deprecated, and on the day it
+#: is not, a list in it 404s and every pause goes unenforced. ``spec.active``
+#: is the same field, with the same meaning, in both. ``test_cluster.py``
+#: holds this to the chart's ``templates/kueue.yaml``.
+_KUEUE = ("kueue.x-k8s.io", "v1beta2")
 _WORKLOADS = "workloads"
 _JOB_UID_LABEL = "kueue.x-k8s.io/job-uid"
 #: The two kinds this tool renders -> (client attribute, method noun).
@@ -76,6 +90,24 @@ RETRY_BACKOFF = 1
 DELETE_WAIT = 60
 
 
+#: One apply at a time per namespace (C-12). Two at once -- the Argo CD
+#: hook and a hand-run `make campaigns-apply` -- interleave, and a prune from
+#: the older checkout deletes the Job and ConfigMap the newer one has just
+#: created. A coordination.k8s.io Lease, the object Kubernetes' own
+#: controllers elect a leader with, held for the apply's whole run.
+LEASE = "htrflow-campaigns-apply"
+#: Seconds the Lease holds without a renewal: past it, the holder is taken
+#: for dead (a SIGKILLed pod) and the next apply may take over. The apply
+#: renews before any request once ``LEASE_RENEW`` has passed, so the longest
+#: gap between two renewals is one renewal plus one request, each up to
+#: their retries at the read timeout (about 270 s): inside
+#: ``LEASE_SECONDS - LEASE_MARGIN``, where an apply that could not renew
+#: stops on its own rather than run on beside the next one.
+LEASE_SECONDS = 600
+LEASE_RENEW = 30
+LEASE_MARGIN = 60
+
+
 class ClusterError(Exception):
     """A cluster problem this module already has a one-sentence answer for."""
 
@@ -85,6 +117,39 @@ class Unreachable(ClusterError):
     connection, a read timeout. Not one object's refusal -- the request may
     well have landed, and the next object would wait out the same timeouts
     -- so ``cli._apply`` stops on it instead of carrying on (3091)."""
+
+
+class Conflict(ClusterError):
+    """A 409: another field manager owns what the request would change, or
+    another writer got to the object first."""
+
+
+class LeaseLost(Unreachable):
+    """This apply no longer holds the Lease: another took it over, or it
+    could not be renewed in time. Another apply may be running now, so this
+    one stops where it is, as it does on a lost server."""
+
+
+_HELD = (
+    "another htrflow-campaigns apply is running in {ns} ({holder}, since "
+    "{since}) — nothing was applied; re-run this one once it has finished"
+)
+
+
+def _micro(t: datetime) -> str:
+    """A Lease's MicroTime: RFC 3339 with microseconds, in UTC."""
+    return t.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _lease_until(lease: dict) -> datetime:
+    """When a Lease stops holding: its last renewal plus its duration. One
+    nobody holds -- released, or never renewed -- has stopped already."""
+    spec = lease.get("spec") or {}
+    stamp = spec.get("renewTime") or spec.get("acquireTime")
+    if not spec.get("holderIdentity") or not stamp:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    renewed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    return renewed + timedelta(seconds=spec.get("leaseDurationSeconds") or 0)
 
 
 #: What to do about a Job the API server will not take, by what the Job is.
@@ -155,9 +220,12 @@ def _api_error(
             "apply.rbac.enabled"
         )
     if e.status == 404 and kind == "Workload" and verb == "list":
+        # Named with its version: a Kueue too old or too new to serve this
+        # one answers the same 404 as no Kueue at all.
         return ClusterError(
-            "Kueue is not installed in this cluster (no workloads.kueue.x-k8s.io) "
-            "— htrflow-campaigns apply needs it to honour suspend:"
+            "Kueue is not installed in this cluster (no workloads in "
+            f"{'/'.join(_KUEUE)}) — htrflow-campaigns apply needs it to "
+            "honour suspend:"
         )
     fields = _immutable_fields(e)
     if fields:
@@ -171,7 +239,8 @@ def _api_error(
             message = " " + " ".join(json.loads(e.body)["message"].split())
         if len(message) > MAX_MESSAGE:
             message = message[:MAX_MESSAGE].rstrip() + " …"
-    return ClusterError(f"{verb} {target}: {e.status} {e.reason}{message}")
+    kind_of = Conflict if e.status == 409 else ClusterError
+    return kind_of(f"{verb} {target}: {e.status} {e.reason}{message}")
 
 
 def _unreachable(e: HTTPError) -> Unreachable:
@@ -236,6 +305,15 @@ def _raw(
         )
 
 
+def _suspend_owners(meta: dict) -> set[str]:
+    """The field managers that own ``spec.suspend``, per ``managedFields``."""
+    return {
+        entry.get("manager", "")
+        for entry in meta.get("managedFields") or []
+        if "f:suspend" in ((entry.get("fieldsV1") or {}).get("f:spec") or {})
+    }
+
+
 class Cluster:
     """One namespace, reached through the kubeconfig or the pod's own token."""
 
@@ -255,8 +333,153 @@ class Cluster:
         self.batch = client.BatchV1Api()
         self.core = client.CoreV1Api()
         self.custom = client.CustomObjectsApi()
+        self.coordination = client.CoordinationV1Api()
+
+    #: (the Lease as last written, monotonic time it was sent) while held.
+    _leased: tuple[dict, float] | None = None
+    #: (the API server's clock, monotonic time it was read): Lease times
+    #: are the server's, never this machine's, whose clock may be minutes off.
+    _clock: tuple[datetime, float] | None = None
+
+    @contextlib.contextmanager
+    def lease(self):
+        """Hold ``LEASE`` for the ``with`` block, or refuse to start.
+
+        A Lease held by someone else and renewed within ``LEASE_SECONDS`` is
+        a refusal; past that its holder died, and it is taken over. Both
+        sides of that comparison are the API server's clock (its ``Date``
+        header), so a laptop whose clock runs fast cannot take a live hook's
+        Lease. Every write carries the ``resourceVersion`` it read: two
+        applies racing for it get one 409 between them, never two holders.
+        Released however the block ends, SIGTERM included (``cli._apply``).
+        """
+        live = self._lease("read")
+        if live is not None and _lease_until(live) > self._now():
+            raise ClusterError(self._held(live))
+        now = _micro(self._now())
+        body = {
+            "apiVersion": "coordination.k8s.io/v1",
+            "kind": "Lease",
+            "metadata": {"name": LEASE, "namespace": self.namespace},
+            "spec": {
+                "holderIdentity": f"{socket.gethostname()}/{os.getpid()}/"
+                f"{uuid.uuid4().hex[:8]}",
+                "leaseDurationSeconds": LEASE_SECONDS,
+                "acquireTime": now,
+                "renewTime": now,
+            },
+        }
+        if live is not None:
+            body["metadata"]["resourceVersion"] = live["metadata"]["resourceVersion"]
+        sent = time.monotonic()
+        held = self._lease("create" if live is None else "replace", body)
+        if held is None:  # another apply wrote it between the read and here
+            raise ClusterError(self._held(self._lease("read") or body))
+        self._leased = (held, sent)
+        try:
+            yield
+        finally:
+            # Nothing to release once it is lost (``_due`` left it ``None``).
+            if self._leased is not None:
+                held, self._leased = self._leased[0], None
+                mine = held["spec"]["holderIdentity"]
+                held["spec"]["holderIdentity"] = None
+                with contextlib.suppress(ClusterError):
+                    self._write_ours(held, mine)
+
+    def _due(self) -> None:
+        """Before every request: renew the Lease when ``LEASE_RENEW`` has
+        passed, and stop -- ``LeaseLost`` -- when it cannot be renewed, or
+        could not be in time to be sure nobody has taken it over."""
+        if self._leased is None:
+            return
+        held, sent = self._leased
+        if time.monotonic() - sent < LEASE_RENEW:
+            return
+        if time.monotonic() - sent >= LEASE_SECONDS - LEASE_MARGIN:
+            raise LeaseLost(
+                f"Lease/{LEASE} went unrenewed for {LEASE_SECONDS - LEASE_MARGIN}s, "
+                "so another apply may have taken it over — this one stopped"
+            )
+        self._leased = None  # the renewal's own requests renew nothing
+        held["spec"]["renewTime"] = _micro(self._now())
+        sent = time.monotonic()
+        try:
+            fresh = self._write_ours(held, held["spec"]["holderIdentity"])
+        except ClusterError as e:
+            raise LeaseLost(f"could not renew Lease/{LEASE}, so stopped: {e}") from e
+        if fresh is None:
+            holder = ((self._lease("read") or {}).get("spec") or {}).get(
+                "holderIdentity"
+            )
+            raise LeaseLost(
+                f"Lease/{LEASE} was taken over by {holder} while this apply "
+                "ran, so another apply is running now — this one stopped"
+            )
+        self._leased = (fresh, sent)
+
+    def _write_ours(self, held: dict, mine: str) -> dict | None:
+        """Replace the Lease with ``held``. A 409 can be this apply's own
+        earlier write, one whose answer was lost: when the Lease still names
+        this holder, the write is sent again on its ``resourceVersion``.
+        ``None`` when someone else holds it."""
+        fresh = self._lease("replace", held)
+        if fresh is not None:
+            return fresh
+        live = self._lease("read") or {}
+        if (live.get("spec") or {}).get("holderIdentity") != mine:
+            return None
+        held["metadata"]["resourceVersion"] = live["metadata"]["resourceVersion"]
+        return self._lease("replace", held)
+
+    def _now(self) -> datetime:
+        if self._clock is None:
+            return datetime.now(timezone.utc)
+        server, read = self._clock
+        return server + timedelta(seconds=time.monotonic() - read)
+
+    def _held(self, lease: dict) -> str:
+        spec = lease.get("spec") or {}
+        return _HELD.format(
+            ns=self.namespace,
+            holder=spec.get("holderIdentity"),
+            since=spec.get("acquireTime") or "an unknown time",
+        )
+
+    def _lease(self, verb: str, body: dict | None = None) -> dict | None:
+        """Read, create or replace ``LEASE``, and set the server's clock from
+        the answer. ``None`` for the two answers that are not errors here:
+        no Lease yet (404 on a read), and a write another got in first (409)."""
+        fn = getattr(self.coordination, f"{verb}_namespaced_lease")
+        args = (self.namespace, body) if verb == "create" else (LEASE, self.namespace)
+        if verb == "replace":
+            args += (body,)
+        with _errors(verb, "Lease", LEASE, self.namespace):
+            try:
+                answer = _retrying(
+                    fn, *args, _preload_content=False, _request_timeout=REQUEST_TIMEOUT
+                )
+            except ApiException as e:
+                if e.status == (404 if verb == "read" else 409):
+                    return None
+                raise
+        date = (getattr(answer, "headers", None) or {}).get("Date")
+        if date:
+            self._clock = (parsedate_to_datetime(date), time.monotonic())
+        return json.loads(answer.data)
 
     def _method(self, kind: str, verb: str, name: str = "") -> Any:
+        """The typed call for ``verb`` on ``kind`` -- after renewing the
+        Lease when it is due, so every request this apply sends is one it
+        still holds the namespace for."""
+        self._due()
+        return self._api(kind, verb, name)
+
+    def _kueue(self) -> Any:
+        self._due()
+        return self.custom
+
+    def _api(self, kind: str, verb: str, name: str = "") -> Any:
         if kind not in _KINDS:
             raise ClusterError(
                 f"{kind}/{name}: htrflow-campaigns apply only handles "
@@ -265,14 +488,17 @@ class Cluster:
         api, noun = _KINDS[kind]
         return getattr(getattr(self, api), f"{verb}_namespaced_{noun}")
 
-    def apply(self, obj: dict, dry_run: bool = False) -> dict:
+    def apply(
+        self, obj: dict, dry_run: bool = False, manager: str = FIELD_MANAGER
+    ) -> dict:
         """Server-side apply ``obj``; returns what the server stored.
 
         ``force=True`` takes the fields back from whatever manager owns them
         -- a Job applied by `kubectl` before this change, a hand edit --
         which is the "git is the truth" rule the campaigns repo runs on.
         ``dry_run`` asks the API server (admission webhooks included) whether
-        it would take ``obj``, and stores nothing.
+        it would take ``obj``, and stores nothing. Any other ``manager`` is
+        never forced: it only ever takes a field over from nobody.
         """
         kind, name = obj["kind"], obj["metadata"]["name"]
         extra = {"dry_run": "All"} if dry_run else {}
@@ -285,11 +511,41 @@ class Cluster:
             name,
             self.namespace,
             obj,
-            field_manager=FIELD_MANAGER,
-            force=True,
+            field_manager=manager,
+            force=manager == FIELD_MANAGER,
             _content_type=APPLY_PATCH,
             **extra,
         )
+
+    def hold_suspend(self, live: dict) -> None:
+        """Hand a Job's ``spec.suspend: true`` to ``SUSPEND_HOLDER`` when
+        ``FIELD_MANAGER`` alone owns it (``cli._before_resume`` says why).
+
+        Server-side apply's own way to move a field between managers: the
+        new one applies the same value, which is shared ownership and no
+        conflict, and the old one may then stop sending it. Never forced: a
+        409 means Kueue changed the field in between, so it is Kueue's, and
+        there is nothing left to hold; nor is there on a Job since deleted.
+        """
+        meta = live.get("metadata") or {}
+        if (live.get("spec") or {}).get("suspend") is not True:
+            return
+        if _suspend_owners(meta) != {FIELD_MANAGER}:
+            return
+        name = {"name": meta["name"], "namespace": self.namespace}
+        body = {"apiVersion": "batch/v1", "kind": "Job", "metadata": name,
+                "spec": {"suspend": True}}  # fmt: skip
+        try:
+            self.apply(body, manager=SUSPEND_HOLDER)
+        except Conflict:
+            pass
+        except Unreachable:
+            raise
+        except ClusterError:
+            # Deleted since it was read, the partial body is a create the
+            # API server refuses (422): nothing left to hold on.
+            if self.get("Job", meta["name"]) is not None:
+                raise
 
     def replace_job(self, obj: dict) -> dict:
         """Delete Job ``obj`` and apply it again -- the only way to give a
@@ -342,6 +598,18 @@ class Cluster:
             raise _unreachable(e) from e
         return json.loads(body.data)
 
+    def labelled(self, kind: str) -> list[dict]:
+        """Every converter-labelled ``kind`` in the namespace."""
+        return _raw(
+            "list",
+            kind,
+            "",
+            self.namespace,
+            self._method(kind, "list"),
+            self.namespace,
+            label_selector=CAMPAIGN_SELECTOR,
+        ).get("items", [])
+
     def prune(self, rendered: set[tuple[str, str]]) -> list[tuple[str, str]]:
         """Delete every labelled Job/ConfigMap not in ``rendered``; return
         ``(what, sentence)`` for each object (or kind) it could not.
@@ -355,21 +623,13 @@ class Cluster:
         problems: list[tuple[str, str]] = []
         for kind in _KINDS:
             try:
-                listed = _raw(
-                    "list",
-                    kind,
-                    "",
-                    self.namespace,
-                    self._method(kind, "list"),
-                    self.namespace,
-                    label_selector=CAMPAIGN_SELECTOR,
-                )
+                listed = self.labelled(kind)
             except Unreachable:
                 raise
             except ClusterError as e:
                 problems.append((kind, str(e)))
                 continue
-            for item in listed.get("items", []):
+            for item in listed:
                 name = item["metadata"]["name"]
                 if (kind, name) in rendered or self._kept_status(kind, name, rendered):
                     continue
@@ -407,7 +667,7 @@ class Cluster:
         that uid, the only link that survives a delete/recreate of the Job."""
         with _errors("list", "Workload", "", self.namespace):
             listed = _retrying(
-                self.custom.list_namespaced_custom_object,
+                self._kueue().list_namespaced_custom_object,
                 *_KUEUE,
                 self.namespace,
                 _WORKLOADS,
@@ -429,7 +689,7 @@ class Cluster:
         that moment is exactly the window in which Kueue would admit and
         start it -- so a paused campaign waits and then fails loudly. One
         that is not paused needs no wait: a Workload that does not exist is
-        not admitted either. (docs/reference/campaign-yaml.md#pausing)
+        not admitted either. (docs/reference/cli.md#pausing)
         """
         name, uid = job["metadata"]["name"], job["metadata"]["uid"]
         wl = self._workload(uid)
@@ -455,7 +715,7 @@ class Cluster:
         print(f"{name}: workload/{wl_name} active={str(want).lower()}")
         with _errors("patch", "Workload", wl_name, self.namespace):
             _retrying(
-                self.custom.patch_namespaced_custom_object,
+                self._kueue().patch_namespaced_custom_object,
                 *_KUEUE,
                 self.namespace,
                 _WORKLOADS,

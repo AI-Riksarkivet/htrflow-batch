@@ -2,7 +2,7 @@
 # Non-test line budgets from the spec (§1). Fails the build when exceeded.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-count() { find "$1" -type f \( "${@:2}" \) -not -path '*/tests/*' -not -name '*.test.ts' -not -path '*/node_modules/*' -print0 | xargs -0 cat 2>/dev/null | wc -l; }
+count() { find "$1" -type f \( "${@:2}" \) -not -path '*/tests/*' -not -path '*/fixtures/*' -not -name '*.test.ts' -not -path '*/node_modules/*' -print0 | xargs -0 cat 2>/dev/null | wc -l; }
 check() { local name=$1 got=$2 max=$3; printf '%-10s %6d / %d\n' "$name" "$got" "$max"; [ "$got" -le "$max" ] || { echo "::error::$name over budget ($got > $max)"; fail=1; }; }
 fail=0
 # raised for the Task 11 stage split + publish.py, then again for the
@@ -301,7 +301,38 @@ fail=0
 # Retry-After parse and the abortable wait; in stream.py and main.py the
 # deferred outcome verify counts as missing; in iiif.py one rule choosing a
 # canvas's image for both the fetch and the viewer manifest.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3636
+# 3636 -> 4064 (audit 0923): an upload the store could not take defers the
+# page rather than failing it, and a half-stored pair is deleted (W-1). The
+# source digest drops the credentials of every common signing scheme, the
+# ordinary-named ones only beside their scheme's marker (W-2). A URL in
+# free text runs to a character no URL may hold, trailing punctuation kept,
+# and httpx's per-request lines stay out of the run log (W-3). A run that
+# deletes stored pages deletes the completion marker and iiif.json first (W-5).
+# Both S3 clients come from one factory that sends checksums only where S3
+# requires them, and DeleteObjects its Content-MD5 (W-10). The final run-log
+# ship has one wall-clock budget, on a thread of its own, that fits the grace
+# period, and the log client makes two attempts in all (W-7). The pin check
+# covers the processor's revision too (S-3). On the index's last attempt,
+# known from two new env vars, verify fails a still-deferred page (W-4).
+# After a 400 the fetcher reads the image's info.json for a size within the
+# cap before `max`, and the lookahead is bounded by bytes as well (W-9).
+# A page has a wall-clock budget; a released pipeline's worker threads are
+# stopped, and those stuck inside htrflow counted up to a limit (W-8).
+# Review round: DeleteObjects withdraws botocore's CRC32 for its MD5 (M-1).
+# A URL in text ends where a quote, bracket or comma closes it (M-3). A step
+# whose worker threads cannot be found is logged and counted, not skipped (M-5).
+# The page budget is a no-progress window over htrflow's queues and steps (I-2).
+# A dead pipeline's steps are swapped for ones that refuse to run, and each
+# pipeline built exports into a directory of its own (I-3).
+# 4064 -> 4203 (audit 0923, empty export): htrflow's ALTO and PAGE templates
+# write a line's text only inside a region, so a flat pipeline published
+# every page empty and the campaign Succeeded. exportcheck.py compares what
+# htrflow recognized for a page (its tree) with what each exported file
+# holds and fails the page when a format holds none of it; the driver hands
+# it the tree the run returned, and verify makes a volume whose every page
+# failed that way permanent, with the cause said once. Most of it is the
+# sentence the page records and why the rule is what it is.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 4203
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
@@ -657,7 +688,32 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 3636
 # flavour from ci/ over the template -- the argparse option, the parameter
 # threaded through `_init`, and the comment saying why the template carries
 # no CI of its own.
-check converter "$(count packages/converter/src -name '*.py')" 2932
+# 2932 -> 4215 for the 2026-09-23 audit round, split between two slices.
+# Apply side (+614): the refused campaign still pauses and resumes through its
+# live Job (C-2), the suspend hand-over to a second field manager so an
+# unpause never starts a Job Kueue has not admitted, the live pipeline-recipe
+# check (C-7), per-Job pause-sync errors (C-9), the job-uid stamp and its
+# repair (S-11), --namespace (S-7), the apply Lease renewed on every request
+# against the API server's clock (C-12), the live window and shared-volume
+# refusals (C-11, C-13) and Kueue v1beta2 (T-3). Validate/render side (+669):
+# unknown keys, string volume ids and duplicate keys refused (C-1, C-5, C-6),
+# typed tolerations (S-1), parts found by campaign label (C-4), the per-recipe
+# model cache (C-3, S-2), the browser URL rule (F-7), provenance through
+# dulwich (C-10), validate --rendered (S-9), and record.py, which lets an
+# already-rendered campaign keep its old rendering under the new rules. Most
+# of it is the sentence each refusal prints and why it exists.
+# 4215 -> 4289 (audit 0923, empty export): validate refuses a pipeline whose
+# line reader has fewer than two segmentation steps before it -- its text is
+# exported nowhere -- with the table of what each htrflow model does to the
+# page tree and why; a pipeline already rendered with those steps is kept
+# with a warning (parse, via record.recorded_recipe, moved out of cli.py).
+# 4289 -> 4379 (audit 0923, source_template): the template has no built-in
+# host any more, so a bare reference code with none set is refused -- one
+# sentence per campaign however many codes it has, none when converter.yaml
+# itself did not load -- and an unchanged campaign rendered under the old
+# default keeps the manifest URLs its record holds, with a warning. Most of
+# it is the two sentences and the recorded-manifest lookup.
+check converter "$(count packages/converter/src -name '*.py')" 4379
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
@@ -916,7 +972,14 @@ check converter "$(count packages/converter/src -name '*.py')" 2932
 # capped on network misses only, running rows first, with pagesCoverage;
 # ProgressReader.cached, answered-vs-unanswered, oldest-first eviction.
 # Most of it is the paragraphs saying who owns which field and why.
-check web       "$(count packages/web/src -name '*.py')" 2096
+# 2096 -> 2583 for the 2026-09-23 audit round: the pod list trimmed and
+# paged (F-1), request timeouts (F-2), the reaped window (F-3), campaign
+# labels checked before a record is written (F-4), failedVolumes under its
+# own field manager tied to its run and never creating the record (F-5), the
+# connect-src and strict document policies decided from the file served
+# (F-6, F-9), the browser URL rule (F-7), the cache lock (F-8), identity
+# encoding for progress reads (S-10) and html.parser for the viewer's hashes.
+check web       "$(count packages/web/src -name '*.py')" 2583
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
@@ -1235,7 +1298,17 @@ check web       "$(count packages/web/src -name '*.py')" 2096
 # (3080). The two partial endings mix the amber with green or red on the
 # chip's outline and the card's accent, with the comments that say why an
 # outline and why a hard split.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5012
+# 5012 -> 5158 for the 2026-09-23 audit round: settled cards read their
+# detail only once seen, the older-campaigns button clamped to the API's
+# maximum (F-3), the per-field sourceUrl parse (F-7), /alto held to the
+# results base (F-6); the test round's dead-code removal and the verify-count
+# fix net to zero.
+# 5158 -> 5176: the models line reads a processor's revision separately from
+# the model's, so a processor_kwargs pin written first is never shown as the
+# model's revision. Test fixtures (src/lib/fixtures: the generated contract
+# JSON and the dropped-key helper the contract tests share) are test support,
+# like *.test.ts, and are not counted.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5176
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
@@ -1362,5 +1435,40 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5012
 # saying why they run before, and independently of, the ingressCidrs ones.
 # Off by default (web.ingress.enabled: false, web.service.type: NodePort),
 # so no existing install's render changes.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1221
+# 1221 -> 1729 (2026-09-23, audit 0923, the deployment round):
+# policies/job-shape.yaml + _job-shape.tpl (+286, D-2/S-1/S-6): the apply
+# identity's `create` on Jobs is any pod spec and converter.yaml names any
+# Secret or PVC, so admission holds a campaign or warm-up Job to the shape
+# the converter renders -- identity, Secrets per role, volumes, containers,
+# the two scripts (character for character, as the copies Helm cannot read
+# from the converter) and the pipeline source. The per-role rule is one
+# helper rendered twice; about a third of it is the comment saying who is
+# held to it and why Kueue's own updates are not. rbac-scope +54 (D-2): the
+# Workload rule, `spec.active` only and only on a converter Job's Workload,
+# looked up at admission. model-revision +69 (D-6, D-7): the processor pin
+# for the four loaders that download one, and the binaryData refusal.
+# _helpers.tpl +110 net of network.yaml/web.yaml -54 (D-3, D-8): one
+# carve-out for every egress range instead of a literal 0.0.0.0/0 -- an
+# IPv4 containment test Helm has no function for, written once -- the S3
+# rule as one helper instead of a copy per template, and the three
+# production range guards. kueue.yaml +17 (D-9), apply-rbac.yaml +13 (the
+# run Lease), verify-images +9 (D-1).
+# 1729 -> 1882 (2026-09-23, audit 0923 review round): job-shape holds the
+# rest of the converter's shape -- every env var by name with the fixed
+# values pinned (a PATH, LD_PRELOAD or PYTHONPATH of anyone's choosing is a
+# way to run a ConfigMap), the index-failure-count fieldRef the converter now
+# renders, mounts, file modes, both securityContexts and host namespaces
+# (C-1, I-1, M-4) -- as one spec block the agreement test reads, plus the
+# two ConfigMap-key rules that keep a mounted ConfigMap to the key the
+# converter writes (I-1); the API server joins the egress carve-out (M-3).
+# 1882 -> 1936: `kubectl debug` got a busybox container past the image rules
+# on the dev cluster. A rule on kind Pod never sees the pods/ephemeralcontainers
+# subresource request, and one that does is skipped by Kyverno's default for
+# a violation the old Pod already had -- so images-allowed and images-pinned
+# each gain a rule of their own for the subresource (allowExistingViolations:
+# false, the added container's image only), both stop being background
+# policies (Kyverno refuses one that matches a subresource), and
+# verify-images names the subresource too. Proven against the cluster's
+# admission controller, which the Kyverno CLI cannot stand in for here.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1936
 exit $fail
