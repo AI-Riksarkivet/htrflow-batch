@@ -12,10 +12,11 @@
     type JobSummary,
   } from "$lib/api.js";
   import { RELOAD_MS, REPO_URL } from "$lib/config.js";
-  import { byAttention, keepOrder } from "$lib/order.js";
+  import { byAttention, keepOrder, outOfOrder } from "$lib/order.js";
   import { startPolling } from "$lib/poll.js";
   import { describeApiError, describeUnreadable } from "$lib/reasons.js";
   import { untrack } from "svelte";
+  import { flip } from "svelte/animate";
 
   // The last good list stays on screen through a failed poll; `error` is a
   // banner on top of it, never a replacement for it.
@@ -37,6 +38,24 @@
   const showNamespace = $derived(
     new Set((jobs ?? []).map((j) => j.namespace)).size > 1,
   );
+
+  // A poll keeps the order the reader has, so a campaign that started, or
+  // finished, stays where it was. Moving it on its own would be a jump
+  // under someone reading; leaving it for good would bury what the order is
+  // for. The dock says so and offers the sort; the reader decides when.
+  // (One that falls into trouble moves at once: $lib/order.)
+  const drifted = $derived(jobs !== null && outOfOrder(jobs));
+
+  // The glide is an animation the page runs itself (the Web Animations
+  // API), which app.css's reduced-motion rule does not reach: asked for
+  // stillness, a moved card is simply in its new place.
+  const still =
+    typeof matchMedia === "function" &&
+    matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // How tall the dock at the foot of the window is, so the page keeps that
+  // much room under its last card and nothing stays covered.
+  let dockHeight = $state(0);
 
   // What is deployed, read once — nothing can change it while the page is
   // open, and a version nobody could fetch is simply not shown: it is a
@@ -113,7 +132,7 @@
 </script>
 
 <!-- Busy until the first answer, which is when there is a list to read. -->
-<main aria-busy={jobs === null && error === null}>
+<main aria-busy={jobs === null && error === null} style:--dock="{dockHeight}px">
   <header class="page">
     <div class="title-row">
       <img class="logo" src="/ra.svg" alt="Riksarkivet" />
@@ -148,22 +167,23 @@
       <ThemeToggle />
     </div>
   </header>
-  <!-- Over a list, the banner floats at the foot of the window: in the
-       page, arriving on a poll, it pushed every card down by its height.
-       With no list yet there is nothing to push, and it sits where the list
-       would be. -->
-  {#if error !== null || unreadable > 0}
-    <p class="banner error" class:floating={jobs !== null} role="alert">
-      {error ?? describeUnreadable(unreadable)}
-    </p>
+  <!-- With no list yet there is nothing to push, and the banner sits where
+       the list would be; over a list it is in the dock below. -->
+  {#if jobs === null && error !== null}
+    <p class="banner error" role="alert">{error}</p>
   {/if}
   {#if jobs === null}
     {#if error === null}<p class="loading">Loading…</p>{/if}
   {:else if jobs.length === 0}
     <p class="empty">No campaigns.</p>
   {:else}
+    <!-- A card that moves -- one that fell into trouble, a new one above
+         it, the reader's re-sort -- glides to its place rather than
+         jumping there, and the cards it passes glide with it. -->
     {#each jobs as job (job.namespace + "/" + job.name)}
-      <CampaignCard {job} {showNamespace} />
+      <div animate:flip={{ duration: still ? 0 : 300 }}>
+        <CampaignCard {job} {showNamespace} />
+      </div>
     {/each}
   {/if}
   {#if jobs !== null && olderHidden > 0}
@@ -175,6 +195,24 @@
       >whose Jobs have been removed
     </p>
   {/if}
+  <!-- The dock: fixed to the foot of the window, so what arrives in it on
+       a poll -- a banner, the offer to re-sort -- pushes no card. In the
+       page, a banner pushed every card down by its own height. -->
+  <div class="dock" bind:clientHeight={dockHeight}>
+    {#if jobs !== null && (error !== null || unreadable > 0)}
+      <p class="banner error" role="alert">
+        {error ?? describeUnreadable(unreadable)}
+      </p>
+    {/if}
+    {#if drifted}
+      <p class="drift">
+        The campaigns' order has changed.
+        <button type="button" onclick={() => (jobs = byAttention(jobs ?? []))}
+          >re-sort</button
+        >
+      </p>
+    {/if}
+  </div>
 </main>
 
 <style>
@@ -235,19 +273,47 @@
   }
 
   /* The page's own column, pinned to the foot of the window. */
-  .banner.floating {
+  .dock {
     position: fixed;
     z-index: 1;
     bottom: 1rem;
     left: max(1rem, calc(50vw - 32rem));
     right: max(1rem, calc(50vw - 32rem));
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .dock > p {
     margin: 0;
     box-shadow: 0 4px 16px oklch(0 0 0 / 0.18);
   }
 
-  /* Room under the last card, so the banner never covers it for good. */
-  main:has(.floating) {
-    padding-bottom: 5rem;
+  .drift {
+    align-self: center;
+    padding: 0.35rem 0.5rem 0.35rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--card);
+    font-size: 0.85rem;
+  }
+
+  /* The same quiet pill as "show older campaigns". */
+  .drift button,
+  .older button {
+    font: inherit;
+    color: var(--foreground);
+    background: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.15rem 0.75rem;
+    cursor: pointer;
+  }
+
+  /* Room under the last card for whatever the dock holds, as tall as it
+     is: a phone's banner wraps to four lines. */
+  main {
+    padding-bottom: calc(3rem + var(--dock, 0px));
   }
 
   .error {
@@ -279,13 +345,6 @@
   }
 
   .older button {
-    font: inherit;
-    color: var(--foreground);
-    background: var(--muted);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 0.15rem 0.75rem;
     margin-right: 0.5rem;
-    cursor: pointer;
   }
 </style>

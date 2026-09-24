@@ -424,8 +424,14 @@ describe("/ nothing moves as the page loads", () => {
   // Re-sorting every answer moved a campaign that had just started from the
   // bottom of the list to the top, and every card in between down one.
   describe("the order a reader has", () => {
-    const started = { ...job, name: "started", phase: "Queued" };
-    const finishing = { ...job, name: "finishing" };
+    // Clean: the shared `job` carries a failed volume, and one that ends in
+    // trouble is placed afresh (the test after these).
+    const clean = {
+      ...job,
+      counts: { total: 3, active: 1, done: 2, failed: 0 },
+    };
+    const started = { ...clean, name: "started", phase: "Queued" };
+    const finishing = { ...clean, name: "finishing" };
 
     function answers(...lists: unknown[][]): typeof fetch {
       let n = 0;
@@ -489,6 +495,59 @@ describe("/ nothing moves as the page loads", () => {
       expect(names(container)).toEqual(["started", "finishing"]);
     });
 
+    test("a campaign that falls into trouble moves up at once", async () => {
+      const done = {
+        ...clean,
+        name: "done",
+        phase: "Succeeded",
+        finishedAt: "2026-09-08T10:00:00Z",
+      };
+      const later = [done, { ...started, phase: "Failed" }];
+      vi.stubGlobal("fetch", answers([done, started], later));
+      const { container } = render(CampaignsPage);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(names(container)).toEqual(["done", "started"]);
+      await vi.advanceTimersByTimeAsync(RELOAD_MS);
+      expect(names(container)).toEqual(["started", "done"]);
+      expect(screen.queryByRole("button", { name: /re-sort/ })).toBeNull();
+    });
+
+    // The move is news, and it glides: a card that jumped a screenful took
+    // every card it passed with it in one frame (the shift script: 0.039 for
+    // one campaign failing). Nothing glides for a reader who asked for
+    // stillness.
+    test("a card that moves glides there, unless motion is reduced", () => {
+      expect(pageSource).toMatch(
+        /\{#each jobs as job[^}]*\}\s*<div animate:flip=\{\{ duration: still \? 0 : \d+ \}\}>/,
+      );
+      expect(pageSource).toContain("(prefers-reduced-motion: reduce)");
+    });
+
+    // A campaign that started while the reader watched stays where they had
+    // it; the dock says the order has changed and offers the sort, and the
+    // reader decides when the list moves (review of this change).
+    test("a drifted order is offered a re-sort, and a click sorts it", async () => {
+      const later = [
+        { ...started, phase: "Running" },
+        {
+          ...finishing,
+          phase: "Succeeded",
+          finishedAt: "2026-09-08T10:00:00Z",
+        },
+      ];
+      vi.stubGlobal("fetch", answers([started, finishing], later));
+      const { container } = render(CampaignsPage);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(screen.queryByRole("button", { name: /re-sort/ })).toBeNull();
+      await vi.advanceTimersByTimeAsync(RELOAD_MS);
+      expect(names(container)).toEqual(["finishing", "started"]);
+      const resort = screen.getByRole("button", { name: /re-sort/ });
+      expect(resort.closest(".dock")).not.toBeNull();
+      await fireEvent.click(resort);
+      expect(names(container)).toEqual(["started", "finishing"]);
+      expect(screen.queryByRole("button", { name: /re-sort/ })).toBeNull();
+    });
+
     // A poll in flight when the tab hid, answered while it was hidden, used
     // the one re-sort up on a list nobody was looking at; back on the tab,
     // the reader got the kept order (review of this change).
@@ -548,10 +607,20 @@ describe("/ nothing moves as the page loads", () => {
         return ++calls === 1 ? jsonResponse([job]) : jsonResponse("gone", 503);
       }) as unknown as typeof fetch,
     );
-    render(CampaignsPage);
+    const { container } = render(CampaignsPage);
     await vi.advanceTimersByTimeAsync(RELOAD_MS);
-    expect(screen.getByRole("alert")).toHaveClass("floating");
-    expect(cssOf(pageRules, ".banner.floating").get("position")).toBe("fixed");
+    expect(screen.getByRole("alert").closest(".dock")).not.toBeNull();
+    expect(cssOf(pageRules, ".dock").get("position")).toBe("fixed");
+    // The page keeps room under its last card for whatever the dock holds,
+    // as tall as it actually is (a phone's banner wraps to four lines).
+    expect(cssOf(pageRules, "main").get("padding-bottom")).toContain(
+      "var(--dock",
+    );
+    expect(
+      (container.querySelector("main") as HTMLElement).style.getPropertyValue(
+        "--dock",
+      ),
+    ).toMatch(/px$/);
     cleanup();
 
     vi.stubGlobal(
@@ -560,6 +629,6 @@ describe("/ nothing moves as the page loads", () => {
     );
     render(CampaignsPage);
     await vi.advanceTimersByTimeAsync(0);
-    expect(screen.getByRole("alert")).not.toHaveClass("floating");
+    expect(screen.getByRole("alert").closest(".dock")).toBeNull();
   });
 });
