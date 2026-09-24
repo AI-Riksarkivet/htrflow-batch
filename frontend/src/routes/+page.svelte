@@ -31,6 +31,13 @@
   let reapedTotal = $state(0);
   const olderHidden = $derived(reapedHidden(reapedTotal, reapedShown));
 
+  // The read API serves its own namespace unless configured with more, and
+  // a prefix every card carries tells nobody anything. Said on every card
+  // only when the list spans namespaces, where it tells two campaigns apart.
+  const showNamespace = $derived(
+    new Set((jobs ?? []).map((j) => j.namespace)).size > 1,
+  );
+
   // What is deployed, read once — nothing can change it while the page is
   // open, and a version nobody could fetch is simply not shown: it is a
   // footnote in the header, never a reason for an alert over the list.
@@ -124,7 +131,7 @@
     <p class="empty">No campaigns.</p>
   {:else}
     {#each jobs as job (job.namespace + "/" + job.name)}
-      <CampaignCard {job} />
+      <CampaignCard {job} {showNamespace} />
     {/each}
   {/if}
   {#if jobs !== null && olderHidden > 0}

@@ -223,7 +223,7 @@ class Reader:
         jobs: list[dict] = []
         for ns in self.cfg.namespaces:
             body = _read(self.batch, "list_namespaced_job", ns, label_selector=selector)
-            jobs.extend((body or {}).get("items", []))
+            jobs.extend((body or {}).get("items") or [])
         return jobs
 
     def list_jobs(self) -> list[dict]:
@@ -258,7 +258,7 @@ class Reader:
                 ns,
                 label_selector=f"{CAMPAIGN_CONFIGMAPS},{KIND_LABEL}={STATUS_KIND}",
             )
-            cms.extend((body or {}).get("items", []))
+            cms.extend((body or {}).get("items") or [])
         return cms
 
     def _records(self, namespace: str) -> list[dict]:
@@ -281,7 +281,7 @@ class Reader:
                 _preload_content=False,
                 _request_timeout=REQUEST_TIMEOUT,
             )
-            return json.loads(resp.data).get("items", [])
+            return json.loads(resp.data).get("items") or []
         except client.ApiException as e:
             raise ClusterUnavailable(f"list records: {e.status}") from e
         except HTTPError as e:
@@ -356,7 +356,7 @@ class Reader:
                 limit=POD_PAGE,
                 **paging,
             )
-            pods.extend(pod_fields(p) for p in (body or {}).get("items", []))
+            pods.extend(pod_fields(p) for p in (body or {}).get("items") or [])
             token = ((body or {}).get("metadata") or {}).get("continue")
             if not token:
                 return pods

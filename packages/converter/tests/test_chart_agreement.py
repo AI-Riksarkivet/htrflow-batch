@@ -25,6 +25,7 @@ import pytest
 import yaml
 
 from htrflow_converter.models import ConverterConfig
+from htrflow_converter.render import CAMPAIGN_SELECTOR
 
 ROOT = Path(__file__).parents[3]
 CHART = ROOT / "charts" / "htrflow-batch"
@@ -371,7 +372,10 @@ class _Recording:
                 )
             if verb == "list":
                 return _Answer({"items": [{"metadata": {"name": "stale"}}]})
-            return _Answer({"metadata": {"name": name}})
+            # The converter's own object: one without its label is refused
+            # before any write (``Cluster.claim``).
+            key, value = CAMPAIGN_SELECTOR.split("=")
+            return _Answer({"metadata": {"name": name, "labels": {key: value}}})
 
         return call
 
