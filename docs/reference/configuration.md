@@ -4,9 +4,9 @@
 
 # Configuration
 
-Every setting of the wrapper, the web front, the converter and the
-`htrflow-batch` chart, generated from the three config models and the
-chart's `values.yaml`. The `htrflow-devstack` chart — the development support
+Every setting of the wrapper, the web front, the converter, the
+`htrflow-batch` chart and the frontend build, generated from the three
+config models, the chart's `values.yaml` and the frontend's `config.ts`. The `htrflow-devstack` chart — the development support
 stack (RustFS, an in-cluster registry, `devStack.insecureDefaults`,
 `rustfs.accessKey`/`secretKey`) — is a separate surface, documented in its own
 [README](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/charts/htrflow-devstack/README.md).
@@ -64,40 +64,52 @@ without a retry.
   writes under `status/`, so there is nothing else to exclude. See
   [the bucket policy](../how-it-works/security.md#the-bucket-policy).
 
+The *Set by* column says who can set each key in a deployment, read off
+what really sets it: the converter's Job skeleton and the job-shape
+policy's list of the env a Job may carry, the chart's web Deployment, the
+images' own `ENV` and the compose stack. **A local run only** means exactly
+that: nothing in a deployment can set it — no converter key renders it,
+and with `security.policies` on, job-shape refuses a Job that sets it — so
+it is for a hand run of the image, or the compose stack. The chart sets
+`HTRFLOW_NAMESPACES` to its own release namespace and offers no value for
+it: the read API parses a list, but one release reads one namespace.
+
 The *Security* column below reads *what the key exposes — who enforces it*:
 **cluster** = the API server or an admission policy, **render** = `helm
 template` refuses it, **nobody** = convention only.
 
 ## wrapper — the batch Job's container
 
-| Key | Source | Default | Must agree with | Security |
+Each key is an environment variable of the container.
+
+| Key | Set by | Default | Must agree with | Security |
 |---|---|---|---|---|
-| `VOLUME_REF` | env | **required** | — | no secret — nobody |
-| `PIPELINE_PATH` | env | **required** | — | no secret — nobody |
-| `PIPELINE_ID` | env | **required** | — | no secret — nobody |
-| `S3_ENDPOINT` | env | *(empty)* | — | from the S3 Secret (`secretKeyRef`) — cluster |
-| `S3_BUCKET` | env | **required** | — | from the S3 Secret (`secretKeyRef`) — cluster |
-| `PUBLIC_RESULTS_BASE` | env | **required** | chart `publicResultsBase`, converter `public_results_base`, web `HTRFLOW_PUBLIC_RESULTS_BASE` | the public-read results base — nobody |
-| `IIIF_MANIFEST_URL` | env | *(empty)* | — | no secret — nobody |
-| `IMAGES` | env | *(empty)* | — | no secret — nobody |
-| `S3_PREFIX` | env | *(empty)* | — | no secret — nobody |
-| `MAX_IMAGE_WIDTH` | env | `2500` | — | no secret — nobody |
-| `RESUME` | env | `true` | — | no secret — nobody |
-| `LOOKAHEAD_PAGES` | env | `64` | — | no secret — nobody |
-| `LOOKAHEAD_BYTES` | env | `1073741824` | — | no secret — nobody |
-| `MAX_PAGES` | env | `0` | — | no secret — nobody |
-| `WORKDIR_PATH` | env | `/work` | — | no secret — nobody |
-| `DOWNLOAD_CONCURRENCY` | env | `12` | — | no secret — nobody |
-| `LOG_SHIP_SECONDS` | env | `15.0` | — | no secret — nobody |
-| `MANIFEST_MAX_BYTES` | env | `16777216` | — | no secret — nobody |
-| `FETCH_MAX_BYTES` | env | `67108864` | — | no secret — nobody |
-| `DOWNLOAD_DEADLINE_SECONDS` | env | `300.0` | — | no secret — nobody |
-| `MAX_IMAGE_PIXELS` | env | `100000000` | — | no secret — nobody |
-| `PAGE_TIMEOUT_SECONDS` | env | `600.0` | — | no secret — nobody |
-| `IMAGE_DIGEST` | env | `unknown` | — | no secret — nobody |
-| `HTRFLOW_BASE_REVISION` | env | `unknown` | — | no secret — nobody |
-| `INDEX_FAILURE_COUNT` | env | `0` | — | no secret — nobody |
-| `BACKOFF_LIMIT_PER_INDEX` | env | `-1` | — | no secret — nobody |
+| `VOLUME_REF` | the campaign file: its volume list, one entry per index | **required** | — | no secret — nobody |
+| `PIPELINE_PATH` | the converter, fixed: `/config/pipeline.yaml` | **required** | — | no secret — nobody |
+| `PIPELINE_ID` | the pipeline file's `id` | **required** | — | no secret — nobody |
+| `S3_ENDPOINT` | the S3 Secret (`s3_secret`), its `S3_ENDPOINT` key | *(empty)* | — | from the S3 Secret (`secretKeyRef`) — cluster |
+| `S3_BUCKET` | the S3 Secret (`s3_secret`), its `S3_BUCKET` key | **required** | — | from the S3 Secret (`secretKeyRef`) — cluster |
+| `PUBLIC_RESULTS_BASE` | `converter.yaml` `public_results_base` | **required** | chart `publicResultsBase`, converter `public_results_base`, web `HTRFLOW_PUBLIC_RESULTS_BASE` | the public-read results base — nobody |
+| `IIIF_MANIFEST_URL` | the campaign file: its volume list, one entry per index | *(empty)* | — | no secret — nobody |
+| `IMAGES` | the campaign file: its volume list, one entry per index | *(empty)* | — | no secret — nobody |
+| `S3_PREFIX` | `converter.yaml` `namespace` | *(empty)* | — | no secret — nobody |
+| `MAX_IMAGE_WIDTH` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | `2500` | — | no secret — nobody |
+| `RESUME` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | `true` | — | no secret — nobody |
+| `LOOKAHEAD_PAGES` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | `64` | — | no secret — nobody |
+| `LOOKAHEAD_BYTES` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | `1073741824` | — | no secret — nobody |
+| `MAX_PAGES` | **a local run only** (the compose stack sets it): no converter key renders it, and job-shape refuses a Job that sets it | `0` | — | no secret — nobody |
+| `WORKDIR_PATH` | the converter, fixed: `/work` | `/work` | — | no secret — nobody |
+| `DOWNLOAD_CONCURRENCY` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | `12` | — | no secret — nobody |
+| `LOG_SHIP_SECONDS` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | `15.0` | — | no secret — nobody |
+| `MANIFEST_MAX_BYTES` | `converter.yaml` `manifest_max_bytes` | `16777216` | — | no secret — nobody |
+| `FETCH_MAX_BYTES` | `converter.yaml` `fetch_max_bytes` | `67108864` | — | no secret — nobody |
+| `DOWNLOAD_DEADLINE_SECONDS` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | `300.0` | — | no secret — nobody |
+| `MAX_IMAGE_PIXELS` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | `100000000` | — | no secret — nobody |
+| `PAGE_TIMEOUT_SECONDS` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | `600.0` | — | no secret — nobody |
+| `IMAGE_DIGEST` | the pipeline file's `image` | `unknown` | — | no secret — nobody |
+| `HTRFLOW_BASE_REVISION` | the image build (`ENV`): the htrflow revision the image was built from | `unknown` | — | no secret — nobody |
+| `INDEX_FAILURE_COUNT` | the Job controller, per attempt (downward API) | `0` | — | no secret — nobody |
+| `BACKOFF_LIMIT_PER_INDEX` | the converter, fixed: the Job's `backoffLimitPerIndex` | `-1` | — | no secret — nobody |
 
 `Config` is not the whole wrapper env: these 6
 names are read directly, by the warm-up entrypoint or by the Job
@@ -116,32 +128,36 @@ skeleton, never as a campaign setting.
 
 ## web — the read API and campaign browser
 
-| Key | Source | Default | Must agree with | Security |
+Each key is an environment variable of the container.
+
+| Key | Set by | Default | Must agree with | Security |
 |---|---|---|---|---|
-| `HTRFLOW_PUBLIC_RESULTS_BASE` | env | required unless `HTRFLOW_WEB_SITE_ONLY` | chart `publicResultsBase`, converter `public_results_base`, wrapper `PUBLIC_RESULTS_BASE` | the public-read results base — nobody |
-| `HTRFLOW_INTERNAL_RESULTS_BASE` | env | `HTRFLOW_PUBLIC_RESULTS_BASE` | — | no secret — nobody |
-| `HTRFLOW_NAMESPACES` | env | the pod's own namespace, else `htr-batch` | — | no secret — nobody |
-| `HTRFLOW_WEB_STATIC` | env | `/app/static` | — | no secret — nobody |
-| `HTRFLOW_WEB_SITE_ONLY` | env | `false` | — | no secret — nobody |
-| `HTRFLOW_BATCH_VERSION` | env | `dev` | — | no secret — nobody |
+| `HTRFLOW_PUBLIC_RESULTS_BASE` | the chart: `publicResultsBase` | required unless `HTRFLOW_WEB_SITE_ONLY` | chart `publicResultsBase`, converter `public_results_base`, wrapper `PUBLIC_RESULTS_BASE` | the public-read results base — nobody |
+| `HTRFLOW_INTERNAL_RESULTS_BASE` | the chart: `web.internalResultsBase`, else `publicResultsBase` | `HTRFLOW_PUBLIC_RESULTS_BASE` | — | no secret — nobody |
+| `HTRFLOW_NAMESPACES` | the chart, fixed: the release namespace (no value sets it) | the pod's own namespace, else `htr-batch` | — | no secret — nobody |
+| `HTRFLOW_WEB_STATIC` | the image build (`ENV`): where the image puts the site | `/app/static` | — | no secret — nobody |
+| `HTRFLOW_WEB_SITE_ONLY` | **a local run only** (the compose stack sets it); no chart value | `false` | — | no secret — nobody |
+| `HTRFLOW_BATCH_VERSION` | the image build (`ENV`): the tag the image is published under | `dev` | — | no secret — nobody |
 
 ## converter — a campaigns repo
 
-| Key | Source | Default | Must agree with | Security |
+Each key is a key of `converter.yaml`.
+
+| Key | Set by | Default | Must agree with | Security |
 |---|---|---|---|---|
 | `namespace` | `converter.yaml` | `htr-batch` | — | no secret — nobody |
 | `queue` | `converter.yaml` | `htr-batch` | chart `queue.name` | no secret — nobody |
-| `window` | `converter.yaml` | `20` | — | no secret — nobody |
+| `window` | `converter.yaml`; a campaign's own `window:` may lower it | `20` | — | no secret — nobody |
 | `s3_secret` | `converter.yaml` | `htr-batch-s3` | chart `s3.existingSecret` | names the Secret mounted at `/secrets/s3`; job-shape admits only `s3.existingSecret` — cluster |
 | `data_pvc` | `converter.yaml` | `htr-test-data` | chart `modelCache.name` | the model-cache PVC; job-shape admits only `modelCache.name` — cluster |
 | `runtime_class` | `converter.yaml` | `nvidia` | — | no secret — nobody |
 | `node_selector` | `converter.yaml` | *(empty)* | — | no secret — nobody |
 | `tolerations` | `converter.yaml` | *(empty)* | — | no secret — nobody |
-| `public_results_base` | `converter.yaml` | *(empty)* | chart `publicResultsBase`, web `HTRFLOW_PUBLIC_RESULTS_BASE`, wrapper `PUBLIC_RESULTS_BASE` | the public-read results base — nobody |
+| `public_results_base` | `converter.yaml` | **required** | chart `publicResultsBase`, web `HTRFLOW_PUBLIC_RESULTS_BASE`, wrapper `PUBLIC_RESULTS_BASE` | the public-read results base — nobody |
 | `source_template` | `converter.yaml` | *(empty)* | — | no secret — nobody |
-| `max_seconds` | `converter.yaml` | `21600` | — | no secret — nobody |
+| `max_seconds` | `converter.yaml`; a pipeline's own `max_seconds:` overrides it | `21600` | — | no secret — nobody |
 | `warmup_wait_seconds` | `converter.yaml` | `900` | — | no secret — nobody |
-| `ttl_seconds_after_finished` | `converter.yaml` | `604800` | — | no secret — nobody |
+| `ttl_seconds_after_finished` | `converter.yaml`; a pipeline's own `ttl_seconds_after_finished:` overrides it | `604800` | — | no secret — nobody |
 | `hf_token_secret` | `converter.yaml` | *(empty)* | chart `hfToken.existingSecret` | names the Secret the warm-up reads `HF_TOKEN` from; job-shape admits only `hfToken.existingSecret` — cluster |
 | `manifest_max_bytes` | `converter.yaml` | `16777216` | — | no secret — nobody |
 | `fetch_max_bytes` | `converter.yaml` | `67108864` | — | no secret — nobody |
@@ -149,9 +165,10 @@ skeleton, never as a campaign setting.
 
 ## chart — `charts/htrflow-batch`
 
-| Key | Source | Default | Must agree with | Security |
+Each key is a key of its `values.yaml`.
+
+| Key | Set by | Default | Must agree with | Security |
 |---|---|---|---|---|
-| `s3.bucket` | `values.yaml` | `htr-results` | — | no secret — nobody |
 | `s3.existingSecret` | `values.yaml` | `htr-batch-s3` | converter `s3_secret` | names that Secret; no template creates it — nobody |
 | `hfToken.existingSecret` | `values.yaml` | *(empty)* | converter `hf_token_secret` | the one Secret a warm-up may read (job-shape) — cluster |
 | `publicResultsBase` | `values.yaml` | *(empty)* | converter `public_results_base`, web `HTRFLOW_PUBLIC_RESULTS_BASE`, wrapper `PUBLIC_RESULTS_BASE` | the public-read results base; `required` — render |
@@ -211,6 +228,18 @@ skeleton, never as a campaign setting.
 | `network.web.ingressCidrs` | `values.yaml` | `[0.0.0.0/0]` | — | the read API's only gate on a NodePort — cluster |
 | `network.web.allowPublicIngress` | `values.yaml` | `false` | — | no secret — nobody |
 | `network.web.ingressFrom` | `values.yaml` | *(empty)* | — | who may reach the read API behind an ingress; the controller's allow-list keeps browsers out — cluster |
+
+## frontend — the campaign browser's build
+
+Each key is an environment variable of `bun run build`, baked into
+the bundle: the published image builds with none set.
+
+| Key | Default | What |
+|---|---|---|
+| `VITE_API_BASE` | `/api/v1` | the read API's base; `/config.js` overrides it at run time |
+| `VITE_RESULTS_BASE` | *(empty)* | the results base; `/config.js` overrides it at run time |
+| `VITE_RELOAD_MS` | `60000` | how often the campaign list is fetched again, in ms |
+| `VITE_LIVE_MS` | `15000` | how often a live run log is fetched again, in ms |
 
 ## One-sided keys
 

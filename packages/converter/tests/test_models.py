@@ -12,8 +12,12 @@ from htrflow_converter import models, parse
 from htrflow_converter.models import Campaign, Pipeline, Volume
 
 GOOD = Path(__file__).parent / "fixtures" / "good"
-#: What a repo whose campaigns write bare reference codes sets.
-_TEMPLATE = 'source_template: "https://iiif.example.org/{ref}/manifest"\n'
+#: A converter.yaml with what a repo whose campaigns write bare reference
+#: codes sets, and the one setting every repo must.
+_TEMPLATE = (
+    'source_template: "https://iiif.example.org/{ref}/manifest"\n'
+    "public_results_base: https://results.example.org\n"
+)
 
 
 def test_bare_string_volume_expands_with_source_template_from_context():

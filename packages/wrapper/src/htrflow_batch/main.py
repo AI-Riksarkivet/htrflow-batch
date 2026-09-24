@@ -128,7 +128,9 @@ def terminate(env: Mapping[str, str], reason: dict) -> None:
 #: (W9), the same bargain as stream.MAX_UPLOAD_FAILURES: a rebuild that cannot
 #: succeed makes every remaining page fail, and because the pages before the
 #: first death came out `ok` the all-failed guard never fires -- so the volume
-#: would publish a manifest of 600 failures and leave the index green.
+#: would publish a manifest of 600 failures and leave the index green. Three:
+#: a rebuild reloads the models from the cache PVC, so one failure may be a
+#: passing I/O error, and a third in a row is not.
 MAX_REBUILD_FAILURES = 3
 
 #: Threads a released pipeline could not stop -- workers stuck in a model

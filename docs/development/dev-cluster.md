@@ -26,7 +26,7 @@ and adjust:
 | `HTR_REGISTRY_NODEPORT` | the registry Service's NodePort (devstack `registry.nodePort`) | reference for your own forwards |
 | `HTR_S3_ENDPOINT` | the devstack S3 endpoint as the machine running `make` reaches it | `scripts/make_mock_manifest.py`; your own `aws` calls |
 | `HTR_S3_NODEPORT` | RustFS's S3 NodePort (devstack `rustfs.nodePortS3`) | reference for your own forwards |
-| `HTR_BUCKET` | the results bucket (chart `s3.bucket`) | the compose stack |
+| `HTR_BUCKET` | the results bucket the compose stack writes to (on a cluster, the S3 Secret's `S3_BUCKET`) | the compose stack |
 | `HTR_WEB_NODEPORT` | the web front's NodePort (chart `web.nodePort`) | `e2e`'s final `/api/v1/jobs` request |
 | `HTRFLOW_DIR` | a local htrflow checkout, for a base built from source | the base target below; the base's `git describe` |
 | `HTR_DEV_S3_ACCESS_KEY`, `HTR_DEV_S3_SECRET_KEY` | throwaway RustFS root credentials | the compose stack only — never a cluster |

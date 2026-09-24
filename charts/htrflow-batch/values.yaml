@@ -24,10 +24,9 @@ s3:
   # with a `credentials` key in AWS ini format plus `S3_BUCKET` (and
   # `S3_ENDPOINT` unless real AWS) exists in the release namespace — created
   # by hand, by your cloud provider's tooling, or by
-  # `charts/htrflow-devstack` (RustFS) for the PoC. Keep `bucket` in step
-  # with the converter's `s3_secret`/bucket config so the two charts wire
-  # together by name.
-  bucket: htr-results
+  # `charts/htrflow-devstack` (RustFS) for the PoC. The bucket's name is
+  # that Secret's `S3_BUCKET` key and nothing else: this chart has no value
+  # for it, since no template here would read one.
   existingSecret: htr-batch-s3
 
 # The Hugging Face token the warm-up Job reads (converter.yaml's

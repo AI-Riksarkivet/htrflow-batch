@@ -33,7 +33,7 @@ data_pvc: htr-test-data           # PVC mounted as the model cache
 runtime_class: nvidia             # RuntimeClass for GPU pods — on the warm-up Job too
 node_selector: {}
 tolerations: []                   # Kubernetes tolerations, each naming its taint's key (see below)
-public_results_base: ""           # public URL prefix results are served from (required for the read API)
+public_results_base: "https://<results-host>/<bucket>"   # required: the http(s) URL browsers read results at (the chart's publicResultsBase)
 source_template: "https://<iiif-host>/<path>/{ref}/manifest"   # no default; manifest URL for a bare volume id, {ref} is the id
 max_seconds: 21600                # each pod's activeDeadlineSeconds; a pipeline's own `max_seconds:` overrides it
 warmup_wait_seconds: 900          # how long a pod waits for its pipeline's warm-up marker before failing the index; capped by that pod's own deadline
@@ -43,7 +43,10 @@ fetch_max_bytes: 67108864         # 64 MiB
 ```
 
 The file itself is required: every command refuses a repo without one,
-rather than guess the namespace it applies and prunes in.
+rather than guess the namespace it applies and prunes in. So is
+`public_results_base`, and it must be an http(s) URL a browser can open:
+every campaign pod gets it, and without it every volume fails once the pod
+has been admitted and has waited for its warm-up.
 
 `queue`, `s3_secret`, `data_pvc`, `hf_token_secret` and
 `priority_classes` name objects the chart creates or allows;
@@ -137,7 +140,7 @@ Rules enforced by `parse_campaign` (`validate`, and by `render`):
 | **A pipeline a rendered campaign still runs keeps its image and steps** | `pipeline <id> changed (…) but campaigns …`, non-zero exit ([Immutability](#immutability)) |
 | The file stem is a DNS-1123 label (lower-case, digits, `-`, no dots, ≤63), does not start with `htr-warmup-`, and does not end in `-part<number>` or `-status` | Validation error. Pod hostnames must be DNS labels; the other names belong to warm-up Jobs, split parts and status records |
 | The last pod name, `<job>-<completions − 1>`, is at most 63 characters | `campaign <name> cannot be applied: its last pod would be …`. A 61-character name takes at most 10 volumes |
-| More than 10 000 volumes, or more than 900 KiB of `volumes.txt` | Split into `<name>-part1`, `-part2`, …, one Job and ConfigMap each; the stem is cut to 50 characters. The API server refuses a ConfigMap over 1 MiB |
+| More than 10 000 volumes (so an index has at most four digits, which every pod name has room for), or more than 900 KiB of `volumes.txt` | Split into `<name>-part1`, `-part2`, …, one Job and ConfigMap each; the stem is cut to 50 characters. The API server refuses a ConfigMap over 1 MiB |
 | Two campaigns that would split onto the same shortened stem | Refused, since their part files would collide |
 
 Checks that need the live cluster (the campaign's live ConfigMap, a

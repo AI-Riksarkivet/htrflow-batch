@@ -234,7 +234,9 @@ _SIZED = re.compile(
     r"^(?P<base>.+)/full/(?P<width>\d+),/(?P<rest>[^/?#]+/[^/?#]+)(?P<query>[?#].*)?$"
 )
 
-#: Cap on an info.json body: a few KB in practice.
+#: Cap on an info.json body: a few KB in practice, so 1 MiB is room for any
+#: list of sizes and tiles; past it the sizes are "not known" (the page asks
+#: for `max`) rather than memory the pod spends on one page's metadata.
 INFO_MAX_BYTES = 1024 * 1024
 
 
