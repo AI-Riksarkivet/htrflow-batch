@@ -724,7 +724,20 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 4203
 # checks skip an object that is no campaign's record, and the warm-up and
 # campaigns that mount a foreign pipeline ConfigMap are held back with it
 # (they would run its recipe under this pipeline's id), with the sentence.
-check converter "$(count packages/converter/src -name '*.py')" 4495
+# 4495 -> 4710 (B105, pod sizes): a pipeline's `size:` picks a named size
+# from converter.yaml. models.py +163: Size and Flavor (the quantities a pod
+# takes, parsed so memory can be held above the in-memory /work it has to
+# cover; a flavor's node labels, since Kueue can be steered to a flavor only
+# by the pod's node selector), the cross-checks a size needs (a flavor
+# converter.yaml does not list, labels that contradict node_selector, memory
+# not above workdir), and the node-label check lifted into one helper that
+# node_selector now shares. render.py +35: the size on the wrapper, its /work
+# and the lookahead derived from it (E-14), and the size on the pipeline's
+# record. parse.py +9: an unknown size refused naming the sizes there are,
+# and a recorded recipe compared with its size. cli.py +8: apply holds a
+# running pipeline's live size as it holds its steps. Most of it is the
+# sentence each refusal prints.
+check converter "$(count packages/converter/src -name '*.py')" 4710
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
@@ -1481,5 +1494,14 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5176
 # policies (Kyverno refuses one that matches a subresource), and
 # verify-images names the subresource too. Proven against the cluster's
 # admission controller, which the Kyverno CLI cannot stand in for here.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1936
+# 1936 -> 1995 (B104/B105, flavors and sizes): kueue.yaml +32 -- one
+# ResourceFlavor per queue.flavors entry, with node labels, taints and the
+# tolerations for them, and one resource group in the ClusterQueue in values
+# order; the one-flavor values are folded into the same list, so both render
+# through one loop and an install without the list renders what it did.
+# _helpers.tpl +22: the two cross-entry rules the schema cannot say (a name
+# twice, a quota of nothing written as a quantity) with their sentences.
+# job-shape +5: LOOKAHEAD_BYTES, which a sized Job carries, and every *_BYTES
+# env held to a whole number.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1995
 exit $fail
