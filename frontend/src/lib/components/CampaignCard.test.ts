@@ -7,7 +7,7 @@ import {
 } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { JobSummary } from "$lib/api.js";
-import { RELOAD_MS } from "$lib/config.js";
+import { FOLDED_MS, RELOAD_MS } from "$lib/config.js";
 import { describeReason } from "$lib/reasons.js";
 import CampaignCard from "./CampaignCard.svelte";
 import cardSource from "./CampaignCard.svelte?raw";
@@ -1541,18 +1541,29 @@ describe("a folded card is its header line", () => {
     expect(controlled?.contains(screen.getByRole("table"))).toBe(true);
   });
 
-  test("folded, a running campaign asks for no detail; open, it polls; folded again, it stops", async () => {
+  // Its header carries the pages done (the repo owner), which only the
+  // detail knows: folded, a campaign still going reads it at half the open
+  // card's pace, and open, at the list's.
+  test("folded, a running campaign reads its detail at the folded pace; open, at the list's", async () => {
     const fetchMock = vi.fn(async () => jsonResponse(busy));
     vi.stubGlobal("fetch", fetchMock);
     render(CampaignCard, { job });
-    await vi.advanceTimersByTimeAsync(RELOAD_MS * 3);
-    expect(fetchMock).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(RELOAD_MS);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(FOLDED_MS - RELOAD_MS);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // Opened a moment after that read: its first page is the table.
     await expand();
-    await vi.advanceTimersByTimeAsync(RELOAD_MS * 2);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(RELOAD_MS);
     expect(fetchMock).toHaveBeenCalledTimes(3);
-    await toggleCard(); // folds it
-    await vi.advanceTimersByTimeAsync(RELOAD_MS * 3);
+    await toggleCard(); // folds it; what it has is a moment old
     expect(fetchMock).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(FOLDED_MS);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   test("folded, a succeeded campaign reads its detail once, for the pages it lost", async () => {
@@ -1574,13 +1585,14 @@ describe("a folded card is its header line", () => {
   });
 
   test.each(["Failed", "PartiallyFailed", "Unknown"] as const)(
-    "folded, a %s campaign's header needs nothing the list did not send",
+    "folded, a %s campaign reads its detail once, for its page count",
     async (phase) => {
-      const fetchMock = vi.fn(async () => jsonResponse(busy));
+      const fetchMock = vi.fn(async () => jsonResponse({ ...busy, phase }));
       vi.stubGlobal("fetch", fetchMock);
-      render(CampaignCard, { job: { ...job, phase } });
+      const { container } = render(CampaignCard, { job: { ...job, phase } });
       await vi.advanceTimersByTimeAsync(RELOAD_MS * 3);
-      expect(fetchMock).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(container.querySelector(".stat")).toHaveTextContent("3 / 9 pages");
     },
   );
 });
@@ -2862,10 +2874,10 @@ describe("a finished card reads its detail only once someone can see it", () => 
       this.disconnected = true;
     }
     unobserve(): void {}
-    show(): void {
+    show(visible = true): void {
       const entries = this.observed.map(
         (target) =>
-          ({ isIntersecting: true, target }) as IntersectionObserverEntry,
+          ({ isIntersecting: visible, target }) as IntersectionObserverEntry,
       );
       this.callback(entries, this as unknown as IntersectionObserver);
     }
@@ -2906,7 +2918,77 @@ describe("a finished card reads its detail only once someone can see it", () => 
     FakeObserver.all[0]?.show();
     await vi.advanceTimersByTimeAsync(RELOAD_MS * 5);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(FakeObserver.all[0]?.disconnected).toBe(true);
+    // Scrolled away and back, it has nothing new to ask.
+    FakeObserver.all[0]?.show(false);
+    FakeObserver.all[0]?.show();
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 5);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  // Folded, a campaign still going reads its page count only while someone
+  // can see it: a page of fifty folded cards is not fifty polls.
+  test("folded, a running campaign reads while on screen and stops off it", async () => {
+    const fetchMock = detailFor(job);
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 3);
+    expect(fetchMock).not.toHaveBeenCalled();
+    const observer = FakeObserver.all[0];
+    observer?.show();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(FOLDED_MS);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    observer?.show(false);
+    await vi.advanceTimersByTimeAsync(FOLDED_MS * 3);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // Back on screen long after its last read: it reads at once.
+    observer?.show();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  test("scrolled past and straight back, it does not read again at once", async () => {
+    const fetchMock = detailFor(job);
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignCard, { job });
+    const observer = FakeObserver.all[0];
+    observer?.show();
+    await vi.advanceTimersByTimeAsync(0);
+    observer?.show(false);
+    observer?.show();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(FOLDED_MS);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("a screenful of folded cards asks four at a time", async () => {
+    const answers: (() => void)[] = [];
+    const fetchMock = vi.fn(
+      () =>
+        new Promise<Response>((resolve) =>
+          answers.push(() =>
+            resolve(
+              jsonResponse({ ...detail0, ...done, failures: [], volumes: [] }),
+            ),
+          ),
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    for (let i = 0; i < 10; i++)
+      render(CampaignCard, { job: { ...done, name: `c${i}` } });
+    for (const observer of FakeObserver.all) observer.show();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    answers[0]?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    for (let i = 1; i < 10; i++) {
+      answers[i]?.();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(10);
   });
 
   test("opened without being scrolled to, it reads its detail", async () => {
