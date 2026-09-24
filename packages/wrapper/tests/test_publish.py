@@ -134,6 +134,7 @@ class _SlowStore:
         self.clock = clock
         self.puts = {}
         self.page_dims = {"0002": (2500, 3538)}  # this run uploaded page 2
+        self.page_quality: dict[str, float] = {}  # no QualityPrediction step here
 
     def get_bytes(self, key):  # a resumed page's stored ALTO
         self.clock["now"] += 1.0
@@ -228,3 +229,69 @@ def test_a_stored_alto_that_does_not_parse_is_still_left_out(tmp_path):
     assert publish.alto_dims(cfg, store, _pages(), {"0001", "0002"}) == {
         "0002": (2500, 3538)
     }
+
+
+QP_PIPELINE = (
+    "steps:\n- step: QualityPrediction\n  settings:\n    model_settings:\n"
+    "      model: org/qp\n      revision: " + "a" * 40 + "\n"
+)
+
+
+def test_a_run_without_scores_is_the_manifest_it_always_was(cfg, monkeypatch):
+    monkeypatch.setattr(publish, "_htrflow_version", lambda: "0.2.3")
+    stats = StreamStats(results={"0001": PageOutcome(status="ok", seconds=1.0)})
+    args = (cfg, _pages()[:1], stats, "https://m", PIPELINE, 1.0, 1)
+    assert publish.run_manifest(*args) == publish.run_manifest(
+        *args, quality={}, canvases=["0001"]
+    )
+    assert "quality" not in publish.run_manifest(*args)
+    assert "quality" not in publish.run_manifest(*args)["results"]["0001"]
+
+
+def test_scored_pages_carry_their_score_and_the_volume_its_summary(cfg, monkeypatch):
+    monkeypatch.setattr(publish, "_htrflow_version", lambda: "0.2.3")
+    stats = StreamStats(
+        results={
+            "0001": PageOutcome(status="ok", seconds=1.0),
+            "0002": PageOutcome(status="skipped"),
+        }
+    )
+    body = publish.run_manifest(
+        cfg,
+        _pages(),
+        stats,
+        "https://m",
+        QP_PIPELINE,
+        1.0,
+        1,
+        quality={"0001": 0.81234, "0002": 0.5},
+        canvases=["0001", "0002"],
+    )
+    assert body["results"]["0001"]["quality"] == 0.8123
+    assert body["results"]["0002"]["quality"] == 0.5
+    assert body["quality"]["scored"] == 2
+    assert body["quality"]["model"] == "org/qp"
+    assert body["quality"]["lowest"][0] == {"page": "0002", "quality": 0.5, "canvas": 1}
+
+
+def test_an_unscored_page_among_scored_ones_has_no_score_key(cfg, monkeypatch):
+    monkeypatch.setattr(publish, "_htrflow_version", lambda: "0.2.3")
+    stats = StreamStats(
+        results={
+            "0001": PageOutcome(status="ok", seconds=1.0),
+            "0002": PageOutcome(status="ok", seconds=1.0),
+        }
+    )
+    body = publish.run_manifest(
+        cfg,
+        _pages(),
+        stats,
+        "https://m",
+        QP_PIPELINE,
+        1.0,
+        1,
+        quality={"0001": 0.9},
+        canvases=["0001", "0002"],
+    )
+    assert "quality" not in body["results"]["0002"]
+    assert body["quality"]["scored"] == 1 and body["pages"] == 2
