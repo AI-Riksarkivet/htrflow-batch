@@ -3,10 +3,10 @@
 # are append-only, and pause/cancel are Git changes.
 pipeline: demo-v1
 volumes:
-  # Bare string: a Riksarkivet reference code. The manifest URL is
-  # templated from converter.yaml's source_template.
-  - R0001203
-
   # Explicit IIIF manifest (Presentation v2 or v3), http(s) only:
   - id: loc-mal2459400
     manifest: https://www.loc.gov/item/mal2459400/manifest.json
+
+  # Bare string: a reference code, turned into a manifest URL by
+  # converter.yaml's source_template — set that first, then uncomment:
+  # - R0001203
