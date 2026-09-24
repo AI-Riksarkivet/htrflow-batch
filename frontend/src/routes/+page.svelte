@@ -265,7 +265,7 @@
      held for it before there is one, filled from the right so a longer one
      grows away from the icons beside it. */
   .version {
-    min-width: 10rem;
+    min-width: 29ch;
     text-align: right;
     color: var(--muted-foreground);
     font-size: 0.8rem;
