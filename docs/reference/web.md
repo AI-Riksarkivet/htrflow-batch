@@ -156,8 +156,8 @@ it is opened:
    failed volume as `id: sentence` linked to its run log, and the latest
    page error when its volume is not on screen. Past three sentences the
    rest wait behind "N more".
-4. **Provenance.** The pipeline (click for its YAML) and the models it
-   loads, each linked to its Hugging Face revision, or marked `unpinned`.
+4. **Provenance.** The pipeline (click for its YAML) and, on the row below,
+   the models it loads, each linked to its Hugging Face revision, or marked `unpinned`.
 
 **Each volume row** links:
 

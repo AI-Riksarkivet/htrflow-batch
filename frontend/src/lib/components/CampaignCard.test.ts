@@ -1084,6 +1084,41 @@ describe("CampaignCard", () => {
     expect(ident.textContent).not.toContain("Models");
   });
 
+  // The pipeline chip and the models shared one row, and the models line
+  // pushed the chip about as it wrapped (the repo owner): two rows, the
+  // pipeline first, then the models under it, at every width.
+  test("the footer is two rows: the pipeline, then the models", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          pipelineYaml:
+            "steps:\n- step: Segmentation\n  settings:\n    model_settings:\n      model: Riksarkivet/yolov9-regions-1\n",
+          failures: [],
+          volumes: [],
+        }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    await expand();
+    const meta = container.querySelector(".card-meta") as HTMLElement;
+    expect([...meta.children].map((c) => c.className.split(" ")[0])).toEqual([
+      "provenance",
+      "models",
+    ]);
+    for (const media of [null, PHONE]) {
+      const css = cssOf(".card-meta", media);
+      expect(css.get("display"), String(media)).toBe("flex");
+      expect(css.get("flex-direction"), String(media)).toBe("column");
+    }
+    // The models still clip to one line, their title carrying the rest.
+    const models = cssOf(".models");
+    expect(models.get("white-space")).toBe("nowrap");
+    expect(models.get("text-overflow")).toBe("ellipsis");
+  });
+
   // The arrow says "and then it finished". A campaign that has not started
   // has nothing on the other side of it to point at, and pointing anyway
   // read as though it were running (2026-09-16 review).
