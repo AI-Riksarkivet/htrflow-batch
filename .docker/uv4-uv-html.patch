@@ -10,6 +10,9 @@ commit; `git apply` skips this preamble. What each file changes:
   them to viewport coords; and render ALTO line text (and search-hit text)
   as text, never as HTML, so a line reading <img src=x onerror=...> is
   shown, not run on the web front's origin (2026-09-17 audit, 3059).
+- TextRightPanel.ts (also): show the page's predicted quality, ALTO
+  Page/@PC as htrflow's QualityPrediction writes it, under the header --
+  read off the same ALTO as the lines, set as text.
 - SearchLeftPanel.ts: render the search service's hit text (before, match,
   after) as text too; with a manifest from anywhere, its search service is
   as untrusted as its ALTO.
@@ -31,7 +34,7 @@ index b2622a8..1a960e8 100644
            @col: rgb(120, 251, 185);
            background-color: saturate(@col, 100%);
 diff --git a/src/content-handlers/iiif/modules/uv-textrightpanel-module/TextRightPanel.ts b/src/content-handlers/iiif/modules/uv-textrightpanel-module/TextRightPanel.ts
-index e9d30db..3f5ff7a 100644
+index e9d30db..c372ff7 100644
 --- a/src/content-handlers/iiif/modules/uv-textrightpanel-module/TextRightPanel.ts
 +++ b/src/content-handlers/iiif/modules/uv-textrightpanel-module/TextRightPanel.ts
 @@ -253,25 +253,32 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
@@ -182,12 +185,25 @@ index e9d30db..3f5ff7a 100644
  
            line.on("keydown", (e: any) => {
              if (e.keyCode === 13) {
-@@ -449,7 +477,7 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
+@@ -449,7 +477,20 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
        }
        if (header) {
          this.$transcribedText.append(
 -          $('<div class="label">' + header + "</div>")
 +          $('<div class="label"></div>').text(header)
++        );
++      }
++      // htrflow's QualityPrediction step writes the page's score as
++      // Page/@PC (0-1). Read off this same ALTO, so the number always
++      // belongs to the text under it; set with .text(), like every other
++      // ALTO value in this panel. No PC, nothing shown.
++      const pc = altoPage ? altoPage.getAttribute("PC") : null;
++      const score = pc === null || pc === "" ? NaN : Number(pc);
++      if (Number.isFinite(score) && score >= 0 && score <= 1) {
++        this.$transcribedText.append(
++          $('<div class="label quality"></div>').text(
++            "Predicted quality " + score.toFixed(2)
++          )
          );
        }
        if (lines.length > 0) {
