@@ -23,6 +23,8 @@ from .models import (
 
 _LABEL_JUNK = re.compile(r"[^A-Za-z0-9_.-]")
 _PATH_RE = re.compile(r"[^.\[\]]+|\[\d+\]")
+#: Volumes one Job runs: its highest index then has four digits, the `-9999`
+#: that `_SPLIT_STEM` reserves in every pod name.
 MAX_VOLUMES_PER_JOB = 10_000
 #: Bytes of ``volumes.txt`` one part may carry. The API server sums the
 #: values under ``data`` and ``binaryData`` -- nothing else, not the keys,

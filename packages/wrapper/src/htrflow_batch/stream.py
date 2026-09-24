@@ -45,7 +45,9 @@ class StreamStats(BaseModel):
 ProcessFn = Callable[[Path], "dict[str, Path]"]
 UploadFn = Callable[[str, "dict[str, Path]"], None]
 
-#: Consecutive store failures after which the run is abandoned (W6).
+#: Consecutive store failures after which the run is abandoned (W6). Each
+#: page already failed every retry of store.py's client, so five in a row is
+#: an outage, not a bad page: the transient exit hands the index to a new pod.
 MAX_UPLOAD_FAILURES = 5
 
 #: Default cap on the bytes the lookahead may hold (env ``LOOKAHEAD_BYTES``;

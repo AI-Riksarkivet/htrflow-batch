@@ -140,7 +140,7 @@ Rules enforced by `parse_campaign` (`validate`, and by `render`):
 | **A pipeline a rendered campaign still runs keeps its image and steps** | `pipeline <id> changed (…) but campaigns …`, non-zero exit ([Immutability](#immutability)) |
 | The file stem is a DNS-1123 label (lower-case, digits, `-`, no dots, ≤63), does not start with `htr-warmup-`, and does not end in `-part<number>` or `-status` | Validation error. Pod hostnames must be DNS labels; the other names belong to warm-up Jobs, split parts and status records |
 | The last pod name, `<job>-<completions − 1>`, is at most 63 characters | `campaign <name> cannot be applied: its last pod would be …`. A 61-character name takes at most 10 volumes |
-| More than 10 000 volumes, or more than 900 KiB of `volumes.txt` | Split into `<name>-part1`, `-part2`, …, one Job and ConfigMap each; the stem is cut to 50 characters. The API server refuses a ConfigMap over 1 MiB |
+| More than 10 000 volumes (so an index has at most four digits, which every pod name has room for), or more than 900 KiB of `volumes.txt` | Split into `<name>-part1`, `-part2`, …, one Job and ConfigMap each; the stem is cut to 50 characters. The API server refuses a ConfigMap over 1 MiB |
 | Two campaigns that would split onto the same shortened stem | Refused, since their part files would collide |
 
 Checks that need the live cluster (the campaign's live ConfigMap, a
