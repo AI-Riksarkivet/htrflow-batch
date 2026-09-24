@@ -394,4 +394,29 @@ describe("/ nothing moves as the page loads", () => {
     expect(cssOf(pageRules, ".version").get("text-align")).toBe("right");
     expect(cssOf(pageRules, ".header-right").get("margin-left")).toBe("auto");
   });
+
+  // Before the first answer there is nothing to say yet: no empty state, no
+  // banner, and a "Loading…" that waits a moment before it shows, so a
+  // quick answer replaces nothing a reader saw (it flashed for a few
+  // hundred milliseconds on every load).
+  test("before the first answer: no empty state, no banner, a loading line that waits", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})) as unknown as typeof fetch,
+    );
+    const { container } = render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.queryByText("No campaigns.")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    const loading = container.querySelector(".loading");
+    expect(loading).toHaveTextContent("Loading…");
+    expect(container.querySelector("main")).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    const css = cssOf(pageRules, ".loading");
+    expect(css.get("animation")).toMatch(
+      /\b\d+ms\b.*\bboth\b|\bboth\b.*\b\d+ms\b/,
+    );
+  });
 });
