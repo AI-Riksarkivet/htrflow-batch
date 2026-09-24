@@ -1203,6 +1203,120 @@ def test_an_install_without_flavors_renders_the_queue_it_always_did(case: str):
     assert _queue_objects(QUEUE_CASES[case]) == golden[case]
 
 
+#: Two sorts of GPU, as ci/full-values.yaml describes them: the render
+#: kubeconform checks against Kueue's own CRD schemas in `make helm-template`.
+TWO_FLAVORS = [
+    {
+        "name": "large-gpu",
+        "nodeLabels": {"nvidia.com/gpu.product": "NVIDIA-A100-SXM4-80GB"},
+        "nodeTaints": [{"key": "gpu-pool", "value": "large", "effect": "NoSchedule"}],
+        "quota": {"cpu": 16, "memory": "128Gi", "nvidia.com/gpu": 2},
+    },
+    {
+        "name": "small-gpu",
+        "nodeLabels": {"nvidia.com/gpu.product": "NVIDIA-L4"},
+        "quota": {"cpu": 8, "memory": "32Gi", "nvidia.com/gpu": 4},
+    },
+]
+
+
+def test_two_flavors_render_two_resource_flavors_with_their_node_labels(
+    full: list[dict],
+):
+    flavors = {f["metadata"]["name"]: f for f in objects(full, "ResourceFlavor")}
+    assert list(flavors) == ["large-gpu", "small-gpu"]
+    for want in TWO_FLAVORS:
+        spec = flavors[want["name"]]["spec"]
+        assert spec["nodeLabels"] == want["nodeLabels"]
+    # A taint the flavor's nodes carry is tolerated by what Kueue admits on
+    # the flavor: Kueue adds the flavor's tolerations to the pod at
+    # admission, and counts them when it checks the taints (v1beta2
+    # ResourceFlavorSpec), so the converter need not know the pool's taint.
+    large = flavors["large-gpu"]["spec"]
+    assert large["nodeTaints"] == TWO_FLAVORS[0]["nodeTaints"]
+    assert large["tolerations"] == [
+        {
+            "key": "gpu-pool",
+            "operator": "Equal",
+            "value": "large",
+            "effect": "NoSchedule",
+        }
+    ]
+    assert "nodeTaints" not in flavors["small-gpu"]["spec"]
+    assert "tolerations" not in flavors["small-gpu"]["spec"]
+
+
+def test_the_cluster_queue_has_a_quota_per_flavor_in_the_order_values_list_them(
+    full: list[dict],
+):
+    """Kueue tries a resource group's flavors in the order the ClusterQueue
+    lists them, so the order is the operator's to choose."""
+    queue = named(full, "ClusterQueue", "htr-batch-cq")
+    (group,) = queue["spec"]["resourceGroups"]
+    assert group["coveredResources"] == ["cpu", "memory", "nvidia.com/gpu"]
+    assert group["flavors"] == [
+        {
+            "name": f["name"],
+            "resources": [
+                {"name": r, "nominalQuota": f["quota"][r]}
+                for r in ("cpu", "memory", "nvidia.com/gpu")
+            ],
+        }
+        for f in TWO_FLAVORS
+    ]
+
+
+def test_flavors_that_exist_already_are_referenced_not_created():
+    rendered = render(values="ci/full-values.yaml", sets=("queue.createFlavor=false",))
+    assert objects(rendered, "ResourceFlavor") == []
+    queue = named(rendered, "ClusterQueue", "htr-batch-cq")
+    names = [f["name"] for f in queue["spec"]["resourceGroups"][0]["flavors"]]
+    assert names == ["large-gpu", "small-gpu"]
+
+
+def test_the_list_replaces_the_single_flavor(full: list[dict]):
+    """With `queue.flavors` set, `queue.flavor` and `queue.resources` are
+    not a third flavor beside it."""
+    names = [f["metadata"]["name"] for f in objects(full, "ResourceFlavor")]
+    assert "default-flavor" not in names
+
+
+@pytest.mark.parametrize(
+    "flavor",
+    [
+        {"name": "x", "nodeLabels": {"a": "b"}, "quota": {"cpu": 1, "memory": "1Gi"}},
+        {"name": "x", "quota": {"cpu": 1, "memory": "1Gi", "nvidia.com/gpu": 1}},
+        {
+            "name": "x",
+            "nodeLabels": {"a": "b"},
+            "quota": {"cpu": 1, "memory": "1Gi", "nvidia.com/gpu": 1, "pods": 5},
+        },
+        {
+            "name": "x",
+            "nodeLabels": {"a": "b"},
+            "quota": {"cpu": 1, "memory": "1Gi", "nvidia.com/gpu": 0},
+        },
+        {
+            "name": "x",
+            "nodeLabels": {"a": "b"},
+            "nodeTaints": [{"key": "k", "effect": "Sometimes"}],
+            "quota": {"cpu": 1, "memory": "1Gi", "nvidia.com/gpu": 1},
+        },
+    ],
+    ids=["no-gpu-quota", "no-node-labels", "unknown-resource", "zero-gpus", "effect"],
+)
+def test_the_schema_refuses_a_flavor_kueue_could_not_admit_a_pod_on(
+    flavor: dict, tmp_path: Path
+):
+    """Every flavor quotes the three resources a campaign pod requests: a
+    resource the group does not cover is a Workload Kueue never admits."""
+    path = tmp_path / "values.yaml"
+    path.write_text(yaml.safe_dump({"queue": {"flavors": [flavor]}}), encoding="utf-8")
+    refused = helm_template(values=str(path), sets=DEFAULT_SETS)
+    assert refused.returncode != 0
+    assert "queue/flavors/0" in refused.stderr, refused.stderr
+
+
 # --- 3103: every guard, alone, refuses in its own words -------------------
 
 #: One case per `fail`/`required` in the two charts: a render that satisfies
@@ -1329,6 +1443,30 @@ BATCH_GUARDS = {
         "network:\n  iiifCidrs: []\n",
         DEFAULT_SETS,
         IIIF_NOWHERE_REFUSAL,
+    ),
+    "flavor-twice": (
+        yaml.safe_dump({"queue": {"flavors": [TWO_FLAVORS[1], TWO_FLAVORS[1]]}}),
+        DEFAULT_SETS,
+        "queue.flavors names small-gpu twice: a ClusterQueue lists a flavor"
+        " once, so rename one of them",
+    ),
+    "flavor-zero-quota": (
+        yaml.safe_dump(
+            {
+                "queue": {
+                    "flavors": [
+                        {
+                            **TWO_FLAVORS[1],
+                            "quota": {**TWO_FLAVORS[1]["quota"], "memory": "0Gi"},
+                        }
+                    ]
+                }
+            }
+        ),
+        DEFAULT_SETS,
+        'queue.flavors small-gpu has a memory quota of "0Gi": a flavor with'
+        " none of a resource every campaign pod requests admits no campaign"
+        " pod, so give it more than 0 or leave the flavor out",
     ),
 }
 DEVSTACK_GUARDS = {

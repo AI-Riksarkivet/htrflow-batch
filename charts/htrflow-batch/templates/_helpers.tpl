@@ -105,6 +105,28 @@ after the slash.
 {{- end }}
 {{- end }}
 {{- end }}
+{{- /*
+queue.flavors (B104). The schema holds each entry's shape; what it cannot
+say is a name listed twice -- the ClusterQueue would carry the flavor twice
+and Kueue refuses it -- or a quota of nothing written as a quantity ("0Gi"),
+which admits no campaign pod on that flavor, ever, and reads as "Queued".
+Checked whether or not this release creates the flavors or the queue: the
+list is what converter.yaml's `flavors` repeats either way.
+*/}}
+{{- $seen := dict }}
+{{- range .Values.queue.flavors }}
+{{- if hasKey $seen .name }}
+{{- fail (printf "queue.flavors names %s twice: a ClusterQueue lists a flavor once, so rename one of them" .name) }}
+{{- end }}
+{{- $_ := set $seen .name true }}
+{{- $flavor := . }}
+{{- range list "cpu" "memory" "nvidia.com/gpu" }}
+{{- $quota := toString (index ($flavor.quota | default dict) .) }}
+{{- if not (regexMatch "[1-9]" (regexReplaceAll "(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E|m)$" $quota "")) }}
+{{- fail (printf "queue.flavors %s has a %s quota of %q: a flavor with none of a resource every campaign pod requests admits no campaign pod, so give it more than 0 or leave the flavor out" $flavor.name . $quota) }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- end }}
 
 {{/*
