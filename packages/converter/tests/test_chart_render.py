@@ -1428,25 +1428,54 @@ def test_a_tag_is_taken_only_with_the_poc_switch():
     )
 
 
-def test_every_pod_image_rule_matches_the_debug_subresource(prod: list[dict]):
+def test_a_debug_container_is_checked_by_every_image_policy(prod: list[dict]):
     """`kubectl debug` adds its container through the `pods/ephemeralcontainers`
-    subresource, and a rule matching only kind Pod never sees that request:
-    on the dev cluster a busybox debug container was admitted onto a campaign
-    pod past every image rule. Admission tests cannot catch this -- the
-    Kyverno CLI sends no subresource request -- so every rule that holds a
-    Pod's images must name the subresource kind itself."""
-    image_rules = [
-        (policy["metadata"]["name"], r)
-        for policy in prod
-        if policy.get("kind") == "ClusterPolicy"
-        for r in policy["spec"]["rules"]
-        if any(
-            "Pod" in res.get("resources", {}).get("kinds", [])
+    subresource. A rule on kind Pod does not see that request, and one that
+    does is skipped by Kyverno's default `allowExistingViolations` -- the
+    request is an update to a Pod that, as Kyverno reads it, already carries
+    the violation. On the dev cluster a busybox debug container got past
+    both. The Kyverno CLI sends no subresource request, so the shape is held
+    here and was proven against the cluster's admission controller."""
+    policies = {
+        p["metadata"]["name"]: p for p in prod if p.get("kind") == "ClusterPolicy"
+    }
+    for name, policy in policies.items():
+        short = name.removeprefix("htrflow-batch-").rsplit("-", 1)[0]
+        if short not in ("images-allowed", "images-pinned", "verify-images"):
+            continue
+        rules = [
+            r
+            for r in policy["spec"]["rules"]
+            if any(
+                "Pod/ephemeralcontainers" in res["resources"]["kinds"]
+                for res in r["match"]["any"]
+            )
+        ]
+        assert rules, (name, "no rule sees the debug subresource")
+        for r in rules:
+            if "validate" in r:
+                assert r["validate"].get("allowExistingViolations") is False, (
+                    name,
+                    r["name"],
+                )
+                assert "ephemeralContainers" in str(r["context"]), (name, r["name"])
+
+
+def test_a_policy_that_matches_a_subresource_is_not_a_background_policy(
+    prod: list[dict],
+):
+    """Kyverno's own webhook refuses a ClusterPolicy that matches a
+    subresource kind (`Pod/ephemeralcontainers`) with `background: true` --
+    the chart would not install. The Kyverno CLI the admission tests run
+    does not make that check, so it is made here."""
+    for policy in prod:
+        if policy.get("kind") != "ClusterPolicy":
+            continue
+        kinds = [
+            k
+            for r in policy["spec"]["rules"]
             for res in r["match"].get("any", [])
-        )
-        and ("verifyImages" in r or "image" in str(r.get("validate", "")))
-    ]
-    assert len(image_rules) == 3, [n for n, _ in image_rules]
-    for name, r in image_rules:
-        kinds = [k for res in r["match"]["any"] for k in res["resources"]["kinds"]]
-        assert "Pod/ephemeralcontainers" in kinds, (name, r["name"], kinds)
+            for k in res.get("resources", {}).get("kinds", [])
+        ]
+        if any("/" in k for k in kinds):
+            assert policy["spec"].get("background") is False, policy["metadata"]["name"]

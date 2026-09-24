@@ -36,7 +36,8 @@ metadata:
   labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
 spec:
   validationFailureAction: Enforce
-  background: true
+  # false: Kyverno refuses a background policy that matches a subresource
+  background: false
   rules:
     - name: job-images-allowed
       match:
@@ -65,8 +66,7 @@ spec:
       match:
         any:
           - resources:
-              # Pod alone misses the subresource `kubectl debug` goes through
-              kinds: [Pod, Pod/ephemeralcontainers]
+              kinds: [Pod]
               namespaces: [{{ .Release.Namespace | quote }}]
       context:
         - name: foreign
@@ -76,6 +76,32 @@ spec:
               | [?!regex_match({{ $re | squote }}, split(@, '@')[0])]
             default: []
       validate:
+        message: >-
+          image is not from an allowed repository: {{ `{{ join(', ', foreign) }}` }}
+          — allowed: {{ $allowed }}
+        deny:
+          conditions:
+            all:
+              - key: {{ `"{{ length(foreign) }}"` }}
+                operator: GreaterThan
+                value: 0
+    - name: debug-images-allowed
+      match:
+        any:
+          - resources:
+              kinds: [Pod/ephemeralcontainers]
+              namespaces: [{{ .Release.Namespace | quote }}]
+      context:
+        - name: foreign
+          variable:
+            jmesPath: >-
+              request.object.spec.ephemeralContainers[].image
+              | [?!regex_match({{ $re | squote }}, split(@, '@')[0])]
+            default: []
+      validate:
+        # `kubectl debug` is an update to a running Pod: Kyverno's default
+        # skips a rule whose violation the old object already had.
+        allowExistingViolations: false
         message: >-
           image is not from an allowed repository: {{ `{{ join(', ', foreign) }}` }}
           — allowed: {{ $allowed }}
