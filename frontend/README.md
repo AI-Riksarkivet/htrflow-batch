@@ -333,7 +333,7 @@ detail, then a poll a minute later — and nothing on screen may move when a
 later stage lands. `scripts/measure-shifts.mjs` measures that in a real
 browser: it serves a built `dist/` beside a fake read API made from the
 contract fixture (`src/lib/fixtures/api-contract.json`, fourteen campaigns
-in every phase), holds each answer back by a varied delay so the details
+in every phase, each detail agreeing with its list row), holds each answer back by a varied delay so the details
 land in a random order, records every layout shift with the element that
 moved (the Layout Instability API), and saves a filmstrip. The second list
 answer starts a queued campaign and adds a new one, which is when a list can
@@ -347,7 +347,18 @@ VITE_RELOAD_MS=4000 bun run build     # a poll that lands inside the run
 node scripts/measure-shifts.mjs --out /tmp/shifts            # folded cards
 node scripts/measure-shifts.mjs --out /tmp/shifts --open 3   # three left open
 node scripts/measure-shifts.mjs --out /tmp/shifts --width 390
+node scripts/measure-shifts.mjs --out /tmp/shifts --scroll 300 # reader scrolled down
+node scripts/measure-shifts.mjs --out /tmp/shifts --fail       # the poll is an outage
 ```
+
+What it found, and what holds each still: the version widening the header
+(a phone's header wrapped under the list) — a held slot; a chip's word
+changing when the detail landed — the phase chip last, the page count's
+track held; a poll re-sorting the list — `keepOrder`; a banner arriving
+over the list — it floats; an open card growing by every row when its
+detail landed — placeholder rows from the list row's counts. What is left
+is news: a new campaign appearing in view, or a chip that changed because
+the campaign did.
 
 CI runs no browser, so the causes this found are pinned by structural tests
 in `src/routes/page.test.ts` and `src/lib/components/CampaignCard.test.ts`.
