@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from htrflow_converter.models import Volume
+from htrflow_converter.models import ConverterConfig, Volume
 from htrflow_converter.parse import ValidationError, load
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -46,6 +46,12 @@ def test_good_fixture_bare_id_expands_with_source_template():
     assert v["R0001203"].images == []
 
 
+def test_source_template_has_no_default():
+    """No archive's IIIF host is built in: a repo that writes bare reference
+    codes names its own (audit 0923 ruling 1)."""
+    assert ConverterConfig().source_template == ""
+
+
 def test_good_fixture_images_volume_kept():
     campaigns, _, _ = _load(GOOD)
     kyrk = next(c for c in campaigns if c.name == "kyrk")
@@ -71,6 +77,20 @@ def test_good_fixture_second_campaign_priority_and_window():
 #: something a refactor can do quietly. Each is
 #: `path/to/file.yaml: <what is wrong> — <what to do about it>`.
 EXPECTED = {
+    # One sentence per campaign, never one per volume: a campaign of ten
+    # thousand bare codes is one fix, in converter.yaml (audit 0923 ruling 1).
+    "bare-ref-no-template": [
+        'campaigns/broken.yaml: volumes "R1", "R2", "R3" and 1 more are bare '
+        "reference codes, and converter.yaml has no source_template to turn "
+        "them into manifest URLs — set source_template in converter.yaml (e.g. "
+        '"https://iiif.example.org/{ref}/manifest"), or write each volume as '
+        '"id:" with "manifest: <url>"',
+        'campaigns/second.yaml: volume "R9" is a bare reference code, and '
+        "converter.yaml has no source_template to turn it into a manifest URL "
+        "— set source_template in converter.yaml (e.g. "
+        '"https://iiif.example.org/{ref}/manifest"), or write the volume as '
+        '"id:" with "manifest: <url>"',
+    ],
     "unsafe-volume-id": [
         'campaigns/broken.yaml: volume 1 ("a/b") has an id with characters '
         'that are not allowed — use only letters, digits, ".", "_" and "-", '

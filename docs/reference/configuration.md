@@ -138,7 +138,7 @@ skeleton, never as a campaign setting.
 | `node_selector` | `converter.yaml` | *(empty)* | — | no secret — nobody |
 | `tolerations` | `converter.yaml` | *(empty)* | — | no secret — nobody |
 | `public_results_base` | `converter.yaml` | *(empty)* | chart `publicResultsBase`, web `HTRFLOW_PUBLIC_RESULTS_BASE`, wrapper `PUBLIC_RESULTS_BASE` | the public-read results base — nobody |
-| `source_template` | `converter.yaml` | `https://lbiiif.riksarkivet.se/arkis!{ref}/manifest` | — | no secret — nobody |
+| `source_template` | `converter.yaml` | *(empty)* | — | no secret — nobody |
 | `max_seconds` | `converter.yaml` | `21600` | — | no secret — nobody |
 | `warmup_wait_seconds` | `converter.yaml` | `900` | — | no secret — nobody |
 | `ttl_seconds_after_finished` | `converter.yaml` | `604800` | — | no secret — nobody |

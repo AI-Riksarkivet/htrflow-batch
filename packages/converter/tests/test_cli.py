@@ -1030,6 +1030,45 @@ def test_a_rendered_campaign_keeps_a_url_the_new_rule_refuses(tmp_path, capsys):
     assert main(["validate", str(repo)]) == 1  # a new campaign is held to it
 
 
+def test_a_rendered_campaign_keeps_bare_codes_a_template_no_longer_expands(
+    tmp_path, capsys
+):
+    """audit 0923 ruling 1: source_template lost its built-in host. A repo
+    rendered under it, whose converter.yaml never set one, is not locked: an
+    unchanged campaign keeps the URLs its record holds, with a warning; a new
+    or changed one must set the template."""
+    repo = _recorded_repo(tmp_path, "  - R1\n  - R2\n", "  - R1\n  - R2\n")
+    before = (repo / "rendered" / "campaigns" / "kyrk.yaml").read_text()
+    config = repo / "converter.yaml"
+    config.write_text(
+        "".join(
+            line
+            for line in config.read_text().splitlines(keepends=True)
+            if not line.startswith("source_template:")
+        )
+    )
+    capsys.readouterr()
+    assert main(["validate", str(repo)]) == 0
+    printed = capsys.readouterr()
+    assert printed.out == ""
+    (warning,) = [w for w in printed.err.splitlines() if "kyrk.yaml" in w]
+    assert warning.startswith("warning: campaigns/kyrk.yaml: its bare reference")
+    assert "source_template" in warning
+    assert main(["validate", "--rendered", str(repo)]) == 0
+    assert main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    after = (repo / "rendered" / "campaigns" / "kyrk.yaml").read_text()
+    assert after == before
+
+    (repo / "campaigns" / "kyrk.yaml").write_text(
+        "pipeline: demo-v1\nvolumes:\n  - R1\n  - R2\n  - R3\n"
+    )
+    capsys.readouterr()
+    assert main(["validate", str(repo)]) == 1  # changed: held to the rule
+    out = capsys.readouterr().out
+    assert "campaigns/kyrk.yaml: volumes" in out
+    assert "no source_template" in out
+
+
 def test_validate_rendered_compares_what_the_render_says_not_its_bytes(
     tmp_path, capsys
 ):

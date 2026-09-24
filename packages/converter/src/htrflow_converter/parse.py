@@ -8,15 +8,23 @@ import yaml
 from pydantic import ValidationError as _PydanticValidationError
 
 from .models import (
+    NO_SOURCE_TEMPLATE,
     Campaign,
     ConverterConfig,
     Pipeline,
     _not_text,
     _shown_url,
     _unopenable,
+    parse_source_line,
     shown,
 )
-from .record import RENDERED, CorruptRenderedFile, recorded_volumes, unchanged
+from .record import (
+    RENDERED,
+    CorruptRenderedFile,
+    recorded_lines,
+    recorded_manifests,
+    unchanged,
+)
 
 
 class ValidationError(Exception):
@@ -107,22 +115,26 @@ def _not_a_mapping(rel: str, what: str) -> str:
     )
 
 
-def _load_config(path: Path, problems: list[str]) -> ConverterConfig:
+def _load_config(path: Path, problems: list[str]) -> tuple[ConverterConfig, str | None]:
+    """converter.yaml, and the source_template bare volume ids are expanded
+    with -- ``None`` when the file did not load: its problem is on the list,
+    and a bare id its template would have expanded is not another one."""
     if not path.exists():
-        return ConverterConfig()
+        return ConverterConfig(), ""
     try:
         doc = _safe_load(path) or {}
     except yaml.YAMLError as e:
         problems.append(_not_yaml(path.name, e))
-        return ConverterConfig()
+        return ConverterConfig(), None
     if not isinstance(doc, dict):
         problems.append(_not_a_mapping(path.name, "converter"))
-        return ConverterConfig()
+        return ConverterConfig(), None
     try:
-        return ConverterConfig.model_validate(doc)
+        cfg = ConverterConfig.model_validate(doc)
     except _PydanticValidationError as e:
         problems.extend(_problems(path.name, e))
-        return ConverterConfig()
+        return ConverterConfig(), None
+    return cfg, cfg.source_template
 
 
 #: Pydantic's error types as the second half of a sentence about ``_what``.
@@ -181,14 +193,53 @@ def _what(loc: tuple, value: object) -> str:
     return f'"{keys}"{nth}'
 
 
-def _problems(rel: str, exc: _PydanticValidationError) -> list[str]:
+#: How many bare codes the sentence about a missing ``source_template``
+#: names before it only counts the rest.
+_BARE_SHOWN = 3
+
+
+def _no_source_template(rel: str, codes: list[str]) -> str:
+    """The one sentence for every bare reference code in a campaign when
+    converter.yaml has no ``source_template``: one fix, however many volumes."""
+    quoted = [f'"{c}"' for c in codes[:_BARE_SHOWN]]
+    if len(codes) == 1:
+        head = f"volume {quoted[0]} is a bare reference code"
+        it, url, each = "it", "a manifest URL", "the volume"
+    else:
+        more = len(codes) - len(quoted)
+        listed = (
+            f"{', '.join(quoted)} and {more} more"
+            if more
+            else f"{', '.join(quoted[:-1])} and {quoted[-1]}"
+        )
+        head = f"volumes {listed} are bare reference codes"
+        it, url, each = "them", "manifest URLs", "each volume"
+    return (
+        f"{rel}: {head}, and converter.yaml has no source_template to turn "
+        f"{it} into {url} — set source_template in converter.yaml (e.g. "
+        '"https://iiif.example.org/{ref}/manifest"), or write '
+        f'{each} as "id:" with "manifest: <url>"'
+    )
+
+
+def _problems(rel: str, exc: _PydanticValidationError, bare: bool = True) -> list[str]:
     """``file.yaml: <what is wrong> — <what to write instead>``, one line per
     error. Our own validators raise the predicate half already (each is
     written to continue ``_what``'s subject); pydantic's own error types get
-    theirs from ``_TYPE_SENTENCES``."""
+    theirs from ``_TYPE_SENTENCES``. Bare codes with no ``source_template``
+    are one line for the file, where the first of them is -- or none, when
+    ``bare`` is false: the template converter.yaml wrote did not load, and
+    that is the problem to fix."""
     out = []
-    for err in exc.errors():
+    errors = exc.errors()
+    codes = [str(e["input"]) for e in errors if e["type"] == NO_SOURCE_TEMPLATE]
+    for err in errors:
         loc = tuple(err["loc"])
+        if err["type"] == NO_SOURCE_TEMPLATE:
+            if bare and codes:
+                out.append(_no_source_template(rel, codes))
+                codes = []
+            continue
         template = _TYPE_SENTENCES.get(err["type"])
         if template is None:
             # One problem is one line: a tab, CR or LF out of the author's
@@ -234,7 +285,7 @@ def _duplicate_volume_ids(doc: dict, rel: str, problems: list[str]) -> None:
         seen.add(str(vid))
 
 
-def _kept(rel: str, doc: dict, c: Campaign) -> list[str]:
+def _kept(rel: str, doc: dict, c: Campaign, template: str | None) -> list[str]:
     """What a campaign kept under ``record.unchanged`` would be refused for
     if it were new: said, not enforced -- its volumes cannot change."""
     said = []
@@ -256,6 +307,13 @@ def _kept(rel: str, doc: dict, c: Campaign) -> list[str]:
                     f'{_shown_url(url)}"): {why} — kept, since this campaign '
                     "was rendered with it and its volumes cannot change"
                 )
+    if template == "" and any(isinstance(entry, str) for entry in raw):
+        said.append(
+            f"{rel}: its bare reference codes keep the manifest URLs they were "
+            "rendered with, since its volumes cannot change, but converter.yaml "
+            "has no source_template — set it to the template they were "
+            "rendered with, so a new campaign can use bare codes too"
+        )
     return said
 
 
@@ -275,27 +333,33 @@ def _parse_campaign(
         refused = e
     # An authoring rule added since the campaign was rendered does not reach
     # it while its record is unchanged: it could never be brought to pass.
-    recorded = _recorded(context.get("record"), path.stem)
-    if recorded is not None:
+    lines = _recorded(context.get("record"), path.stem)
+    if lines is not None:
+        kept = {
+            "as_recorded": True,
+            "recorded_manifests": recorded_manifests(lines),
+        }
         try:
-            c = Campaign.model_validate(data, context={**context, "as_recorded": True})
+            c = Campaign.model_validate(data, context={**context, **kept})
         except _PydanticValidationError:
             c = None
-        if c is not None and unchanged(c, recorded):
-            warnings.extend(_kept(rel, doc, c))
+        if c is not None and unchanged(c, [parse_source_line(x) for x in lines]):
+            warnings.extend(_kept(rel, doc, c, context["source_template"]))
             return c
-    problems.extend(_problems(rel, refused))
+    problems.extend(
+        _problems(rel, refused, bare=context["source_template"] is not None)
+    )
     return None
 
 
-def _recorded(record: Path | None, name: str) -> list[tuple] | None:
-    """The volumes ``record`` (a ``rendered/`` directory) recorded for
+def _recorded(record: Path | None, name: str) -> list[str] | None:
+    """The ``volumes.txt`` lines ``record`` (a ``rendered/`` directory) recorded for
     ``name``; ``None`` for none, and for a record it cannot read -- the
     append-only check reports that one."""
     if record is None or not (record / "campaigns").is_dir():
         return None
     try:
-        return recorded_volumes(record / "campaigns", name)
+        return recorded_lines(record / "campaigns", name)
     except CorruptRenderedFile:
         return None
 
@@ -323,9 +387,9 @@ def load(
     what a campaign kept that way would be refused for if it were new."""
     problems: list[str] = []
     warnings = [] if warnings is None else warnings
-    cfg = _load_config(Path(config_path), problems)
+    cfg, template = _load_config(Path(config_path), problems)
     context = {
-        "source_template": cfg.source_template,
+        "source_template": template,
         "record": Path(campaigns_dir).parent / RENDERED,
     }
 

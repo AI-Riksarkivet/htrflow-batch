@@ -12,6 +12,8 @@ from htrflow_converter import models, parse
 from htrflow_converter.models import Campaign, Pipeline, Volume
 
 GOOD = Path(__file__).parent / "fixtures" / "good"
+#: What a repo whose campaigns write bare reference codes sets.
+_TEMPLATE = 'source_template: "https://iiif.example.org/{ref}/manifest"\n'
 
 
 def test_bare_string_volume_expands_with_source_template_from_context():
@@ -97,6 +99,7 @@ def test_filename_wins_over_a_name_or_id_key_in_the_yaml(tmp_path):
         "image: ghcr.io/x/y@sha256:" + "a" * 64 + "\n"
         "steps:\n  - step: Segmentation\n"
     )
+    (tmp_path / "converter.yaml").write_text(_TEMPLATE)
     campaigns, pipelines, _ = parse.load(
         tmp_path / "campaigns", tmp_path / "pipelines", tmp_path / "converter.yaml"
     )
@@ -154,6 +157,7 @@ def test_the_whitespace_problem_names_the_volume_and_the_entry(tmp_path):
     (tmp_path / "pipelines" / "demo-v1.yaml").write_text(
         "image: ghcr.io/x/y@sha256:" + "a" * 64 + "\nsteps:\n  - step: Segmentation\n"
     )
+    (tmp_path / "converter.yaml").write_text(_TEMPLATE)
     with pytest.raises(parse.ValidationError) as exc_info:
         parse.load(
             tmp_path / "campaigns", tmp_path / "pipelines", tmp_path / "converter.yaml"

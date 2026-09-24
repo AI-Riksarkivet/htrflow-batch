@@ -34,6 +34,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from pydantic_core import PydanticCustomError
 
 _MiB = 1024 * 1024
 #: `activeDeadlineSeconds` and `ttlSecondsAfterFinished` are int32 in the
@@ -313,6 +314,12 @@ _UNFILLABLE_TEMPLATE = (
 )
 
 
+#: The error type of a bare reference code with no ``source_template`` to
+#: expand it. ``parse`` says it once per campaign, not once per volume: a
+#: campaign of ten thousand bare codes is one fix, in converter.yaml.
+NO_SOURCE_TEMPLATE = "no_source_template"
+
+
 def _placeholders(template: str) -> list[str]:
     """The names in braces, left to right. A template that is not a format
     string at all (a brace left open) raises, and is refused with the rest."""
@@ -422,7 +429,19 @@ class Volume(BaseModel):
         elif kind is not None and (not isinstance(data, dict) or "id" in data):
             raise ValueError(_NOT_TEXT_ID.format(kind=kind))
         if isinstance(data, str):
-            template = (info.context or {}).get("source_template", "")
+            context = info.context or {}
+            template = context.get("source_template") or ""
+            if not template:
+                # What an earlier render made of this bare code, when it
+                # came from a template converter.yaml no longer sets: kept,
+                # under ``record.unchanged``, like every other rule.
+                kept = context.get("recorded_manifests", {}).get(data)
+                if kept is not None and _as_recorded(info):
+                    return {"id": data, "manifest": kept}
+                raise PydanticCustomError(
+                    NO_SOURCE_TEMPLATE,
+                    "is a bare reference code with no source_template",
+                )
             try:
                 return {"id": data, "manifest": template.format(ref=data)}
             except (KeyError, IndexError, ValueError) as e:
@@ -870,7 +889,10 @@ class ConverterConfig(BaseModel):
     node_selector: dict[str, str] = Field(default_factory=dict)
     tolerations: list[Toleration] = Field(default_factory=list)
     public_results_base: str = ""
-    source_template: str = "https://lbiiif.riksarkivet.se/arkis!{ref}/manifest"
+    #: How a campaign's bare reference code becomes a manifest URL: ``{ref}``
+    #: is the code. No archive's IIIF host is built in, so empty (the
+    #: default) allows only ``manifest:`` and ``images:`` volumes.
+    source_template: str = ""
     max_seconds: int = Field(default=21600, ge=1, le=_INT32_MAX)
     #: How long a batch pod's `warmup-wait` init container waits for its
     #: pipeline's marker before giving up. It holds the pod's GPU while it
@@ -957,7 +979,7 @@ class ConverterConfig(BaseModel):
     @field_validator("source_template")
     @classmethod
     def _check_source_template(cls, v: str) -> str:
-        if _placeholders(v) != ["ref"]:
+        if v and _placeholders(v) != ["ref"]:
             raise ValueError(_BAD_TEMPLATE.format(shown=shown(v)))
         return v
 

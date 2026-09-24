@@ -94,16 +94,25 @@ def existing_parts(campaigns_out: Path, name: str) -> list[Path]:
     return paths + sorted(parts, key=_part_number)
 
 
-def recorded_volumes(campaigns_out: Path, name: str) -> list[tuple] | None:
-    """The volume list an earlier render recorded for campaign ``name``,
-    parsed (``models.parse_source_line``), or ``None`` when it has none.
-    Raises ``CorruptRenderedFile`` for a record it cannot read."""
+def recorded_lines(campaigns_out: Path, name: str) -> list[str] | None:
+    """The ``volumes.txt`` lines an earlier render recorded for campaign
+    ``name``, as written, or ``None`` when it has none. Raises
+    ``CorruptRenderedFile`` for a record it cannot read."""
     parts = existing_parts(campaigns_out, name)
     if not parts:
         return None
-    return [
-        parse_source_line(line) for p in parts for line in volumes_txt(p).splitlines()
-    ]
+    return [line for p in parts for line in volumes_txt(p).splitlines()]
+
+
+def recorded_manifests(lines: list[str]) -> dict[str, str]:
+    """The manifest URL each recorded volume was rendered with, by id: what a
+    bare reference code expanded to, for a campaign kept as rendered after
+    converter.yaml stopped setting the template it was expanded with."""
+    return {
+        vid: source
+        for vid, _, source in (line.partition("\t") for line in lines)
+        if not source.startswith("images:")
+    }
 
 
 def unchanged(c: Campaign, recorded: list[tuple] | None) -> bool:
