@@ -31,4 +31,17 @@ gh attestation verify oci://docker.io/riksarkivet/htrflow-batch:@TAG@ -R AI-Riks
 
 The same commands work for `htrflow-web` and `htrflow-campaigns`.
 
+## Verify the chart packages
+
+Attached below: both charts packaged at this tag (`htrflow-batch-@CHART_VERSION@.tgz` — the chart has a version of its own — and `htrflow-devstack-<version>.tgz`), `SHA256SUMS`, a cosign signature bundle for each (`*.sigstore.json`) and their SLSA build provenance (`provenance.intoto.jsonl`).
+
+```bash
+cosign verify-blob htrflow-batch-@CHART_VERSION@.tgz --bundle htrflow-batch-@CHART_VERSION@.tgz.sigstore.json \
+  --certificate-identity https://github.com/AI-Riksarkivet/htrflow-batch/.github/workflows/release.yml@refs/tags/@TAG@ \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+gh attestation verify htrflow-batch-@CHART_VERSION@.tgz -R AI-Riksarkivet/htrflow-batch \
+  --signer-workflow AI-Riksarkivet/htrflow-batch/.github/workflows/release.yml --source-ref refs/tags/@TAG@
+sha256sum --check SHA256SUMS
+```
+
 ## Changes

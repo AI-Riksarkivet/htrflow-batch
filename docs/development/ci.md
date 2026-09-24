@@ -178,25 +178,30 @@ must equal `engineVersion` in `dagger.json` (a test asserts it).
 
 ## Dependency pins
 
-Every input is pinned, and nothing moves the pins on a schedule: every pin
-below moves by hand, in a pull request of its own. The one automatic source
-of updates is Dependabot security updates, enabled in the repository's
-settings, which raise pull requests for vulnerable Python and frontend
-dependencies.
+Every input is pinned. **Dependabot** (`.github/dependabot.yml`) proposes
+version updates weekly — one grouped pull request per ecosystem, a new major
+on its own, and nothing younger than a week — for the pins a registry can
+answer for: the actions, `uv.lock`, `frontend/bun.lock`, the dockerfiles'
+`FROM` lines and the dagger module's `go.mod`. Its security updates, enabled
+in the repository's settings, come as soon as an advisory is published.
+Every such pull request goes through the full CI and is merged by hand.
+Everything else moves by hand, in a pull request of its own.
 
 | Pin | Lives in | Updated by |
 |---|---|---|
-| GitHub Actions | `uses:` lines, by commit SHA with the version as a comment | by hand: the new release's commit SHA, its version in the comment |
-| Base and tool images | `FROM` lines in `.docker/*.dockerfile`, image values in both charts' `values.yaml`, `.docker/docker-compose.yml`, the image constants in `.dagger/main.go`, digest-pinned `run:` images in workflows, `TRIVY_IMAGE` in the `Makefile` — each as tag plus digest | by hand: `docker buildx imagetools inspect <ref>` gives the digest of the new tag |
-| Python dependencies | `uv.lock` (workspace) | by hand, `uv lock --upgrade` (or `--upgrade-package <name>`); Dependabot security updates |
-| Frontend dependencies | `frontend/bun.lock` | by hand, `bun update` in `frontend/`; Dependabot security updates |
-| Dagger engine | `engineVersion` in `dagger.json`; the CLI version, its checksums and the engine digest in `.github/actions/setup-dagger` | by hand, all four in one PR: a test fails until the action's version equals `engineVersion` |
+| GitHub Actions | `uses:` lines in the workflows and the composite actions, by commit SHA with the version as a comment | Dependabot: the SHA and the comment together |
+| Base images | `FROM` lines in `.docker/*.dockerfile`, as tag plus digest | Dependabot, within the major (and, for the CUDA base, within the CUDA release line); a new major by hand |
+| Tool and chart images | image values in both charts' `values.yaml`, `.docker/docker-compose.yml`, the image constants in `.dagger/main.go`, digest-pinned `run:` images in workflows and actions, `TRIVY_IMAGE` in the `Makefile` — each as tag plus digest | by hand: `docker buildx imagetools inspect <ref>` gives the digest of the new tag |
+| Python dependencies | `uv.lock` (workspace) | Dependabot; by hand, `uv lock --upgrade` (or `--upgrade-package <name>`) |
+| Frontend dependencies | `frontend/bun.lock` | Dependabot; by hand, `bun update` in `frontend/` |
+| Dagger engine | `engineVersion` in `dagger.json`; the CLI version, its checksums and the engine digest in `.github/actions/setup-dagger`; the SDK modules in `.dagger/go.mod` | by hand, all in one PR: a test fails until the action's version equals `engineVersion`. Dependabot moves the module's other Go dependencies |
 | Universal Viewer fork | `UV4_REF` commit in `.docker/htrflow-web.dockerfile` | by hand, its own PR — `.docker/uv4-uv-html.patch` may need re-deriving |
 | htrflow source for the wrapper's base | `ARG HTRFLOW_REF` in the wrapper dockerfile | by hand, its own PR, with `make lock-htrflow-base` — the lock, the base and the wrapper on it must be re-verified |
 | Dependencies of the wrapper's base, torch included | `.docker/htrflow-base/`: htrflow's `pyproject.toml` plus `overlay.toml`, and `uv.lock`, installed with `uv sync --locked` | by hand with `make lock-htrflow-base`, when the htrflow commit or the overlay moves |
 | transformers line | `.docker/transformers/<major>.in`, compiled with hashes into `<major>.txt` | by hand, `make transformers-requirements`; the dockerfile's `TRANSFORMERS_VERSION` default with it, and the build fails while they disagree |
 | torch / torchvision | per architecture in `.docker/htrflow-base/overlay.toml` (`constraint-dependencies`, and the CUDA wheel index as a source) | by hand, then `make lock-htrflow-base` |
-| Kueue, Kyverno | `KUEUE_VERSION`, `KYVERNO_CHART_VERSION` in the `Makefile` | by hand |
+| Kueue, Kyverno | `KUEUE_VERSION`, `KYVERNO_CHART_VERSION` in the `Makefile`, and the CRD schemas `check-chart` validates against (`scripts/crd-schemas.sh`) | by hand, together |
+| Released images | the three manifest-list digests a release commit pins ([Releasing](releasing.md#the-publish-workflow)) | by the release commit |
 
 Inside the builds, dagger containers sync with `uv sync --frozen
 --all-packages`, and the wrapper image installs its dependencies from

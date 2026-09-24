@@ -324,7 +324,8 @@ answer landing moves nothing), the GitHub mark and the theme toggle right.
 
 Tests sit next to their subject (`*.test.ts`); component tests use
 @testing-library/svelte + user-event on jsdom, route tests mock `fetch` and
-fake timers.
+fake timers. Property-based tests (fast-check) are `*.property.test.ts`: a
+failure prints its seed, and `FC_SEED=<seed> bun run test` replays it.
 
 ## Layout stability
 
