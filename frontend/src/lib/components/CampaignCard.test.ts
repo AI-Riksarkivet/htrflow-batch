@@ -6,7 +6,7 @@ import {
   within,
 } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import type { JobSummary } from "$lib/api.js";
+import { clockTime, type JobSummary } from "$lib/api.js";
 import { FOLDED_MS, RELOAD_MS } from "$lib/config.js";
 import { describeReason } from "$lib/reasons.js";
 import CampaignCard from "./CampaignCard.svelte";
@@ -3023,6 +3023,157 @@ describe("a finished card reads its detail only once someone can see it", () => 
     await vi.advanceTimersByTimeAsync(RELOAD_MS * 2);
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
+
+  /** Answers in turn: each call takes the next body, the last one repeats. */
+  function answers(...bodies: Record<string, unknown>[]) {
+    let n = 0;
+    return vi.fn(async () => {
+      const body = bodies[Math.min(n++, bodies.length - 1)] ?? {};
+      return "status" in body
+        ? jsonResponse("gone", body.status as number)
+        : jsonResponse({ ...detail0, failures: [], volumes: [], ...body });
+    });
+  }
+
+  // A settled card's read kept being retried after a failure whether or not
+  // anyone could see it (review of this change).
+  test("folded, a settled card retries a failed read only while on screen", async () => {
+    const fetchMock = answers({ status: 503 }, { ...done });
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignCard, { job: done });
+    const observer = FakeObserver.all[0];
+    observer?.show();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    observer?.show(false);
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 10);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    observer?.show();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  // The API sums at most a hundred volumes' progress per read, so a large
+  // campaign's first sums are partial, and a settled card read once kept
+  // them for good (review of this change). It reads again, at the folded
+  // pace and on screen, until they are whole, and then stops.
+  test("folded, a settled card reads until its sums cover every volume", async () => {
+    const fetchMock = answers(
+      {
+        ...done,
+        pagesDone: 4,
+        pagesTotal: 8,
+        pagesCoverage: { counted: 1, of: 3 },
+      },
+      {
+        ...done,
+        pagesDone: 9,
+        pagesTotal: 9,
+        pagesCoverage: { counted: 3, of: 3 },
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(CampaignCard, { job: done });
+    FakeObserver.all[0]?.show();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(container.querySelector(".stat")).toHaveTextContent("≥4 / ≥8 pages");
+    await vi.advanceTimersByTimeAsync(FOLDED_MS);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(container.querySelector(".stat")).toHaveTextContent(
+      /^9 \/ 9 pages$/,
+    );
+    await vi.advanceTimersByTimeAsync(FOLDED_MS * 3);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  // Opened half a period after a folded read, the next read came a whole
+  // period after the opening instead of after that read (review of this
+  // change).
+  test("the next read is a period after the last one, however the card got there", async () => {
+    const fetchMock = detailFor(job);
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignCard, { job });
+    FakeObserver.all[0]?.show();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(RELOAD_MS / 2);
+    await expand();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(RELOAD_MS / 2);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  // Scrolled past at the margin, a folded card aborted a read the server
+  // had already done (review of this change). It lets it land.
+  test("a folded card that leaves the screen lets its read land", async () => {
+    let answer!: () => void;
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise<Response>((resolve) => {
+            signal = init?.signal ?? undefined;
+            answer = () =>
+              resolve(
+                jsonResponse({
+                  ...detail0,
+                  failures: [],
+                  volumes: [],
+                  pagesDone: 3,
+                  pagesTotal: 9,
+                  pagesCoverage: { counted: 3, of: 3 },
+                }),
+              );
+          }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job });
+    const observer = FakeObserver.all[0];
+    observer?.show();
+    await vi.advanceTimersByTimeAsync(0);
+    observer?.show(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(signal?.aborted).toBe(false);
+    answer();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(container.querySelector(".stat")).toHaveTextContent("3 / 9 pages");
+  });
+
+  // What a reader asks for waited behind every folded card's background
+  // read (review of this change): opening a card puts its read first.
+  test("opening a card puts its read ahead of the folded cards' reads", async () => {
+    const answers: (() => void)[] = [];
+    const asked: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (url: string) =>
+          new Promise<Response>((resolve) => {
+            asked.push(url.split("?")[0]?.split("/").at(-1) ?? "");
+            answers.push(() =>
+              resolve(
+                jsonResponse({
+                  ...detail0,
+                  ...done,
+                  failures: [],
+                  volumes: [],
+                }),
+              ),
+            );
+          }),
+      ),
+    );
+    for (let i = 0; i < 7; i++)
+      render(CampaignCard, { job: { ...done, name: `c${i}` } });
+    for (const observer of FakeObserver.all) observer.show();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(asked).toEqual(["c0", "c1", "c2", "c3"]);
+    await fireEvent.click(screen.getByRole("button", { name: /c6$/ }));
+    answers[0]?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(asked.at(-1)).toBe("c6");
+  });
 });
 
 // "Partially succeeded" and "partially failed" wore the same amber, on the
@@ -3581,16 +3732,53 @@ describe("the header line holds its shape while it fills in", () => {
           volumes: [],
           pagesDone: 4,
           pagesTotal: 8,
+          pagesFailed: 1,
           pagesCoverage: { counted: 1, of: 3 },
         }),
       ),
     );
     const again = render(CampaignCard, { job: done }).container;
     await vi.advanceTimersByTimeAsync(0);
-    expect(again.querySelector(".stat")).toHaveAttribute(
-      "title",
-      expect.stringContaining("counted in 1 of 3 volumes"),
+    // Said on the line, not only in a title a finger or a keyboard cannot
+    // reach (review of this change): every figure is at least what it says.
+    const stat = again.querySelector(".stat") as HTMLElement;
+    expect(stat).toHaveTextContent(
+      "≥4 / ≥8 pages · ≥1 failed, counted in 1 of 3 volumes",
     );
+    expect(stat.querySelector(".sr-only")).toHaveTextContent(
+      ", counted in 1 of 3 volumes",
+    );
+    // A finished campaign's sums are not "so far": they are waiting only
+    // on the reads.
+    expect(stat).toHaveAttribute("title", "counted in 1 of 3 volumes");
+  });
+
+  // A folded card whose reads kept failing showed its last good count as
+  // if it were current (review of this change).
+  test("a count whose reads have since failed says when it is from", async () => {
+    let n = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        ++n === 1
+          ? jsonResponse({
+              ...detail0,
+              failures: [],
+              volumes: [],
+              pagesDone: 3,
+              pagesTotal: 9,
+              pagesCoverage: { counted: 3, of: 3 },
+            })
+          : jsonResponse("gone", 503),
+      ),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    const stat = container.querySelector(".stat") as HTMLElement;
+    expect(stat).toHaveTextContent(/^3 \/ 9 pages$/);
+    const readAt = clockTime(new Date().toISOString());
+    await vi.advanceTimersByTimeAsync(FOLDED_MS);
+    expect(stat).toHaveTextContent(`3 / 9 pages · as of ${readAt}`);
   });
 
   test("open, the totals below say it, and the header's place stays empty", async () => {

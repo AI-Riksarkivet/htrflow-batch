@@ -25,6 +25,7 @@
   } from "$lib/api.js";
   import { FOLDED_MS, RELOAD_MS } from "$lib/config.js";
   import { inTrouble } from "$lib/order.js";
+  import { watchOnScreen } from "$lib/onscreen.js";
   import { startPolling } from "$lib/poll.js";
   import { modelLabel, modelUrl, pipelineModels } from "$lib/pipeline.js";
   import {
@@ -59,20 +60,20 @@
   const startsFolded = remembered();
   let collapsed = $state(startsFolded);
 
-  // Whether anyone has had a chance to see this card: it has been on screen,
-  // or open. A finished campaign reads its detail only then -- a page of
-  // them used to make one request per card the moment it opened, each
-  // reading the campaign's volume list, its pods and up to a hundred
-  // progress files, for cards nobody had scrolled to (the 2026-09-23
-  // audit). Sticky: once seen, folding the card is not a reason to forget.
-  let wanted = $state(!startsFolded);
-  // Whether it is on screen now: a folded campaign that is still going reads
-  // its page count only then.
+  // Whether it is on screen now ($lib/onscreen): a folded card reads only
+  // then. A page of finished campaigns used to make one request per card
+  // the moment it opened, each reading the campaign's volume list, its pods
+  // and up to a hundred progress files, for cards nobody had scrolled to
+  // (the 2026-09-23 audit).
   let onScreen = $state(false);
+  let visible = false;
+  // Set when the reader opens the card: the read that follows is theirs,
+  // and goes ahead of the folded cards' background reads ($lib/poll gate).
+  let asked = false;
 
   function toggle(): void {
     collapsed = !collapsed;
-    if (!collapsed) wanted = true;
+    asked = !collapsed;
     try {
       localStorage.setItem(memoryKey, collapsed ? "closed" : "open");
     } catch {
@@ -443,7 +444,11 @@
   // next page (the "load more" button). A poll re-fetches every page that is
   // currently open, rounded up to whole pages, so a tick does not undo
   // "load more" under the reader's cursor; counts.total still ends paging.
-  async function load(reset: boolean, signal?: AbortSignal): Promise<boolean> {
+  async function load(
+    reset: boolean,
+    signal?: AbortSignal,
+    urgent = false,
+  ): Promise<boolean> {
     try {
       const offset = reset ? 0 : volumes.length;
       const limit = reset
@@ -455,6 +460,7 @@
       const detail = await detailReads(
         () => fetchJob(job.namespace, job.name, offset, limit, signal),
         signal,
+        urgent,
       );
       if (signal?.aborted) return true;
       // A short answer is the whole list, so it replaces what is loaded; a
@@ -496,7 +502,7 @@
 
   async function loadMore(): Promise<void> {
     loadingMore = true;
-    await load(false);
+    await load(false, undefined, true);
     loadingMore = false;
   }
 
@@ -506,9 +512,10 @@
   // ConfigMaps and up to a hundred progress files (the API's
   // PROGRESS_FETCH_CAP), and a page of old campaigns polling for ever was
   // load that grew with the history and bought nothing (the 2026-09-17
-  // audit, 3079). "Once" means once it has landed: a read that failed is
-  // still retried, on $lib/poll's backoff. And only once the card is
-  // `wanted` -- on screen or open.
+  // audit, 3079). "Once" means once it has landed with whole page sums: a
+  // read that failed is still retried, on $lib/poll's backoff, and one
+  // whose sums the API has not filled in yet is read again. Folded, only
+  // while on screen.
   const settled = $derived(
     job.jobGone ||
       job.phase === "Succeeded" ||
@@ -517,27 +524,46 @@
       job.phase === "Unknown",
   );
 
-  // The folded card's page count: "411 / 1914 pages · 3 failed", the same
-  // sums the open card's pages row draws. Null (an empty, held place) until
-  // a read has landed, and while the card is open.
-  const statText = $derived(
-    !collapsed || readAt === null
-      ? null
-      : `${figures(pageCell)} pages` +
-          (notice.pagesFailed > 0 ? ` · ${notice.pagesFailed} failed` : ""),
+  // Whether the page sums are every run volume's. The API reads at most a
+  // hundred volumes' progress per request, so a large campaign's first sums
+  // are short in every figure until later reads fill them in.
+  const whole = $derived(coverage.counted >= coverage.of);
+  const partial = $derived(
+    `counted in ${coverage.counted} of ${coverage.of} volumes`,
   );
-  // What the figures cannot say: that they are not every volume's yet, and
-  // when they were read, for a campaign that has not finished.
+
+  // The folded card's page count: "411 / 1914 pages · 3 failed", the same
+  // sums the open card's pages row draws, each figure marked "≥" while the
+  // sums are partial -- on the line, where a finger or a keyboard can read
+  // it, not only in a title (review of the loading change). Null (an empty,
+  // held place) until a read has landed, and while the card is open.
+  const statText = $derived.by(() => {
+    if (!collapsed || readAt === null) return null;
+    const at = whole ? "" : "≥";
+    const text =
+      (pages.total > 0 ? `${at}${pages.done} / ${at}${pages.total}` : "—") +
+      " pages" +
+      (notice.pagesFailed > 0 ? ` · ${at}${notice.pagesFailed} failed` : "");
+    // Reads have failed since this one: say when the figures are from.
+    return detailFailure === null
+      ? text
+      : `${text} · as of ${clockTime(readAt)}`;
+  });
+  // The same, and when they were read for a campaign still going; "so far"
+  // only for one whose volumes are still working.
   const statTitle = $derived(
     [
-      coverage.counted < coverage.of
-        ? `counted in ${coverage.counted} of ${coverage.of} volumes so far`
-        : null,
+      whole ? null : settled ? partial : `${partial} so far`,
       !settled && readAt !== null ? `as of ${clockTime(readAt)}` : null,
     ]
       .filter((part) => part !== null)
       .join(" · ") || undefined,
   );
+
+  /** $lib/onscreen as an action: told on and off screen, until destroyed. */
+  function watch(node: HTMLElement, told: (on: boolean) => void) {
+    return { destroy: watchOnScreen(node, told) };
+  }
 
   // The campaign state the last read that landed was of: a settled card is
   // not read again for the same state, however often it is folded and
@@ -552,12 +578,16 @@
     // state, a reaped one from the record that replaced its Job, and one
     // re-run under the same name starts polling again.
     const state = `${job.phase}/${job.jobGone}`;
-    // Folded, the card is its header, and the header's page count is the
-    // one thing on it the list row does not carry. A campaign still going
-    // reads it while the card is on screen, at the folded pace; a settled
-    // one reads it once, once seen, as it reads everything.
-    if (collapsed && !settled && !onScreen) return;
-    if (settled && (!wanted || landedFor === state)) return;
+    // A settled campaign has one thing left to learn once read: the rest of
+    // its page sums, which the API fills in a hundred volumes a read. Whole,
+    // there is nothing more to ask for. Untracked: the sums arriving are
+    // what the poll's `until` looks at, not a reason to restart it.
+    if (settled && untrack(() => landedFor === state && whole)) return;
+    // Folded, the card is its header, and its page count is the one thing
+    // on it the list row does not carry: read only while on screen.
+    if (collapsed && !onScreen) return;
+    // Open, at the list's pace; folded -- still going, or finished and
+    // filling in its sums -- at half that.
     const period = collapsed ? FOLDED_MS : RELOAD_MS;
     // untrack: load() reads `volumes` to size its refresh and then writes it,
     // and an effect that reads its own output re-runs forever. The list
@@ -565,16 +595,12 @@
     // under its own feet. $lib/poll is what keeps a page of cards from each
     // queueing up requests against a slow API, and from polling at all
     // while nobody is looking.
-    return untrack(() =>
+    const stop = untrack(() =>
       startPolling(
         async (signal) => {
-          // Back on screen, folded or opened a moment after the last read of
-          // this same state: that read still stands until the period is up.
-          // A folded card's read is the whole first page, so the table it
-          // opens to is already there.
-          if (landedFor === state && Date.now() - lastRead < period)
-            return true;
-          const landed = await load(true, signal);
+          const urgent = asked;
+          asked = false;
+          const landed = await load(true, signal, urgent);
           if (landed && !signal.aborted) {
             landedFor = state;
             lastRead = Date.now();
@@ -583,35 +609,27 @@
         },
         period,
         {
-          until: () => settled && landedFor === state,
+          until: () => settled && landedFor === state && whole,
           onWait: (ms) => (retryAt = new Date(Date.now() + ms)),
+          // A read of this same state stands until its period is up: back
+          // on screen, or opened, a moment after it, the next read is a
+          // period after it, not after now. A folded card's read is the
+          // whole first page, so the table it opens to is already there.
+          first:
+            landedFor === state
+              ? Math.max(0, lastRead + period - Date.now())
+              : 0,
         },
       ),
     );
+    // Gone off screen folded, a read in flight is let land: the server
+    // has done its work, and the answer is this card's. Anything else --
+    // opened, folded, a new phase, the card gone -- stops it outright.
+    // A teardown reads state as it was before the change that caused it,
+    // so whether the card has just gone off screen is `visible`, kept beside
+    // `onScreen` by the watcher.
+    return () => stop(untrack(() => collapsed) && !visible);
   });
-
-  /**
-   * Keeps `onScreen` -- any of the card on screen, or nearly: the margin
-   * reads it just before it scrolls in -- and marks the card `wanted` the
-   * first time it is. A browser with no IntersectionObserver cannot say, so
-   * the card counts as on screen at once, which is what every card did
-   * before.
-   */
-  function whenSeen(node: HTMLElement) {
-    if (typeof IntersectionObserver === "undefined") {
-      onScreen = wanted = true;
-      return {};
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        onScreen = entries.at(-1)?.isIntersecting ?? onScreen;
-        if (onScreen) wanted = true;
-      },
-      { rootMargin: "200px" },
-    );
-    observer.observe(node);
-    return { destroy: () => observer.disconnect() };
-  }
 
   /**
    * The fill's width, clamped to the track. `done` and `total` come from the
@@ -945,7 +963,11 @@
   {@render lostLine(cell.failed, 0)}
 {/snippet}
 
-<section class="campaign" data-health={health} use:whenSeen>
+<section
+  class="campaign"
+  data-health={health}
+  use:watch={(on: boolean) => (onScreen = visible = on)}
+>
   <div class="camp">
     <!-- aria-controls only while the card is open: it must be an IDREF that
          resolves, and a folded card renders nothing below this line.
@@ -1008,7 +1030,10 @@
     <span
       class="stat"
       aria-hidden={statText === null ? "true" : undefined}
-      title={statText === null ? undefined : statTitle}>{statText ?? ""}</span
+      title={statText === null ? undefined : statTitle}
+      >{statText ?? ""}{#if statText !== null && !whole}<span class="sr-only"
+          >, {partial}</span
+        >{/if}</span
     >
     <!-- When the campaign was created and when it finished, at the right end
          of the identity line. -->
