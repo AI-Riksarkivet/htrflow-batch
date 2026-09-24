@@ -181,6 +181,12 @@ when its card is first on screen or opened, and not polled again. A failed poll 
 backs off. Older reaped campaigns wait behind "show older campaigns", 20 at
 a time.
 
+**Order.** The list opens sorted by what wants a person: running, then in
+trouble, then finished (newest first), then not started. A poll keeps that
+order, so no card moves under a reader; a campaign that changes band says so
+in its own card, and a new campaign takes its place in the order. The list
+is sorted afresh when the reader comes back to the tab.
+
 The page and component internals are in the
 [frontend README](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/frontend/README.md).
 

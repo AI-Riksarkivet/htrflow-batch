@@ -256,6 +256,15 @@ first intersects the viewport (`IntersectionObserver`) or is opened, and
 again on a phase change. `fetchJobs` asks for
 `?reaped=20`; "show older campaigns" asks for 20 more.
 
+**Order.** The first answer is sorted by `byAttention` (`src/lib/order.ts`):
+running, then in trouble, then finished newest first, then not started. A
+poll keeps that order (`keepOrder`): every card stays where it is with its
+new row, and a new campaign goes in front of the first card already shown
+that the sort would put after it. The next answer after the tab was hidden
+is sorted afresh, since nobody was reading it. "Loading…" shows only once
+the first answer is 400 ms late, and there is no empty state or banner
+before an answer.
+
 **Motion and accessibility.** Only what runs moves: the pulsing dot, the
 bar sheen, and a one-second fade behind a progress line whose `done`
 changed. Bars ease to their fraction over 600 ms. Under
