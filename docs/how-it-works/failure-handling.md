@@ -117,8 +117,12 @@ Resources, mounts and pod hardening are in
 - a run where every processed page failed and nothing was resumed
 - a model-load `OSError`, including a model missing from the read-only cache
 - five consecutive upload failures (`UploadOutage`); a single failed upload
-  only defers its page
-- three consecutive pipeline rebuild failures after a dead worker thread
+  only defers its page. Each has already been retried by the S3 client
+  (10 s to connect, 60 s to read, three retries), so five in a row is an
+  outage rather than a bad page
+- three consecutive pipeline rebuild failures after a dead worker thread: a
+  rebuild reloads the models from the cache, so one failure may be a
+  passing error, and three in a row are not
 - eight or more htrflow threads left running by pipelines the wrapper had
   to give up on (see below)
 
