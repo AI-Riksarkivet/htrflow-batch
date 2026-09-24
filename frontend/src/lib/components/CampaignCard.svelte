@@ -165,9 +165,12 @@
   let quality = $state<CampaignQuality | null>(null);
   // The column is there for the whole of a QP campaign, scored or not yet:
   // a track that appeared with the first score would move every pill and
-  // icon on the card sideways under the reader.
+  // icon on the card sideways under the reader. The list row says so
+  // before the detail has landed (`qualityPrediction`), so the track is
+  // there from the card's first paint; the detail's own two are the
+  // fallback for an API from before that field.
   const withQuality = $derived(
-    quality !== null || hasQualityStep(pipelineSteps),
+    job.qualityPrediction || quality !== null || hasQualityStep(pipelineSteps),
   );
   let pipelineYaml = $state("");
   // What the last read failed with, and when the next is: the sentence is
@@ -926,6 +929,14 @@
   </div>
 {/snippet}
 
+<!-- How much of the campaign the mean covers, when it is not all of it:
+     said the way the page totals say it, not as a bound. -->
+{#snippet scoredIn()}
+  {#if quality !== null && quality.volumes < coverage.of}<span class="quiet"
+      >{" · "}scored in {quality.volumes} of {coverage.of} volumes</span
+    >{/if}
+{/snippet}
+
 <!-- The one sentence a volume has to say for itself, under its own row and
      across the whole width: why it failed, or the page error it reported.
      A fifth cell spanning the row rather than a line inside the id\'s cell,
@@ -1119,25 +1130,28 @@
              not all of it. Outside the totals: a campaign of one volume has
              no totals rows, and its lowest pages are worth as much. Plain
              figures, no colour and no cut-off: what counts as poor depends
-             on the material ($lib/quality). -->
-        {#if quality !== null && (quality.lowest.length > 0 || quality.volumes < coverage.of)}
+             on the material ($lib/quality).
+
+             There whenever the card has a quality column, over the
+             placeholder rows too, with a dash until a page has a score: a
+             line that arrived with the detail pushed the card, and every
+             card under it, down a line (measured, scripts/measure-shifts).
+             Each link's visible text is its accessible name; the score is
+             text beside it. -->
+        {#if withQuality}
           <p class="quality-line">
-            {#if quality.lowest.length > 0}
-              lowest predicted quality:
+            lowest predicted quality:
+            <!-- One block after the words, each branch carrying its own
+                 "scored in": a text node left standing between two blocks
+                 was pushed along the line by the links arriving before it,
+                 and a layout shift is measured by how far a node moves. -->
+            {#if quality !== null && quality.lowest.length > 0}
               {#each quality.lowest as l, i (l.volume + "/" + l.page)}
-                {i > 0 ? " · " : ""}<a
-                  href={lowHref(l)}
-                  aria-label="{l.volume} {l.page}, {formatQuality(l.quality)}"
-                  >{l.volume}/{l.page}</a
-                >
+                {i > 0 ? " · " : ""}<a href={lowHref(l)}>{l.volume}/{l.page}</a>
                 {formatQuality(l.quality)}
-              {/each}
-            {/if}
-            {#if quality.volumes < coverage.of}
-              <span class="quiet"
-                >{quality.lowest.length > 0 ? " · " : ""}scored in {quality.volumes}
-                of {coverage.of} volumes</span
-              >
+              {/each}{@render scoredIn()}
+            {:else}
+              —{@render scoredIn()}
             {/if}
           </p>
         {/if}
@@ -1780,10 +1794,14 @@
       var(--quality) var(--pill) var(--icon);
   }
 
+  /* Right-aligned, against the pill: a campaign's six-digit page sums
+     ("123456 / 234567") run past the fraction's track, and a score
+     starting at the left of this one was drawn over them. */
   .c-quality {
     font-variant-numeric: tabular-nums;
     color: var(--foreground);
     white-space: nowrap;
+    text-align: right;
   }
 
   /* The lowest pages: a line of links, wrapping rather than clipping, like
@@ -2208,14 +2226,15 @@
       padding: 0.35rem 0;
     }
 
-    /* No seventh track here. Line 2's six fixed tracks and their gaps
-       already take all but a few pixels of a 390px card, and a track for
-       the score beside the fraction ran the row past the card's edge. The
-       score goes on line 1 instead, at its far end, above the run log: a
-       column of its own down the card all the same, and line 2 is what it
-       is on every other card. The run log's track widens to the score's
-       own width (four tabular figures, narrower than the full-width
-       slot), a few pixels at most. */
+    /* No seventh track here. The plan's grid put the score on line 2,
+       between the fraction and the pill, and measured in a real browser
+       that row was 359px wide in a 330px card (a 390px phone): line 2's
+       six fixed tracks and their gaps already take all but a few pixels
+       of it. The score goes on line 1 instead, at its far end, above the
+       run log: a column of its own down the card all the same, and line 2
+       is what it is on every other card. The run log's track widens to
+       the score's own width (four tabular figures, narrower than the
+       full-width slot), a few pixels at most. */
     .card-body.with-quality {
       --quality: 1.8rem;
     }
