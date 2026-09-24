@@ -147,8 +147,8 @@ it is opened:
 
 1. **Identity and state.** The campaign's name (click to fold or unfold;
    `namespace/name` only when the list spans more than one namespace),
-   its phase, the warm-up chip while the warm-up has not succeeded, a
-   "job removed" chip for a reaped campaign, when it was created and
+   the warm-up chip while the warm-up has not succeeded, a "job removed"
+   chip for a reaped campaign, its phase, when it was created and
    finished, and on a folded card the pages done so far
    (`411 / 1914 pages · 3 failed`). Every part of the line has its place
    from the first paint, so nothing on it moves as the rest arrives.
