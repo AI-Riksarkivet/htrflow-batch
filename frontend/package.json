@@ -33,7 +33,7 @@
     "prettier-plugin-svelte": "^4.1.1",
     "svelte": "^5.57.0",
     "svelte-check": "^4.7.6",
-    "typescript": "^5.5.0",
+    "typescript": "^7.0.2",
     "vite": "^6.4.3",
     "vitest": "^5.0.1"
   },
