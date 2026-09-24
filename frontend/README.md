@@ -288,3 +288,29 @@ read once, absent if it fails), the GitHub mark and the theme toggle right.
 Tests sit next to their subject (`*.test.ts`); component tests use
 @testing-library/svelte + user-event on jsdom, route tests mock `fetch` and
 fake timers.
+
+## Layout stability
+
+The campaign list arrives in stages — the list, then each card's own
+detail, then a poll a minute later — and nothing on screen may move when a
+later stage lands. `scripts/measure-shifts.mjs` measures that in a real
+browser: it serves a built `dist/` beside a fake read API made from the
+contract fixture (`src/lib/fixtures/api-contract.json`, fourteen campaigns
+in every phase), holds each answer back by a varied delay so the details
+land in a random order, records every layout shift with the element that
+moved (the Layout Instability API), and saves a filmstrip. The second list
+answer starts a queued campaign and adds a new one, which is when a list can
+re-sort under its reader. It exits non-zero when the CLS (the worst session
+window, as browsers report it) is over `--budget` (default 0.02).
+
+```bash
+bun add --no-save playwright-core     # the driver; not a project dependency
+bunx playwright-core install chromium # once per machine
+VITE_RELOAD_MS=4000 bun run build     # a poll that lands inside the run
+node scripts/measure-shifts.mjs --out /tmp/shifts            # folded cards
+node scripts/measure-shifts.mjs --out /tmp/shifts --open 3   # three left open
+node scripts/measure-shifts.mjs --out /tmp/shifts --width 390
+```
+
+CI runs no browser, so the causes this found are pinned by structural tests
+in `src/routes/page.test.ts` and `src/lib/components/CampaignCard.test.ts`.
