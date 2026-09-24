@@ -14,7 +14,7 @@
 // re-sort under its reader.
 //
 //   node scripts/measure-shifts.mjs [--out DIR] [--open N] [--width PX]
-//        [--scroll PX] [--seed N] [--dist DIR] [--budget CLS]
+//        [--scroll PX] [--fail] [--seed N] [--dist DIR] [--budget CLS]
 //
 // Needs `playwright-core` and a Chromium it can drive, neither of which the
 // project installs (see README.md). The build must use a short poll so the
@@ -38,6 +38,7 @@ const DIST = resolve(args.dist ?? join(here, "..", "dist"));
 const OUT = resolve(args.out ?? "shifts");
 const OPEN = Number(args.open ?? 0);
 const SCROLL = Number(args.scroll ?? 0);
+const FAIL = "fail" in args;
 const WIDTH = Number(args.width ?? 1280);
 const BUDGET = Number(args.budget ?? 0.02);
 let seed = Number(args.seed ?? 7);
@@ -156,6 +157,11 @@ const server = createServer(async (req, res) => {
   }
   if (path === "/api/v1/jobs") {
     listAnswers += 1;
+    // --fail: the poll's answer is an outage, which puts up the banner.
+    if (listAnswers === 2 && FAIL) {
+      await delay(300);
+      return res.writeHead(503).end();
+    }
     // The second answer: a queued campaign has started and a new one was
     // declared -- a re-sort and a new card, one poll into the page.
     if (listAnswers === 2) {
