@@ -1,0 +1,41 @@
+name: Dependabot auto-merge
+
+# Turns on GitHub's auto-merge for a Dependabot pull request that only moves
+# patch or minor versions of GitHub Actions, the Python lock (uv) or the
+# frontend lock (bun). Auto-merge merges nothing by itself: the pull request
+# still waits for every check main's branch protection requires, so a bump
+# that breaks a test stays open.
+#
+# Left for a person, on purpose:
+# - every major version: a migration, not a bump;
+# - Docker base images: pull-request CI does not build or scan the amd64
+#   wrapper or the web image, so green checks do not prove the image works;
+# - the dagger Go module: it moves with the engine version by hand.
+#
+# `pull_request`, never `pull_request_target`: the job reads no code from the
+# pull request and needs only the write the permissions below grant, which
+# GitHub gives a Dependabot-opened `pull_request` run when the workflow asks.
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  automerge:
+    name: Enable auto-merge
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # merge, once the required checks pass
+      pull-requests: write # turn auto-merge on
+    steps:
+      - id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+      - name: Auto-merge patch and minor updates
+        if: >-
+          contains(fromJSON('["github_actions", "uv", "bun"]'), steps.meta.outputs.package-ecosystem)
+          && contains(fromJSON('["version-update:semver-patch", "version-update:semver-minor"]'), steps.meta.outputs.update-type)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --merge "$PR"
