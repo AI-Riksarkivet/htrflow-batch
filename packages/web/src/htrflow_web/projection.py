@@ -1001,14 +1001,16 @@ def _pipeline_steps(text: str) -> list[str]:
     then just names the pipeline, and the campaign is unaffected either way."""
     if len(text) > MAX_PIPELINE_YAML:
         return []
-    # Every way this text can fail to be a document is no steps, never an
-    # error: the list route parses each pipeline on every request, so one
-    # bad ConfigMap raising here failed the whole list. RecursionError is a
-    # deeply nested flow collection (`[[[...]]]`); ValueError is a scalar
-    # its resolver cannot build (a `2026-99-99` date, `!!int zz`).
+    # Any exception from the parse is no steps, never an error, and the
+    # types are not enumerated: this text is operator-editable and parsed on
+    # every list request, and PyYAML raises assorted types on malformed
+    # input (YAMLError, ValueError from a `2026-99-99` date, AttributeError
+    # from a `!!timestamp` it cannot match, RecursionError -- an Exception
+    # subclass -- from deep nesting). One bad ConfigMap must not fail the
+    # list. Only the parse is guarded; the extraction below is ours.
     try:
         doc = yaml.safe_load(text)
-    except (yaml.YAMLError, RecursionError, ValueError):
+    except Exception:
         return []
     steps = doc.get("steps") if isinstance(doc, dict) else None
     if not isinstance(steps, list):
