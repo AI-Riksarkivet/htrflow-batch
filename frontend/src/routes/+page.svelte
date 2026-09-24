@@ -22,7 +22,13 @@
   // banner on top of it, never a replacement for it.
   let jobs = $state<JobSummary[] | null>(null);
   let unreadable = $state(0);
-  let error = $state<string | null>(null);
+  // What the last poll failed with, and when the next one is: the banner's
+  // sentence is made of both, so it names the real next try.
+  let failure = $state<unknown>(null);
+  let retryAt = $state<Date | undefined>(undefined);
+  const error = $derived(
+    failure === null ? null : describeApiError(failure, jobs !== null, retryAt),
+  );
 
   // Campaigns whose Jobs are gone: the API sends the newest `reapedShown`
   // of them and says how many there are. Their records have no TTL, so
@@ -106,7 +112,7 @@
           : keepOrder(jobs, result.jobs);
       resort = false;
       unreadable = result.unreadable;
-      error = null;
+      failure = null;
       return true;
     } catch (e) {
       if (signal.aborted) return true;
@@ -114,7 +120,7 @@
       // screen is the older one, and that it retries on its own. The
       // transport detail (a fetch error string, a ZodError) never reaches
       // the banner — see $lib/reasons.
-      error = describeApiError(e, jobs !== null);
+      failure = e;
       return false;
     }
   }
@@ -127,7 +133,11 @@
   // tick is immediate.
   $effect(() => {
     void reapedShown;
-    return untrack(() => startPolling(load, RELOAD_MS));
+    return untrack(() =>
+      startPolling(load, RELOAD_MS, {
+        onWait: (ms) => (retryAt = new Date(Date.now() + ms)),
+      }),
+    );
   });
 </script>
 
