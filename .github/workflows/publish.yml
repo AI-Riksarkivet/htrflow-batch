@@ -105,7 +105,7 @@ jobs:
       TAG: ${{ inputs.tag }}
       TAG_SUFFIX: ${{ matrix.tag_suffix }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false # nothing here pushes; the token would outlive the step
 
@@ -219,7 +219,7 @@ jobs:
       TAG: ${{ inputs.tag }}   # as data, not as script text — see the publish job
       COMPONENT: ${{ matrix.component }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
