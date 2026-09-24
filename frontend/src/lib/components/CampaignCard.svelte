@@ -2124,13 +2124,15 @@
     }
 
     /* The name, and the chips on a line of their own under it, so a chip
-       changing its word never decides whether they wrap; then the times
-       and the count on a line that is there before the count is. */
+       changing its word never decides whether they wrap; then the times;
+       then the count, on a line held a line high before the count is.
+       Beside the times, a six-digit count ran over them at 390px. */
     .camp {
-      grid-template-columns: auto auto;
+      grid-template-columns: minmax(0, 1fr);
       grid-template-areas:
-        "title title"
-        "when  stat";
+        "title"
+        "when"
+        "stat";
     }
 
     .chips {
@@ -2144,7 +2146,9 @@
 
     .stat {
       min-width: 0;
-      justify-self: end;
+      text-align: left;
+      line-height: 1.4;
+      min-height: 1.4em;
     }
   }
 
