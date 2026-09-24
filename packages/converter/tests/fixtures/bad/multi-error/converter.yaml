@@ -1,2 +1,3 @@
 # Only what this fixture's bare volume ids need: the rest are the defaults.
 source_template: "https://iiif.example.org/{ref}/manifest"
+public_results_base: https://results.example.org

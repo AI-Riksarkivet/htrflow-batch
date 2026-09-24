@@ -90,7 +90,10 @@
 
 <main>
   <header class="page">
-    <h1>{pageName === null ? "ALTO" : `ALTO · ${pageName}`}</h1>
+    <div class="title-block">
+      <a class="back" href="/">← campaigns</a>
+      <h1>{pageName === null ? "ALTO" : `ALTO · ${pageName}`}</h1>
+    </div>
     <div class="header-right">
       {#if src !== null}
         <a class="raw" href={src} target="_blank" rel="noopener">raw</a>

@@ -49,6 +49,15 @@ afterEach(() => {
 });
 
 describe("/alto", () => {
+  test("the header links back to the campaign list, as /log's does", () => {
+    vi.stubGlobal("fetch", fetchOk(XML));
+    render(AltoPage);
+    expect(screen.getByRole("link", { name: "← campaigns" })).toHaveAttribute(
+      "href",
+      "/",
+    );
+  });
+
   test("renders each line's text in reading order, tinted by confidence", async () => {
     vi.stubGlobal("fetch", fetchOk(XML));
     render(AltoPage);

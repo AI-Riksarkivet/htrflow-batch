@@ -56,7 +56,10 @@ htrflow in the image ([Testing](../development/testing.md)).
 ### The knobs that shape the loop
 
 The full table, with defaults from `config.py`, is in the
-[Wrapper reference](../reference/wrapper.md).
+[Wrapper reference](../reference/wrapper.md). In a deployment only the two
+byte caps are set, from `converter.yaml`; the rest run at the defaults
+below, and change only in a hand run of the image
+([Configuration](../reference/configuration.md) says who sets what).
 
 | Env | Meaning | Default |
 |---|---|---|
