@@ -145,6 +145,8 @@
   let pipelineSteps = $state<string[]>([]);
   let pipelineYaml = $state("");
   let detailError = $state<string | null>(null);
+  // When the last read landed, and so whether the page count is known yet.
+  let readAt = $state<string | null>(null);
   let loadingMore = $state(false);
 
   // Which rows' page counts moved on the last poll, so only those flash.
@@ -435,6 +437,7 @@
       pipelineSteps = detail.pipelineSteps;
       pipelineYaml = detail.pipelineYaml;
       detailError = null;
+      readAt = new Date().toISOString();
       return true;
     } catch (e) {
       if (signal?.aborted) return true;
@@ -466,6 +469,28 @@
       job.phase === "Failed" ||
       job.phase === "PartiallyFailed" ||
       job.phase === "Unknown",
+  );
+
+  // The folded card's page count: "411 / 1914 pages · 3 failed", the same
+  // sums the open card's pages row draws. Null (an empty, held place) until
+  // a read has landed, and while the card is open.
+  const statText = $derived(
+    !collapsed || readAt === null
+      ? null
+      : `${figures(pageCell)} pages` +
+          (notice.pagesFailed > 0 ? ` · ${notice.pagesFailed} failed` : ""),
+  );
+  // What the figures cannot say: that they are not every volume's yet, and
+  // when they were read, for a campaign that has not finished.
+  const statTitle = $derived(
+    [
+      coverage.counted < coverage.of
+        ? `counted in ${coverage.counted} of ${coverage.of} volumes so far`
+        : null,
+      !settled && readAt !== null ? `as of ${clockTime(readAt)}` : null,
+    ]
+      .filter((part) => part !== null)
+      .join(" · ") || undefined,
   );
 
   // The campaign state the last read that landed was of: a settled card is
@@ -868,71 +893,87 @@
          is optional in the disclosure pattern; rendering an empty element
          just to keep the id would be worse — the reference would resolve to
          nothing at all. -->
-    <button
-      type="button"
-      class="camp-toggle"
-      aria-expanded={!collapsed}
-      aria-controls={collapsed ? undefined : openId}
-      onclick={toggle}
-    >
-      <span class="disclosure" aria-hidden="true">{collapsed ? "▸" : "▾"}</span>
-      <span class="camp-name"
-        >{showNamespace ? `${job.namespace}/${job.name}` : job.name}</span
+    <!-- Three tracks: the words take what the other two leave, and the
+         page count and the times have tracks of their own that are there
+         from the first paint. The chips follow the name, the phase chip
+         last: its word is the one that can change when the detail lands
+         ("partially succeeded"), and last, it pushes nothing along. -->
+    <div class="title">
+      <button
+        type="button"
+        class="camp-toggle"
+        aria-expanded={!collapsed}
+        aria-controls={collapsed ? undefined : openId}
+        onclick={toggle}
       >
-    </button>
-    {#if warmupChip !== null}
-      <span class="chip warmup {job.warmup.phase}" title={warmupReason}
-        >{warmupChip}</span
-      >
-    {/if}
+        <span class="disclosure" aria-hidden="true"
+          >{collapsed ? "▸" : "▾"}</span
+        >
+        <span class="camp-name"
+          >{showNamespace ? `${job.namespace}/${job.name}` : job.name}</span
+        >
+      </button>
+      <span class="chips">
+        {#if warmupChip !== null}
+          <span class="chip warmup {job.warmup.phase}" title={warmupReason}
+            >{warmupChip}</span
+          >
+        {/if}
+        {#if job.jobGone}
+          <!-- Not a failure: the Job did its work and Kubernetes removed it
+               at its TTL. The chip says why there is no volume table below. -->
+          <span
+            class="chip gone"
+            title="the campaign's Job has passed its ttlSecondsAfterFinished and been removed — this is the record it left"
+            >job removed</span
+          >
+        {/if}
+        <span
+          class="chip phase {job.phase.toLowerCase()}"
+          class:lost={campaignLost}
+          data-mix={mix}
+          title={phaseTitle}
+        >
+          {#if beating}<span class="dot pulse" aria-hidden="true"
+            ></span>{/if}{#if campaignLost}<span aria-hidden="true"
+              >{phaseLabel}</span
+            ><span class="sr-only">{doneWith(notice.pagesFailed)}</span
+            >{:else}{phaseLabel}{/if}</span
+        >
+      </span>
+    </div>
+    <!-- The pages done, on a folded card (the repo owner). Its place is
+         held, empty, until the detail says it, so its arriving moves
+         nothing; open, the totals below say it instead. -->
     <span
-      class="chip phase {job.phase.toLowerCase()}"
-      class:lost={campaignLost}
-      data-mix={mix}
-      title={phaseTitle}
+      class="stat"
+      aria-hidden={statText === null ? "true" : undefined}
+      title={statText === null ? undefined : statTitle}>{statText ?? ""}</span
     >
-      {#if beating}<span class="dot pulse" aria-hidden="true"
-        ></span>{/if}{#if campaignLost}<span aria-hidden="true"
-          >{phaseLabel}</span
-        ><span class="sr-only">{doneWith(notice.pagesFailed)}</span
-        >{:else}{phaseLabel}{/if}</span
-    >
-    {#if job.jobGone}
-      <!-- Not a failure: the Job did its work and Kubernetes removed it at
-           its TTL. The chip says why there is no volume table below. -->
-      <span
-        class="chip gone"
-        title="the campaign's Job has passed its ttlSecondsAfterFinished and been removed — this is the record it left"
-        >job removed</span
-      >
-    {/if}
     <!-- When the campaign was created and when it finished, at the right end
          of the identity line. -->
-    {#if job.createdAt !== null || job.finishedAt !== null}
-      <span class="when">
-        {#if job.createdAt !== null}
-          <span class="sr-only">created </span><time
-            datetime={job.createdAt}
-            title={job.createdAt}
-            >{shortDate(job.createdAt) ?? job.createdAt}</time
-          >
-        {/if}
-        {#if finishedLabel !== null}
-          {#if job.createdAt !== null}{" "}<span
-              class="arrow"
-              aria-hidden="true">→</span
-            >{" "}{/if}<span class="sr-only"
-            >{job.createdAt === null ? "finished " : ", finished "}</span
-          ><time datetime={job.finishedAt} title={job.finishedAt}
-            >{finishedLabel}</time
-          >
-        {:else if stillGoing}
-          {" "}<span class="arrow" aria-hidden="true">→</span>{" "}<span
-            aria-hidden="true">…</span
-          ><span class="sr-only">, still running</span>
-        {/if}
-      </span>
-    {/if}
+    <span class="when">
+      {#if job.createdAt !== null}
+        <span class="sr-only">created </span><time
+          datetime={job.createdAt}
+          title={job.createdAt}
+          >{shortDate(job.createdAt) ?? job.createdAt}</time
+        >
+      {/if}
+      {#if finishedLabel !== null}
+        {#if job.createdAt !== null}{" "}<span class="arrow" aria-hidden="true"
+            >→</span
+          >{" "}{/if}<span class="sr-only"
+          >{job.createdAt === null ? "finished " : ", finished "}</span
+        ><time datetime={job.finishedAt} title={job.finishedAt}
+          >{finishedLabel}</time
+        >
+      {:else if stillGoing}
+        {" "}<span class="arrow" aria-hidden="true">→</span>{" "}<span
+          aria-hidden="true">…</span
+        ><span class="sr-only">, still running</span>
+      {/if}
+    </span>
   </div>
 
   <!-- Folded, the card is the line above and nothing else: a list of folded
@@ -1141,12 +1182,44 @@
       linear-gradient(to bottom, var(--warning), var(--mix-to)) border-box;
   }
 
+  /* Zone 1: the words, then two tracks of their own for the page count and
+     the times, so what arrives later has its place before it does. */
   .camp {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas: "title stat when";
+    align-items: center;
+    gap: 0.35rem 0.75rem;
+    padding: 0.3rem 0;
+  }
+
+  .title {
+    grid-area: title;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 0.35rem 0.75rem;
-    padding: 0.3rem 0;
+    min-width: 0;
+  }
+
+  .chips {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem 0.5rem;
+  }
+
+  /* Held to "411 / 1914 pages · 3 failed" before the detail says anything,
+     filled from the right, so the figures arriving -- or growing -- push
+     nothing: the track to its left is the flexible one. */
+  .stat {
+    grid-area: stat;
+    min-width: 11rem;
+    text-align: right;
+    color: var(--muted-foreground);
+    font-size: 0.75rem;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
   }
 
   .camp-toggle {
@@ -1182,10 +1255,12 @@
     overflow-wrap: anywhere;
   }
 
-  /* Pushed to the right end of the identity line, and the first thing to
-     wrap under it when the chips take the width (a phone). */
+  /* The right end of the identity line, as wide on every card, so the
+     page counts beside it line up down the list. */
   .when {
-    margin-left: auto;
+    grid-area: when;
+    min-width: 8.5rem;
+    text-align: right;
     color: var(--muted-foreground);
     font-size: 0.75rem;
     white-space: nowrap;
@@ -1961,9 +2036,28 @@
       padding-left: 0;
     }
 
-    .when {
-      margin-left: 0;
+    /* The name, and the chips on a line of their own under it, so a chip
+       changing its word never decides whether they wrap; then the times
+       and the count on a line that is there before the count is. */
+    .camp {
+      grid-template-columns: auto auto;
+      grid-template-areas:
+        "title title"
+        "when  stat";
+    }
+
+    .chips {
       flex-basis: 100%;
+    }
+
+    .when {
+      min-width: 0;
+      text-align: left;
+    }
+
+    .stat {
+      min-width: 0;
+      justify-self: end;
     }
   }
 
