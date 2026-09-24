@@ -184,6 +184,12 @@ steps:                     # htrflow pipeline steps, passed through verbatim
                                                              # required when the
                                                              # cluster sets
                                                              # requireModelRevision
+  - step: Segmentation     # the lines within each region: a reader needs
+    settings:              # regions, then lines (see the rules below)
+      model: yolo
+      model_settings:
+        model: Riksarkivet/yolov9-lines-within-regions-1
+        revision: …
   - step: TextRecognition
     settings:
       model: TrOCR
@@ -210,7 +216,36 @@ validation error and blocks rendering for every campaign that uses it:
 | `ttl_seconds_after_finished:`, when set, is a positive integer | It becomes the campaign Job's `ttlSecondsAfterFinished`: how long `completedIndexes` stays readable with `kubectl`. The campaign's record has no TTL |
 | `steps:` is a non-empty list, each entry `- step: <Name>`, with no `Export` step | Otherwise every volume fails in the wrapper. The wrapper appends the Export steps itself |
 | A step that loads a model has only `model`, `model_settings` and `generation_settings` under `settings` | htrflow merges any other key over `model_settings`, so `revision: null` beside it would unpin the model |
+| A line reader (`model: TrOCR` or `PyLaia`) has at least two segmentation steps (`model: yolo` or `PPDocLayoutV3`) before it: regions, then the lines within them | ALTO and PAGE XML hold the text of a line only inside a region. Lines straight on the page are exported without their text (see below) |
 | No unknown key (`model_revision:` included; the pin lives in `steps`) | A stray key is a typo or a leftover |
+
+### Regions, then lines
+
+Every model step runs on the smallest pieces the page has so far, whatever
+the step is called. A segmentation step splits each piece into the regions
+it finds, one level down. A line reader puts its text on the piece it
+reads. htrflow's ALTO and PAGE export writes a text line only for a line
+inside a region: page, region, line. A reader with one segmentation step
+before it reads lines that sit directly on the page. The export then holds
+none of their text: every page looks done and is empty. What the model
+detects makes no difference. A lines model that runs straight on the page
+still puts its lines one level below the page, not two.
+
+So `validate` refuses that shape, and names the fix: a region segmentation
+step (for example `Riksarkivet/yolov9-regions-1`) before the line step (for
+example `Riksarkivet/yolov9-lines-within-regions-1`), as in the example
+above. It also refuses a reader with no segmentation step before it.
+`WordLevelTrOCR` is not held to the rule: the export writes its words.
+
+A pipeline already in `rendered/` with exactly these steps and image is not
+refused, since its id names that recipe for good (see
+[Immutability](#immutability)). `validate` warns instead; new campaigns
+should use a new pipeline file with the region step.
+
+The wrapper checks the result as well, for shapes this rule cannot see. A
+page whose ALTO or PAGE XML holds none of the text htrflow recognized for
+it fails. If every page of a volume fails that way, the volume fails
+permanently (see [the wrapper's stages](../how-it-works/wrapper.md#stages-around-the-streaming-loop)).
 
 Two more rules are the **cluster's**, enforced by Kyverno at admission and
 by the Kyverno CLI in the campaigns repo's CI:
@@ -263,6 +298,7 @@ campaigns/broken.yaml: volume "R1" is listed twice — remove the duplicate
 | A `node_selector:` key or value that is not a label | `"node_selector" has a key that is not a Kubernetes node label (got "Bad Key") — a key is a name, optionally after a "<dns-prefix>/"; both halves and the value are letters, digits, ".", "_" and "-", at most 63 characters` |
 | `allowed_image_repos:` or `require_model_revision:` in `converter.yaml` | `allowed_image_repos moved to the htrflow-batch chart (security.allowedImageRepos, enforced by Kyverno) — remove it from converter.yaml` |
 | A `source_template:` with no `{ref}` in it, with `{ref}` twice, or with any other placeholder | `"source_template" must have {ref} in it exactly once and nothing else in braces (got "https://iiif.example.org/{id}/manifest") — {ref} is where a campaign's bare volume id goes` |
+| A reader with fewer than two segmentation steps before it | `"steps" put the lines that TrOCR (step 2) reads directly on the page, with 1 Segmentation step before it — htrflow's ALTO and PAGE export writes only the text of lines inside a region, so every page would publish without its text; put a region Segmentation step before the line step …` |
 | `steps:` that is not a list | `"steps" must be a list of steps — write steps: and then "- step: <Name>" entries under it` |
 | `window: "5"` (quoted, so YAML makes it text), `window: 0`, `window: true` | `"window" must be a whole number of 1 or more (got "5" — quotes make it text)` |
 | `max_seconds:` likewise | `"max_seconds" must be a whole number of seconds, 1 or more (got 0)` |

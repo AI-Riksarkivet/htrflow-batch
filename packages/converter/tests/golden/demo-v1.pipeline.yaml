@@ -7,12 +7,13 @@ metadata:
     htrflow.riksarkivet.se/managed-by: converter
     htrflow.riksarkivet.se/pipeline: demo-v1
   annotations:
-    htrflow.riksarkivet.se/pipeline-sha256: 2242f17e78f00a521f028a3d9230a5b9a36231d837d86e0036a6701676b49a36
+    htrflow.riksarkivet.se/pipeline-sha256: 0c470417973b6c278b870b72df2deb30fb20f7189ea756c5f85a627301427aa9
     argocd.argoproj.io/hook: Skip
 data:
   pipeline.yaml: "steps:\n- step: Segmentation\n  settings:\n    model: yolo\n   \
-    \ model_settings:\n      model: Riksarkivet/yolov9-regions-1\n- step: TextRecognition\n\
-    \  settings:\n    model: TrOCR\n"
+    \ model_settings:\n      model: Riksarkivet/yolov9-regions-1\n- step: Segmentation\n\
+    \  settings:\n    model: yolo\n    model_settings:\n      model: Riksarkivet/yolov9-lines-within-regions-1\n\
+    - step: TextRecognition\n  settings:\n    model: TrOCR\n"
 ---
 apiVersion: batch/v1
 kind: Job
@@ -43,7 +44,7 @@ spec:
       labels:
         app: htrflow-warmup
       annotations:
-        htrflow.riksarkivet.se/recipe-sha256: 7935e3fbbb607c53b087d79e74333d71be5a3e9efd5facae3029b4d7b958133f
+        htrflow.riksarkivet.se/recipe-sha256: 635f3a9d56fcd18dd000acc7796750d248250acc727602d8191feb42429288a7
     spec:
       restartPolicy: Never
       activeDeadlineSeconds: 3600
@@ -91,7 +92,7 @@ spec:
           mountPath: /config
         - name: data
           mountPath: /data
-          subPath: demo-v1-7935e3fbbb607c53b087d79e74333d71be5a3e9efd5facae3029b4d7b958133f
+          subPath: demo-v1-635f3a9d56fcd18dd000acc7796750d248250acc727602d8191feb42429288a7
         - name: work
           mountPath: /work
         securityContext:

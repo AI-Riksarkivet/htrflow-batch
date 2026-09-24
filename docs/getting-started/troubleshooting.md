@@ -118,6 +118,7 @@ one click away on the same row.
 | The IIIF manifest could not be read, will not be retried | Fix the URL, then put the volume in a new campaign |
 | N pages are missing, retried automatically | Nothing, unless the retries also fail. Only the missing pages are redone |
 | None of the pages processed produced a result | Look at the node and the pipeline before the retries run out |
+| All processed pages failed the same way: recognized text not exported | The pipeline reads lines that sit straight on the page, and ALTO and PAGE XML hold a line's text only inside a region. It will not be retried. Add a region segmentation step before the line step in a new pipeline file, then put the volumes in a new campaign on it ([Regions, then lines](../reference/campaign-yaml.md#regions-then-lines)). The same reason on single failed pages of a finished volume means the same for those pages |
 | Stopped without a message this page can read | Open the run log |
 
 A volume whose state is `failed` has spent its retries, and the card says

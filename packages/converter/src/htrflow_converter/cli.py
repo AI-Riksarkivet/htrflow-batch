@@ -25,6 +25,7 @@ from .record import (
     RENDERED,
     CorruptRenderedFile,
     existing_parts,
+    recorded_recipe,
     rendered,
     volumes_txt,
 )
@@ -234,20 +235,6 @@ _PIPELINE_CHANGED = (
 )
 
 
-def _recorded_recipe(path: Path) -> dict[str, object]:
-    """The recipe the previous render left in ``path``. ``rendered/`` is
-    committed, so the previous render IS the record. Nothing when there is
-    none to hold this render against -- a file too broken to parse included,
-    since this render is about to overwrite it anyway."""
-    if not path.is_file():
-        return {}
-    with contextlib.suppress(yaml.YAMLError):
-        return render.recipe(
-            [d for d in yaml.safe_load_all(path.read_text()) if isinstance(d, dict)]
-        )
-    return {}
-
-
 def _recorded_pipelines(paths: list[Path]) -> set[object]:
     """The pipeline an earlier render recorded on each of these campaign
     files' ConfigMaps. What the campaign's live Job runs, whatever its file
@@ -275,7 +262,7 @@ def _edited_pipeline(campaigns, pipelines: dict, cfg, out: Path) -> str | None:
     parts = {c.name: existing_parts(out / "campaigns", c.name) for c in campaigns}
     recorded = {c.name: _recorded_pipelines(parts[c.name]) for c in campaigns}
     for p in pipelines.values():
-        before = _recorded_recipe(out / "pipelines" / f"{p.id}.yaml")
+        before = recorded_recipe(out / "pipelines" / f"{p.id}.yaml")
         after = render.recipe(render.pipeline_objects(p, cfg))
         moved = [k for k in sorted(after) if before and before.get(k) != after[k]]
         users = sorted(
