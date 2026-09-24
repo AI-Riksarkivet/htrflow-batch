@@ -63,7 +63,7 @@ const key = (job: JobSummary) => `${job.namespace}/${job.name}`;
  * `next` in the order a reader already has: every campaign on screen keeps
  * its place, with its new row, and a new one goes in front of the first
  * campaign already shown that `byAttention` would put after it -- so a poll
- * adds cards but never moves one. Re-sorting on every answer moved a
+ * adds cards but moves none, except one that has just fallen into trouble. Re-sorting on every answer moved a
  * campaign that had just started from the bottom to the top, and every card
  * between it and there down one (the repo owner: "things pop all over").
  */
@@ -72,7 +72,14 @@ export function keepOrder(
   next: JobSummary[],
 ): JobSummary[] {
   const fresh = new Map(next.map((j) => [key(j), j]));
-  const out = shown.flatMap((j) => fresh.get(key(j)) ?? []);
+  // Falling into trouble is the news the order exists for: such a card is
+  // placed afresh, as a new one is, rather than left buried under finished
+  // ones for as long as the tab stays open (review of this change).
+  const fell = (j: JobSummary) => {
+    const now = fresh.get(key(j));
+    return now !== undefined && band(now) === 1 && band(j) !== 1;
+  };
+  const out = shown.flatMap((j) => (fell(j) ? [] : (fresh.get(key(j)) ?? [])));
   const had = new Set(out.map(key));
   // Walked from the end, so each new campaign's anchor is already placed:
   // the next campaign after it in `byAttention`'s order, shown or new.
@@ -85,4 +92,9 @@ export function keepOrder(
     anchor = key(job);
   }
   return out;
+}
+
+/** Whether `byAttention` would put `jobs` in another order. */
+export function outOfOrder(jobs: JobSummary[]): boolean {
+  return byAttention(jobs).some((j, i) => j !== jobs[i]);
 }

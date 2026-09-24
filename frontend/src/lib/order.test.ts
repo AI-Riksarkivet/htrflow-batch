@@ -1,6 +1,12 @@
 import { describe, expect, test } from "vitest";
 import type { JobSummary } from "./api.js";
-import { byAttention, inTrouble, keepOrder, warmupBlocked } from "./order.js";
+import {
+  byAttention,
+  inTrouble,
+  keepOrder,
+  outOfOrder,
+  warmupBlocked,
+} from "./order.js";
 
 function job(name: string, over: Partial<JobSummary> = {}): JobSummary {
   return {
@@ -256,5 +262,35 @@ describe("keepOrder", () => {
     expect(
       keepOrder([queued], [other, queued]).map((j) => j.namespace),
     ).toEqual(["htr-other", "htr-test"]);
+  });
+
+  // What the order is for is surfacing trouble, and a kept order buried a
+  // campaign that failed under the finished ones for as long as the tab
+  // stayed open (review of this change). Falling into trouble is news worth
+  // a move: the card goes to its place at once, as a new one would.
+  test("a campaign that falls into trouble moves to its place at once", () => {
+    const shown = byAttention([running, oldFinish, queued]);
+    const broke = { ...queued, phase: "Failed" as const };
+    expect(names(keepOrder(shown, [running, oldFinish, broke]))).toEqual([
+      "running",
+      "queued",
+      "old",
+    ]);
+  });
+
+  test("one already in trouble stays where the reader has it", () => {
+    const shown = [oldFinish, failed, running]; // as a reader left it
+    expect(names(keepOrder(shown, [running, failed, oldFinish]))).toEqual([
+      "old",
+      "failed",
+      "running",
+    ]);
+  });
+});
+
+describe("outOfOrder", () => {
+  test("says whether the sort would put the list another way", () => {
+    expect(outOfOrder(byAttention([queued, running, failed]))).toBe(false);
+    expect(outOfOrder([queued, running])).toBe(true);
   });
 });
