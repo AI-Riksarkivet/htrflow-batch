@@ -40,7 +40,9 @@ Writers: the **wrapper** is the only writer in the whole tree — its own
 *front* of the `sources/` key, so the synthetic manifests sit at
 `<namespace>/sources/…`, not `sources/<namespace>/…`; `status/` alone is
 namespace-free, since the browser resolves run-log links against the bucket
-root. Nothing else in this system writes to S3 at all. The read API only
+root. Two namespaces sharing one bucket therefore share run-log keys: the
+same pipeline id and volume id in both write one log
+([Roadmap](../roadmap/index.md#queueing-and-fairness)). Nothing else in this system writes to S3 at all. The read API only
 reads `progress.json` and `manifest.json`, through its own address for the
 bucket ([View Results](../getting-started/viewing.md)).
 
