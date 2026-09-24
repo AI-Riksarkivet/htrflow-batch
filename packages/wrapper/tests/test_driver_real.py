@@ -281,3 +281,81 @@ def test_a_dead_real_pipeline_exports_nothing_late(tmp_path, page):
     time.sleep(1.0)  # the model returns; a live helper would export now
     assert not list(out.rglob("*.xml"))
     assert (progress._exports, progress._steps) == ({}, {})
+
+
+class _Boxes:
+    """A segmentation model as htrflow drives one: per image, the Regions
+    it found -- two boxes, each attached as a child of the node it ran on."""
+
+    metadata = {"model": "boxes-test-model"}
+
+    def __call__(self, images, **kwargs):
+        from htrflow.document import Region
+        from htrflow.utils.geometry import Bbox
+
+        return [
+            [
+                Region(Bbox(10, 10, 200, 60).polygon()),
+                Region(Bbox(10, 70, 200, 120).polygon()),
+            ]
+            for _ in images
+        ]
+
+
+class _Reader:
+    """A text recognition model: one Text per image it is handed."""
+
+    metadata = {"model": "reader-test-model"}
+
+    def __init__(self):
+        self.read = 0
+
+    def __call__(self, images, **kwargs):
+        from htrflow.document import Text
+
+        out = []
+        for _ in images:
+            self.read += 1
+            out.append([Text(f"line {self.read}", 0.9)])
+        return out
+
+
+@pytest.mark.parametrize("levels", [1, 2])
+def test_the_export_check_against_htrflows_own_steps_and_serializers(
+    tmp_path, page, levels
+):
+    """Pins the upstream behaviour the export check exists for: through
+    htrflow's real Segmentation/TextRecognition steps, Export and ALTO/PAGE
+    templates, one segmentation level puts the lines on the page and the
+    files come out without their text -- the page fails, with the cause --
+    while region then line exports it. When htrflow writes flat lines, the
+    one-level case stops failing: this test says so, and the check (and the
+    converter's refusal of the shape) can be retired."""
+    from htrflow.pipeline.pipeline import Pipeline
+    from htrflow.pipeline.steps import Export, Segmentation, TextRecognition
+
+    from htrflow_batch import driver
+    from htrflow_batch.exportcheck import TextNotExported
+
+    out = tmp_path / "outputs"
+    steps = [Segmentation(_Boxes()) for _ in range(levels)] + [
+        TextRecognition(_Reader())
+    ]
+    pipeline = Pipeline(
+        steps + [Export(str(out / "alto"), "alto"), Export(str(out / "page"), "page")]
+    )
+    try:
+        if levels == 1:
+            with pytest.raises(TextNotExported, match="recognized 2 lines") as caught:
+                process_page(pipeline, page, out)
+            assert "directly on the page" in str(caught.value)
+            assert not list(out.rglob("*.xml"))
+        else:
+            files = process_page(pipeline, page, out)
+            alto = ET.fromstring(files["alto"].read_bytes())
+            contents = [
+                e.get("CONTENT") for e in alto.iter() if e.tag.endswith("String")
+            ]
+            assert len(contents) == 4 and all(contents)
+    finally:
+        driver.release_steps(steps)
