@@ -38,8 +38,10 @@ JOB_SKELETON = CONVERTER_SRC / "manifests" / "campaign-job.yaml"
 sys.path.insert(0, str(ROOT / "scripts"))
 from config_reference import (  # noqa: E402
     AGREEMENTS,
+    FLAVORS_PAIR,
     LIST_AGREEMENTS,
     PAGE,
+    PAIRS,
     SECURITY,
     SURFACES,
     WEB_DEFAULT_DOC,
@@ -218,6 +220,23 @@ def test_the_priority_classes_the_converter_accepts_are_the_ones_the_chart_ships
         assert ours == theirs, pair
     for pair, (ours, theirs) in _names(_load(EXAMPLE)).items():
         assert ours == theirs, pair
+
+
+def _flavors(entries: list) -> list[tuple[str, dict]]:
+    return [
+        (e["name"], e["nodeLabels"]) if isinstance(e, dict) else (e.name, e.node_labels)
+        for e in entries
+    ]
+
+
+def test_the_flavors_a_size_names_are_the_ones_the_chart_describes():
+    """B105: a size's flavor is rendered as the flavor's node labels on the
+    pod -- the one way a Job keeps Kueue off the other flavors -- so the
+    names and labels converter.yaml repeats must be the chart's, in order."""
+    chart = _flavors(_load(CHART / "values.yaml")["queue"]["flavors"])
+    assert _flavors(ConverterConfig().flavors) == chart
+    assert _flavors(_load(EXAMPLE).get("flavors", [])) == chart
+    assert FLAVORS_PAIR in PAIRS.items()
 
 
 WORKFLOWS = [
