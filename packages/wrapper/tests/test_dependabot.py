@@ -90,3 +90,18 @@ def test_every_update_is_labelled_grouped_and_cooled_down(update: dict) -> None:
     assert update["cooldown"]["default-days"] >= 7
     assert 0 < update["open-pull-requests-limit"] <= 5
     assert update["groups"], "one pull request per ecosystem, not one per package"
+
+
+def test_uv_updates_move_the_lock_and_keep_huggingface_hub_on_its_major() -> None:
+    """A bump must not raise a package's floor (the ranges are what the
+    packages support), and huggingface-hub must stay on the major the
+    default transformers line in the image can run."""
+    config = yaml.safe_load(
+        (Path(__file__).resolve().parents[3] / ".github" / "dependabot.yml").read_text()
+    )
+    (uv,) = [u for u in config["updates"] if u["package-ecosystem"] == "uv"]
+    assert uv["versioning-strategy"] == "lockfile-only"
+    assert {
+        "dependency-name": "huggingface-hub",
+        "update-types": ["version-update:semver-major"],
+    } in uv["ignore"]
