@@ -86,6 +86,11 @@
           "minItems": 1
         }
       }
+    },
+    "dnsSubdomain": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$",
+      "maxLength": 253
     }
   },
   "properties": {
@@ -180,16 +185,20 @@
           "minLength": 1
         },
         "flavor": {
-          "type": "string",
-          "minLength": 1
+          "$ref": "#/definitions/dnsSubdomain"
         },
         "createFlavor": {
           "type": "boolean"
         },
         "clusterQueueName": {
-          "type": "string",
-          "pattern": "^$|^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$",
-          "maxLength": 253
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "$ref": "#/definitions/dnsSubdomain"
+            }
+          ]
         },
         "createClusterQueue": {
           "type": "boolean"
@@ -235,9 +244,7 @@
             ],
             "properties": {
               "name": {
-                "type": "string",
-                "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$",
-                "maxLength": 253
+                "$ref": "#/definitions/dnsSubdomain"
               },
               "nodeLabels": {
                 "type": "object",
