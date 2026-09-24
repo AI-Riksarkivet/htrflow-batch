@@ -151,7 +151,6 @@ skeleton, never as a campaign setting.
 
 | Key | Source | Default | Must agree with | Security |
 |---|---|---|---|---|
-| `s3.bucket` | `values.yaml` | `htr-results` | — | no secret — nobody |
 | `s3.existingSecret` | `values.yaml` | `htr-batch-s3` | converter `s3_secret` | names that Secret; no template creates it — nobody |
 | `hfToken.existingSecret` | `values.yaml` | *(empty)* | converter `hf_token_secret` | the one Secret a warm-up may read (job-shape) — cluster |
 | `publicResultsBase` | `values.yaml` | *(empty)* | converter `public_results_base`, web `HTRFLOW_PUBLIC_RESULTS_BASE`, wrapper `PUBLIC_RESULTS_BASE` | the public-read results base; `required` — render |

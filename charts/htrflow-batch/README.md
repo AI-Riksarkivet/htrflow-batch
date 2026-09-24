@@ -39,9 +39,10 @@ device plugin) is a separate chart:
   `credentials` key in AWS ini format plus `S3_BUCKET` (and `S3_ENDPOINT`
   unless real AWS) — this chart documents the convention but never creates
   it. The batch/warm-up Jobs the converter renders read it; for the PoC,
-  `charts/htrflow-devstack`'s RustFS renders it instead (keep `s3.bucket` /
-  `s3.existingSecret` here in step with that chart's `s3.bucket` /
-  `s3.secretName`).
+  `charts/htrflow-devstack`'s RustFS renders it instead (keep
+  `s3.existingSecret` here in step with that chart's `s3.secretName`; the
+  bucket's name is the Secret's `S3_BUCKET` key, which that chart writes
+  from its own `s3.bucket`).
 - `web.image` must be **digest-pinned** (`…@sha256:…`). A tag is refused
   unless `security.allowTagImages=true` (PoC iteration only; tags are then
   pulled on every rollout).
