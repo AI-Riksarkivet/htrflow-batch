@@ -1331,7 +1331,9 @@ describe("CampaignCard", () => {
     });
     await expand();
     expect(await screen.findAllByText("0.81")).not.toHaveLength(0);
-    const low = screen.getByRole("link", { name: /vol0 0002/ });
+    // Its visible text is its accessible name (WCAG 2.5.3, label in name);
+    // the score is text beside it.
+    const low = screen.getByRole("link", { name: "vol0/0002" });
     expect(low).toHaveAttribute(
       "href",
       "uv.html#?manifest=" + encodeURIComponent(volumeDone.iiifUrl) + "&cv=1",
@@ -1366,7 +1368,7 @@ describe("CampaignCard", () => {
     ).toBeInTheDocument();
   });
 
-  test("a QP campaign with nothing scored yet keeps the column and draws no lowest line", async () => {
+  test("a QP campaign with nothing scored yet keeps the column and its line, with no pages in it", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -1386,7 +1388,61 @@ describe("CampaignCard", () => {
     await expand();
     await screen.findByText("vol0");
     expect(container.querySelector(".card-body.with-quality")).not.toBeNull();
-    expect(screen.queryByText(/lowest predicted quality/)).toBeNull();
+    const line = container.querySelector(".quality-line");
+    expect(squash(line?.textContent ?? "")).toBe("lowest predicted quality: —");
+    expect(line?.querySelector("a")).toBeNull();
+  });
+
+  // The list row says the campaign scores, so the column and the line are
+  // there from the first paint: nothing appears when the detail lands.
+  test("a list row that scores holds the column and the line before the detail lands", async () => {
+    let answer: (r: Response) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>((resolve) => (answer = resolve))),
+    );
+    const { container } = render(CampaignCard, {
+      job: { ...job, qualityPrediction: true },
+    });
+    await expand();
+    expect(container.querySelector(".card-body.with-quality")).not.toBeNull();
+    expect(
+      container.querySelectorAll(".placeholder .c-quality").length,
+    ).toBeGreaterThan(0);
+    const line = container.querySelector(".quality-line");
+    expect(squash(line?.textContent ?? "")).toBe("lowest predicted quality: —");
+
+    answer(
+      jsonResponse({
+        ...job,
+        ...detailBase,
+        qualityPrediction: true,
+        pipelineSteps: qpSteps,
+        volumes: [scoredVolume],
+        failures: [],
+        pagesCoverage: { counted: 1, of: 1 },
+        quality: {
+          mean: 0.8123,
+          min: 0.41,
+          scored: 3,
+          volumes: 1,
+          lowest: [
+            {
+              volume: "vol0",
+              page: "0002",
+              quality: 0.41,
+              canvas: 1,
+              iiifUrl: volumeDone.iiifUrl,
+            },
+          ],
+        },
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    await screen.findByText("vol0");
+    // The same paragraph, filled in -- not one that replaced it.
+    expect(container.querySelector(".quality-line")).toBe(line);
+    expect(screen.getByRole("link", { name: "vol0/0002" })).toBeInTheDocument();
   });
 
   test("a campaign without a QP step has no quality track", async () => {
@@ -1416,6 +1472,9 @@ describe("CampaignCard", () => {
     expect(withQ).toContain("var(--quality)");
     expect(withQ).toHaveLength(7);
     expect(cssOf(".campaign").get("--quality")).toBe("3rem");
+    // Against the pill, clear of a six-digit page sum running past the
+    // fraction's track.
+    expect(cssOf(".c-quality").get("text-align")).toBe("right");
     // A phone has no room on line 2 for a seventh track: its six fixed
     // tracks and their gaps already take nearly all of a 390px card. The
     // score is the far end of line 1 instead, in the run log's track, which
