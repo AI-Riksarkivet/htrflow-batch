@@ -54,8 +54,10 @@ a running pod. With `security.policies.enabled`, the API server applies the
 chart's `ClusterPolicy` objects to every Job, Pod and pipeline ConfigMap in
 the namespace, whoever wrote it, and the campaigns repo's CI can run the same
 policies over `rendered/` with the Kyverno CLI. The image rules also cover
-ephemeral containers and image volumes (`volumes[].image.reference`), which
-the kubelet pulls like a container image and which can carry model weights.
+ephemeral containers — they match the `pods/ephemeralcontainers` subresource
+that `kubectl debug` goes through, not only the Pod — and image volumes
+(`volumes[].image.reference`), which the kubelet pulls like a container
+image and which can carry model weights.
 The revision rule applies to every ConfigMap with a `pipeline.yaml` key.
 
 RBAC grants a verb over a resource *type*, not one object, so two grants are

@@ -29,7 +29,10 @@ spec:
       match:
         any:
           - resources:
-              kinds: [Pod]
+              # A rule on kind Pod does not see the subresource request
+              # `kubectl debug` adds an ephemeral container through; the
+              # subresource has to be named.
+              kinds: [Pod, Pod/ephemeralcontainers]
               namespaces: [{{ .Release.Namespace | quote }}]
       # Kyverno extracts a Pod's container images by itself, but not its
       # image volumes (2026-09-17 audit, 3061) -- and naming ANY extractor
