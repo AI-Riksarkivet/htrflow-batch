@@ -146,10 +146,18 @@
       <ThemeToggle />
     </div>
   </header>
+  <!-- Over a list, the banner floats at the foot of the window: in the
+       page, arriving on a poll, it pushed every card down by its height.
+       With no list yet there is nothing to push, and it sits where the list
+       would be. -->
   {#if error !== null}
-    <p class="banner error" role="alert">{error}</p>
+    <p class="banner error" class:floating={jobs !== null} role="alert">
+      {error}
+    </p>
   {:else if unreadable > 0}
-    <p class="banner error" role="alert">{describeUnreadable(unreadable)}</p>
+    <p class="banner error" class:floating={jobs !== null} role="alert">
+      {describeUnreadable(unreadable)}
+    </p>
   {/if}
   {#if jobs === null}
     {#if error === null}<p class="loading">Loading…</p>{/if}
@@ -226,6 +234,22 @@
     padding: 0.5rem 1rem;
     border-radius: var(--radius);
     margin: 0 0 1rem;
+  }
+
+  /* The page's own column, pinned to the foot of the window. */
+  .banner.floating {
+    position: fixed;
+    z-index: 1;
+    bottom: 1rem;
+    left: max(1rem, calc(50vw - 32rem));
+    right: max(1rem, calc(50vw - 32rem));
+    margin: 0;
+    box-shadow: 0 4px 16px oklch(0 0 0 / 0.18);
+  }
+
+  /* Room under the last card, so the banner never covers it for good. */
+  main:has(.floating) {
+    padding-bottom: 5rem;
   }
 
   .error {
