@@ -118,6 +118,27 @@ main {
   border-bottom: 1px solid var(--border);
 }
 
+/* The way back to the campaign list, above the title of every page below
+   it (/log, /alto). */
+.title-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.back {
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
+  text-decoration: none;
+  width: fit-content;
+}
+
+.back:hover {
+  color: var(--primary);
+  text-decoration: underline;
+}
+
 .header-right {
   display: flex;
   flex-wrap: wrap;

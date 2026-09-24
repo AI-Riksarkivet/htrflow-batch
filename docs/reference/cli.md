@@ -337,6 +337,12 @@ summary line lists what was left unchanged. A campaign's ConfigMap and Job
 are one change: if the Job's dry run is refused, the ConfigMap is kept as
 it was too.
 
+An object that already exists without the converter's `managed-by: converter`
+label (made by hand, or by something else) is never overwritten, whoever runs
+the apply: it is refused as `… exists … and was not made by htrflow-campaigns`,
+and so are the campaign pair and the Jobs that would mount it. Rename the
+pipeline or campaign, or remove that object.
+
 ```
 Job htr-warmup-demo: the pod template changed and a Job's pod template is immutable once the Job exists — a pipeline id is a permanent name for a recipe, so a changed recipe is a new pipeline file, and a Job that has to change is deleted and created again
 2 of 6 objects were refused by the API server and are unchanged: ConfigMap/campaign-kyrk, Job/kyrk — the other 4 were applied (exit 3)
