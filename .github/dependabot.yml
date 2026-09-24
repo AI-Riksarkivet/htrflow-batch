@@ -28,8 +28,21 @@ updates:
         update-types: [minor, patch]
 
   # The workspace lock (uv.lock at the root, all three packages).
+  #
+  # lockfile-only: the ranges in the packages' pyproject.toml are what the
+  # packages support, not what the lock happens to hold, so a bump moves the
+  # lock and never raises a floor.
+  #
+  # huggingface-hub stays on its current major: the wrapper image installs it
+  # beside each transformers line (.docker/transformers/*.txt), and the
+  # default 4.x line needs huggingface-hub < 1.0; a lock on 1.x would test a
+  # version the image does not run. Revisit when the default line is 5.x.
   - package-ecosystem: uv
     directory: /
+    versioning-strategy: lockfile-only
+    ignore:
+      - dependency-name: huggingface-hub
+        update-types: [version-update:semver-major]
     schedule: {interval: weekly, day: monday}
     cooldown: {default-days: 7}
     open-pull-requests-limit: 5
