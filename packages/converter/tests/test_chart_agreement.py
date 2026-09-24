@@ -240,21 +240,73 @@ def test_the_priority_classes_the_converter_accepts_are_the_ones_the_chart_ships
         assert ours == theirs, pair
 
 
-def _flavors(entries: list) -> list[tuple[str, dict]]:
-    return [
-        (e["name"], e["nodeLabels"]) if isinstance(e, dict) else (e.name, e.node_labels)
+def _flavors(entries: list) -> dict[str, dict]:
+    return {
+        e["name"]: e["nodeLabels"] if isinstance(e, dict) else e.node_labels
         for e in entries
-    ]
+    }
+
+
+#: converter.yaml's `flavors` for a chart installed with ci/full-values.yaml.
+FULL_VALUES_FLAVORS = [
+    {"name": "small-gpu", "nodeLabels": {"nvidia.com/gpu.product": "NVIDIA-L4"}},
+    {
+        "name": "large-gpu",
+        "nodeLabels": {"nvidia.com/gpu.product": "NVIDIA-A100-SXM4-80GB"},
+    },
+]
+
+
+def _cluster_flavors(values: str) -> dict[str, dict | None]:
+    """What `apply` reads from a cluster the chart was installed into with
+    `values`: the ClusterQueue's flavors and each one's node labels."""
+    import shutil
+    import subprocess
+
+    if shutil.which("helm") is None:
+        pytest.skip("helm not on PATH")
+    cmd = ["helm", "template", "htr", str(CHART), "-n", "htr-batch"]
+    cmd += ["-f", str(CHART / "ci" / "default-values.yaml"), "-f", str(CHART / values)]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    objects = [d for d in yaml.safe_load_all(result.stdout) if d]
+    labels = {
+        o["metadata"]["name"]: (o.get("spec") or {}).get("nodeLabels", {})
+        for o in objects
+        if o["kind"] == "ResourceFlavor"
+    }
+    (queue,) = [o for o in objects if o["kind"] == "ClusterQueue"]
+    return {
+        f["name"]: labels.get(f["name"])
+        for group in queue["spec"]["resourceGroups"]
+        for f in group["flavors"]
+    }
 
 
 def test_the_flavors_a_size_names_are_the_ones_the_chart_describes():
     """B105: a size's flavor is rendered as the flavor's node labels on the
-    pod -- the one way a Job keeps Kueue off the other flavors -- so the
-    names and labels converter.yaml repeats must be the chart's, in order."""
+    pod, so converter.yaml's names and labels must be the chart's. `apply`
+    holds them to the ClusterQueue it reads (`cli.flavor_mismatch`); here
+    the same comparison runs against what the chart renders. Order is not
+    compared: the converter never relies on it."""
+    from htrflow_converter.cli import flavor_mismatch
+
     chart = _flavors(_load(CHART / "values.yaml")["queue"]["flavors"])
     assert _flavors(_default("flavors")) == chart
     assert _flavors(_load(EXAMPLE).get("flavors", [])) == chart
     assert FLAVORS_PAIR in PAIRS.items()
+    live = _cluster_flavors("ci/full-values.yaml")
+    ours = _flavors(FULL_VALUES_FLAVORS)
+    assert flavor_mismatch(ours, live) is None
+    typo = {**ours, "large-gpu": {"nvidia.com/gpu.product": "NVIDIA-A100"}}
+    assert flavor_mismatch(typo, live) == (
+        "flavor large-gpu is nvidia.com/gpu.product=NVIDIA-A100-SXM4-80GB in the"
+        " cluster and nvidia.com/gpu.product=NVIDIA-A100 in converter.yaml"
+    )
+    missing = {"small-gpu": ours["small-gpu"]}
+    assert flavor_mismatch(missing, live) == (
+        "the cluster has flavor large-gpu, which converter.yaml does not list"
+    )
 
 
 WORKFLOWS = [
@@ -347,13 +399,25 @@ _CLIENT_GROUPS = {
 #: A client method's verb -> the RBAC verb the API server checks.
 _RBAC_VERB = {
     "read": "get",
+    "get": "get",
     "list": "list",
     "create": "create",
     "patch": "patch",
     "replace": "update",
     "delete": "delete",
 }
-_CLIENT_METHOD = re.compile(r"(read|list|create|patch|replace|delete)_namespaced_(\w+)")
+_CLIENT_METHOD = re.compile(
+    r"(read|get|list|create|patch|replace|delete)_(namespaced|cluster)_(\w+)"
+)
+#: What the recording client answers a Kueue read of the queue with: the
+#: LocalQueue points at the chart's ClusterQueue, which has its one flavor.
+_QUEUE_OBJECTS = {
+    "localqueues": {"spec": {"clusterQueue": "htr-batch-cq"}},
+    "clusterqueues": {
+        "spec": {"resourceGroups": [{"flavors": [{"name": "default-flavor"}]}]}
+    },
+    "resourceflavors": {"spec": {}},
+}
 
 
 class _Answer:
@@ -377,10 +441,12 @@ class _Recording:
 
         m = _CLIENT_METHOD.fullmatch(method)
         assert m, f"{self.cls}.{method} is not a namespaced call this test knows"
-        verb, noun = m.groups()
+        verb, scope, noun = m.groups()
 
         def call(*args, **kwargs):
-            if noun == "custom_object":
+            if noun == "custom_object" and scope == "cluster":
+                group, _version, resource, *rest = args
+            elif noun == "custom_object":
                 group, _version, _ns, resource, *rest = args
             else:
                 assert self.cls in _CLIENT_GROUPS, f"add {self.cls}'s API group"
@@ -396,6 +462,8 @@ class _Recording:
                 self.log.append((group, resource, "create", name))
             if verb == "read" and name in self.absent:
                 raise ApiException(status=404)
+            if noun == "custom_object" and resource in _QUEUE_OBJECTS:
+                return _QUEUE_OBJECTS[resource]
             if noun == "custom_object":
                 wl = {"metadata": {"name": "job-kyrk-1"}, "spec": {"active": True}}
                 return {"items": [wl]} if verb == "list" else wl
@@ -468,12 +536,38 @@ def _requests_apply_makes(monkeypatch) -> list[tuple[str, str, str, str]]:
         clock[0] += cluster.LEASE_RENEW + 1  # the next request renews
         c.sync_pause({"metadata": {"name": "kyrk", "uid": "u-1"}}, True, 0)
         c.prune({("Job", "kyrk"), ("ConfigMap", "campaign-kyrk")})
+        c.queue_flavors("htr-batch")
     return log
 
 
 def _apply_role_grants() -> list[dict]:
-    """The apply Role's rules as `helm template` renders them."""
-    return _rendered("Role", "htrflow-campaigns")["rules"]
+    """The apply identity's rules as `helm template` renders them: its Role,
+    and the ClusterRole that may read the queue's cluster-scoped objects by
+    name (B105), bound to it."""
+    objects = _helm_objects()
+    role = next(
+        o
+        for o in objects
+        if o["kind"] == "Role" and o["metadata"]["name"] == "htrflow-campaigns"
+    )
+    bound = [
+        o["roleRef"]["name"]
+        for o in objects
+        if o["kind"] == "ClusterRoleBinding"
+        and {
+            "kind": "ServiceAccount",
+            "name": "htrflow-campaigns",
+            "namespace": "htr-batch",
+        }
+        in o["subjects"]
+    ]
+    cluster_rules = [
+        r
+        for o in objects
+        if o["kind"] == "ClusterRole" and o["metadata"]["name"] in bound
+        for r in o["rules"]
+    ]
+    return role["rules"] + cluster_rules
 
 
 def test_the_apply_role_grants_exactly_the_requests_apply_makes(monkeypatch):
@@ -506,7 +600,14 @@ def test_the_apply_role_grants_exactly_the_requests_apply_makes(monkeypatch):
     }
     assert used == granted
     named = [r["resourceNames"] for r in rules if "resourceNames" in r]
-    assert named == [[cluster.LEASE]]
+    # The Lease, and the queue objects by the names the chart gives them:
+    # nothing cluster-scoped beyond this release's own queue.
+    assert named == [
+        [cluster.LEASE],
+        ["htr-batch"],
+        ["htr-batch-cq"],
+        ["default-flavor"],
+    ]
 
 
 def _job_shape_spec() -> dict:

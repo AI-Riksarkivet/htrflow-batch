@@ -1205,26 +1205,27 @@ def test_an_install_without_flavors_renders_the_queue_it_always_did(case: str):
 
 #: Two sorts of GPU, as ci/full-values.yaml describes them: the render
 #: kubeconform checks against Kueue's own CRD schemas in `make helm-template`.
-TWO_FLAVORS = [
-    {
-        "name": "large-gpu",
-        "nodeLabels": {"nvidia.com/gpu.product": "NVIDIA-A100-SXM4-80GB"},
-        "nodeTaints": [{"key": "gpu-pool", "value": "large", "effect": "NoSchedule"}],
-        "quota": {"cpu": 16, "memory": "128Gi", "nvidia.com/gpu": 2},
-    },
-    {
-        "name": "small-gpu",
-        "nodeLabels": {"nvidia.com/gpu.product": "NVIDIA-L4"},
-        "quota": {"cpu": 8, "memory": "32Gi", "nvidia.com/gpu": 4},
-    },
-]
+LARGE = {
+    "name": "large-gpu",
+    "nodeLabels": {"nvidia.com/gpu.product": "NVIDIA-A100-SXM4-80GB"},
+    "nodeTaints": [{"key": "gpu-pool", "value": "large", "effect": "NoSchedule"}],
+    "quota": {"cpu": 16, "memory": "128Gi", "nvidia.com/gpu": 2},
+}
+SMALL = {
+    "name": "small-gpu",
+    "nodeLabels": {"nvidia.com/gpu.product": "NVIDIA-L4"},
+    "quota": {"cpu": 8, "memory": "32Gi", "nvidia.com/gpu": 4},
+}
+#: Cheapest first: Kueue tries flavors in order, and a pod that names none
+#: takes the first with room.
+TWO_FLAVORS = [SMALL, LARGE]
 
 
 def test_two_flavors_render_two_resource_flavors_with_their_node_labels(
     full: list[dict],
 ):
     flavors = {f["metadata"]["name"]: f for f in objects(full, "ResourceFlavor")}
-    assert list(flavors) == ["large-gpu", "small-gpu"]
+    assert list(flavors) == ["small-gpu", "large-gpu"]
     for want in TWO_FLAVORS:
         spec = flavors[want["name"]]["spec"]
         assert spec["nodeLabels"] == want["nodeLabels"]
@@ -1233,7 +1234,7 @@ def test_two_flavors_render_two_resource_flavors_with_their_node_labels(
     # admission, and counts them when it checks the taints (v1beta2
     # ResourceFlavorSpec), so the converter need not know the pool's taint.
     large = flavors["large-gpu"]["spec"]
-    assert large["nodeTaints"] == TWO_FLAVORS[0]["nodeTaints"]
+    assert large["nodeTaints"] == LARGE["nodeTaints"]
     assert large["tolerations"] == [
         {
             "key": "gpu-pool",
@@ -1271,7 +1272,7 @@ def test_flavors_that_exist_already_are_referenced_not_created():
     assert objects(rendered, "ResourceFlavor") == []
     queue = named(rendered, "ClusterQueue", "htr-batch-cq")
     names = [f["name"] for f in queue["spec"]["resourceGroups"][0]["flavors"]]
-    assert names == ["large-gpu", "small-gpu"]
+    assert names == ["small-gpu", "large-gpu"]
 
 
 def test_the_list_replaces_the_single_flavor(full: list[dict]):
@@ -1467,7 +1468,7 @@ BATCH_GUARDS = {
         IIIF_NOWHERE_REFUSAL,
     ),
     "flavor-twice": (
-        yaml.safe_dump({"queue": {"flavors": [TWO_FLAVORS[1], TWO_FLAVORS[1]]}}),
+        yaml.safe_dump({"queue": {"flavors": [SMALL, SMALL]}}),
         DEFAULT_SETS,
         "queue.flavors names small-gpu twice: a ClusterQueue lists a flavor"
         " once, so rename one of them",
@@ -1479,14 +1480,14 @@ BATCH_GUARDS = {
             {
                 "queue": {
                     "flavors": [
-                        {**TWO_FLAVORS[0], "nodeLabels": {"pool": "large"}},
-                        TWO_FLAVORS[1],
+                        SMALL,
+                        {**LARGE, "nodeLabels": {"pool": "large"}},
                     ]
                 }
             }
         ),
         DEFAULT_SETS,
-        "queue.flavors large-gpu and small-gpu name no label key with different"
+        "queue.flavors small-gpu and large-gpu name no label key with different"
         " values: Kueue compares a pod's node selector only on the keys of the"
         " flavor it tries, so a pod meant for one can be admitted on the other"
         " and never scheduled; give every flavor the same label key"
@@ -1498,8 +1499,8 @@ BATCH_GUARDS = {
                 "queue": {
                     "flavors": [
                         {
-                            **TWO_FLAVORS[1],
-                            "quota": {**TWO_FLAVORS[1]["quota"], "memory": "0Gi"},
+                            **SMALL,
+                            "quota": {**SMALL["quota"], "memory": "0Gi"},
                         }
                     ]
                 }
