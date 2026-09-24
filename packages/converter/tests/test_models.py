@@ -458,6 +458,10 @@ def test_the_json_feature_groups_are_accepted():
         ({"model_file": "/abs/model.joblib"}, "plain file name"),
         ({"bin_config_file": ".."}, "plain file name"),
         ({"model_file": ""}, "plain file name"),
+        # `$` matches before a final newline; Kyverno refuses these, and so
+        # must the converter.
+        ({"revision": _SHA + "\n"}, "40-hex"),
+        ({"model": "org/qp-model\n"}, "Hugging Face Hub repo id"),
     ],
     ids=[
         "abs-path",
@@ -469,6 +473,8 @@ def test_the_json_feature_groups_are_accepted():
         "abs-file",
         "dotdot",
         "empty",
+        "rev-newline",
+        "repo-newline",
     ],
 )
 def test_a_quality_model_not_pinned_on_the_hub_is_refused(change, words):

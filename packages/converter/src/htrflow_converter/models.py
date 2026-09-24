@@ -674,8 +674,8 @@ def _flat_text(steps: list) -> str | None:
 #: Its model is a joblib pickle -- loading it runs code -- so it comes from a
 #: Hub repo at a commit, like every other model here, never from a path.
 _QP_STEP = "qualityprediction"
-_HUB_REPO_RE = re.compile(r"^[A-Za-z0-9][\w.-]*/[\w.-]+$")
-_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+_HUB_REPO_RE = re.compile(r"^[A-Za-z0-9][\w.-]*/[\w.-]+\Z")
+_COMMIT_RE = re.compile(r"^[0-9a-f]{40}\Z")
 #: The groups quality_prediction.inference reads off htrflow's tree
 #: (JSON_FEATURE_GROUPS) -- all this image can compute.
 _QP_GROUPS = ("segmentation", "layout", "htr_confidence", "text")
