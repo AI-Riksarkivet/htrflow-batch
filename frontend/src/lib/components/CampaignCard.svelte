@@ -688,9 +688,11 @@
   {/if}
 {/snippet}
 
-<!-- Two fixed slots, source manifest then run log (where it came from, then
-     what happened), so a volume with no source leaves a gap, not a shift. -->
-{#snippet links(v: VolumeView)}
+<!-- Two fixed slots in two tracks: the source manifest beside the id (where
+     it came from), the run log at the far right of the row, after the pill
+     (what happened; the repo owner). A volume with no source leaves a gap,
+     not a shift. -->
+{#snippet manifestLink(v: VolumeView)}
   {@const source = v.sourceUrl}
   <span class="slot"
     >{#if source !== null}<a
@@ -702,6 +704,9 @@
         title="manifest for {v.id}">{@render glyph("manifest")}</a
       >{/if}</span
   >
+{/snippet}
+
+{#snippet logLink(v: VolumeView)}
   <span class="slot"
     ><a
       class="vicon"
@@ -749,7 +754,7 @@
   {/if}
 {/snippet}
 
-<!-- A campaign total: the same five tracks a volume row has, with the icons
+<!-- A campaign total: the same six tracks a volume row has, with the icons
      and the pill left empty, so the fraction the card sums sits in the same
      column as the fraction of every volume under it -- and so does its
      bar. -->
@@ -783,6 +788,7 @@
     >
     <span class="c-fraction">{figures(cell)}</span>
     <span class="c-status"></span>
+    <span class="c-log"></span>
     {@render lostLine(cell.failed, errors)}
   </div>
 {/snippet}
@@ -802,9 +808,9 @@
   {/if}
 {/snippet}
 
-<!-- A volume, as the same four tracks the totals above it use: the id (and,
-     when the row has room, what went wrong and what it is doing), the bar,
-     the figures, and the actions. With the tracks shared, every number on
+<!-- A volume, as the same six tracks the totals above it use: the id (and,
+     when the row has room, what it is doing), its manifest, the bar, the
+     figures, the state, and the run log. With the tracks shared, every number on
      the card sits in one column and every pill and icon in another (the
      product owner, 2026-09-16: "the layout of the columns is a bit bad").
      `cellRole` is the ARIA table's cell role. -->
@@ -817,7 +823,7 @@
     <span class="vid-line">{@render volumeId(v)}</span>
     {#if story !== ""}<span class="vprogress">{story}</span>{/if}
   </span>
-  <span class="c-links" role={cellRole}>{@render links(v)}</span>
+  <span class="c-links" role={cellRole}>{@render manifestLink(v)}</span>
   <span class="c-bar" role={cellRole}
     >{#if hasBar(v)}{@render bar(
         `Pages done in ${v.id}`,
@@ -834,8 +840,7 @@
       <span class="vfigures" class:bump={moved.has(v.id)}>{figures(cell)}</span>
     {/key}
   </span>
-  <!-- The pill is the fixed-width element, so it is the one that can anchor
-       the right edge of every row (2026-09-16). -->
+  <!-- The pill is fixed-width, so the icon after it lines up on every row. -->
   <span class="c-status" role={cellRole}>
     <span
       class="status {v.state}"
@@ -851,6 +856,7 @@
       >
     </span>
   </span>
+  <span class="c-log" role={cellRole}>{@render logLink(v)}</span>
   {@render lostLine(cell.failed, 0)}
 {/snippet}
 
@@ -992,10 +998,11 @@
         >
           <div class="row head sr-only" role="row">
             <span role="columnheader">volume</span>
-            <span role="columnheader">links</span>
+            <span role="columnheader">manifest</span>
             <span role="columnheader">progress</span>
             <span role="columnheader">pages</span>
             <span role="columnheader">status</span>
+            <span role="columnheader">log</span>
           </div>
           {#each volumes as v (v.id)}
             <div class="row volume" role="row">
@@ -1086,7 +1093,8 @@
        big", the product owner, 2026-09-16); the pill's width is its own
        word slot plus its padding, written down so an empty pill cell on a
        totals row holds the column open. */
-    --icons: 3.2rem;
+    /* One icon's slot: the manifest's track and the run log's. */
+    --icon: 1.6rem;
     --bar: 6rem;
     /* "637 / 638" in tabular figures, with room to spare. */
     --fraction: 5rem;
@@ -1459,10 +1467,11 @@
   }
 
   /* ONE column system for everything the card counts. Every row -- the
-     campaign's totals and every row of the volume list -- declares the same four tracks from the same custom properties, so
-     they coincide exactly without a subgrid and without one table's layout
-     leaking into another's. Track 1 flexes (it holds a label or a volume
-     id); the other three are fixed, which is what makes a column of numbers
+     campaign's totals and every row of the volume list -- declares the
+     same six tracks from the same custom properties, so they coincide
+     exactly without a subgrid and without one table's layout leaking into
+     another's. Track 1 flexes (it holds a label or a volume id); the other
+     five are fixed, which is what makes a column of numbers
      a column across ten cards rather than per card. */
   .card-body {
     margin-top: 0.4rem;
@@ -1473,16 +1482,18 @@
 
   .row {
     display: grid;
-    /* Five tracks, and the LABEL is the one that stretches: the words -- a
+    /* Six tracks, and the LABEL is the one that stretches: the words -- a
        campaign\'s "volumes", a volume\'s id, and what failed in it -- take
-       the left, where there is room for them, and the three fixed things
-       pack against the right in the order a reader wants them: the bar, the
-       fraction it draws, and the state it ended in (the product owner,
-       2026-09-16: "the X / Y should be in between of these; it\'s fine if
-       the \'X failed\' is placed after the volume name"). */
+       the left, where there is room for them, and the fixed things pack
+       against the right in the order a reader wants them: where the volume
+       came from (its manifest), the bar, the fraction it draws, the state
+       it ended in (the product owner, 2026-09-16: "the X / Y should be in
+       between of these; it\'s fine if the \'X failed\' is placed after the
+       volume name"), and last, at the far right, its run log (the repo
+       owner). */
     grid-template-columns:
-      minmax(6rem, 1fr) var(--icons) var(--bar) var(--fraction)
-      var(--pill);
+      minmax(6rem, 1fr) var(--icon) var(--bar) var(--fraction)
+      var(--pill) var(--icon);
     align-items: center;
     column-gap: 0.75rem;
     padding: 0.12rem 0;
@@ -1563,14 +1574,16 @@
     white-space: nowrap;
   }
 
-  /* The icons sit at the left of their own track, the pill at the right of
-     its. Nothing here is centred -- both edges are anchored. */
+  /* The manifest sits at the left of its track; the pill and the run log
+     at the right of theirs, the log's being the row's right edge. Nothing
+     here is centred -- both edges are anchored. */
   .c-links {
     display: flex;
     align-items: center;
   }
 
-  .c-status {
+  .c-status,
+  .c-log {
     display: flex;
     align-items: center;
     justify-content: flex-end;
@@ -1869,12 +1882,12 @@
      chips rather than squeezing the campaign's name. */
   @media (max-width: 520px) {
     /* Still one column system, folded to two lines. Line 1 is the id and
-       what failed in it, across the width; line 2 is the icons, the short
-       bar, the fraction and the pill. On the live phone the figures clipped
+       what failed in it, across the width; line 2 is the manifest, the
+       short bar, the fraction, the pill and the run log. On the live phone the figures clipped
        to "5 / 6 · 1 f" and the bar ran on under the icons (the product
        owner, 2026-09-16), so the words wrap here rather than clip.
 
-       Line 2's four fixed tracks plus their gaps are wider than a 390px
+       Line 2's fixed tracks plus their gaps are wider than a 390px
        card, and a squeezed grid takes the width back from whichever item
        can give it: on a volume row that was the bar, the only cell whose
        content has no width of its own, so it collapsed to nothing while
@@ -1884,13 +1897,13 @@
        line 2 has the whole card to lay out in. */
     .row {
       grid-template-columns:
-        0 var(--icons) minmax(2.5rem, var(--bar)) var(--fraction)
-        var(--pill);
+        0 var(--icon) minmax(2.5rem, var(--bar)) var(--fraction)
+        var(--pill) var(--icon);
       grid-template-areas:
-        "label label label     label    label"
-        ".     links bar       fraction status"
-        ".     .     lost      lost     lost"
-        "note  note  note      note     note";
+        "label label label     label    label  label"
+        ".     links bar       fraction status log"
+        ".     .     lost      lost     lost   ."
+        "note  note  note      note     note   note";
       column-gap: 0.5rem;
       row-gap: 0.2rem;
       padding: 0.35rem 0;
@@ -1917,6 +1930,10 @@
 
     .c-status {
       grid-area: status;
+    }
+
+    .c-log {
+      grid-area: log;
     }
 
     .c-fraction {

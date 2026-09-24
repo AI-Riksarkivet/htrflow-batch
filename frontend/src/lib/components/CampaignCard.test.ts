@@ -2397,7 +2397,7 @@ describe("the volume status column", () => {
       [...container.querySelectorAll('[role="columnheader"]')].map(
         (c) => c.textContent,
       ),
-    ).toEqual(["volume", "links", "progress", "pages", "status"]);
+    ).toEqual(["volume", "manifest", "progress", "pages", "status", "log"]);
   });
 
   test("the manifest keeps its slot even when the volume has none", async () => {
@@ -2522,12 +2522,13 @@ describe("a volume line is the same shape on every row and every card", () => {
     ["a volume row", ".row.volume"],
     ["a totals row", ".row.totals"],
   ] as const)(
-    "%s is the same five tracks in the same order, what it lost under them",
+    "%s is the same six tracks in the same order, what it lost under them",
     async (where, selector) => {
-      // One order everywhere: the id, its icons, the bar, the fraction it
-      // draws and the pill at the edge, so every number on the card sits in
-      // one column and every pill in another. A totals row keeps the icon
-      // and pill cells, empty, to hold those columns open.
+      // One order everywhere: the id, its manifest, the bar, the fraction it
+      // draws, the pill, and the run log last, at the far right (the repo
+      // owner), so every number on the card sits in one column and every
+      // pill and icon in another. A totals row keeps the icon and pill
+      // cells, empty, to hold those columns open.
       const lost = vol("vol0");
       lost.progress.failed = 1;
       const container = await card([lost]);
@@ -2538,27 +2539,38 @@ describe("a volume line is the same shape on every row and every card", () => {
         "c-bar",
         "c-fraction",
         "c-status",
+        "c-log",
         "c-lost",
       ]);
       const pill = row.querySelector(".c-status .status");
       if (where === "a totals row") {
         expect(pill).toBeNull();
         expect(row.querySelector(".c-links")?.textContent?.trim()).toBe("");
-      } else expect(pill).not.toBeNull();
+        expect(row.querySelector(".c-log")?.textContent?.trim()).toBe("");
+      } else {
+        expect(pill).not.toBeNull();
+        expect(
+          row.querySelector(".c-links .vicon")?.getAttribute("aria-label"),
+        ).toBe("manifest for vol0");
+        expect(
+          row.querySelector(".c-log .vicon")?.getAttribute("aria-label"),
+        ).toBe("run log for vol0");
+      }
     },
   );
 
   test("a long id and a short one put their icons in the same place", async () => {
     // The icons are a track of their own, not a thing that follows the text:
     // two rows whose ids differ in length line up all the same. jsdom lays
-    // nothing out, so what is asserted is where they live -- in the links
-    // cell, the grid's fixed `--icons` track, and never inside the id's.
+    // nothing out, so what is asserted is where they live -- in the icon
+    // cells, fixed `--icon` tracks, and never inside the id's.
     const container = await card([vol("a"), vol("R0001203-part-4")]);
     await expand();
     const rows = [...container.querySelectorAll(".row.volume")];
     expect(rows).toHaveLength(2);
     for (const row of rows) {
-      expect(row.querySelectorAll(".c-links .vicon")).toHaveLength(2);
+      expect(row.querySelectorAll(".c-links .vicon")).toHaveLength(1);
+      expect(row.querySelectorAll(".c-log .vicon")).toHaveLength(1);
       expect(row.querySelector(".c-label .vicon")).toBeNull();
     }
   });
@@ -2643,13 +2655,14 @@ describe("the volume line at a phone's width, and what it says it cannot do", ()
   // The card body is one grid, so a phone gets the same tracks folded to
   // two columns rather than a table scrolling sideways on a 390px screen.
   test("a phone folds the same tracks to two lines", () => {
-    // The id and its figures on line 1, then the icons, the short bar, the
-    // fraction and the pill on line 2.
+    // The id and its figures on line 1, then the manifest, the short bar,
+    // the fraction, the pill and the run log on line 2.
     const [line1, line2] = areas(
       cssOf(".row", PHONE).get("grid-template-areas"),
     );
-    expect(line1).toEqual(["label", "label", "label", "label", "label"]);
-    expect(line2).toEqual([".", "links", "bar", "fraction", "status"]);
+    expect(line1).toEqual(Array(6).fill("label"));
+    expect(line2).toEqual([".", "links", "bar", "fraction", "status", "log"]);
+    expect(cssOf(".c-log", PHONE).get("grid-area")).toBe("log");
     // The words must not clip there: there is a whole line for them.
     const id = cssOf(".vid-line", PHONE);
     expect(id.get("white-space")).toBe("normal");
@@ -3132,7 +3145,7 @@ describe("the bar is the track that stretches, and every volume has one", () => 
     // right in the order a reader wants them: the bar, the fraction it
     // draws, and the state it ended in.
     expect(cssOf(".row").get("grid-template-columns")).toBe(
-      "minmax(6rem, 1fr) var(--icons) var(--bar) var(--fraction) var(--pill)",
+      "minmax(6rem, 1fr) var(--icon) var(--bar) var(--fraction) var(--pill) var(--icon)",
     );
     expect(cssOf(".campaign").get("--bar")).toBe("6rem");
   });
@@ -3362,8 +3375,9 @@ describe("the bar survives a phone's width", () => {
     const cell = cssOf(".c-bar", PHONE);
     expect(cell.get("grid-area")).toBe("bar");
     expect(cell.get("min-width")).toBe("2.5rem");
-    // ...and the lost line still follows it, under the bar.
-    expect(grid[2]?.slice(track)).toEqual(["lost", "lost", "lost"]);
+    // ...and the lost line still follows it, under the bar to the pill,
+    // with the run log's column left clear.
+    expect(grid[2]?.slice(track)).toEqual(["lost", "lost", "lost", "."]);
   });
 
   test("a volume row and a totals row ask for the same bar", async () => {
