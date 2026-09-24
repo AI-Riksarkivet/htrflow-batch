@@ -36,6 +36,9 @@ PAIRS = {("converter", f): f"chart `{p}`" for f, p in AGREEMENTS}
 PAIRS |= {("chart", p): f"converter `{f}`" for f, p in AGREEMENTS}
 PAIRS |= {("converter", f): f"chart `{p}[].{k}`" for f, p, k in LIST_AGREEMENTS}
 PAIRS |= {("chart", p): f"converter `{f}`" for f, p, k in LIST_AGREEMENTS}
+#: A size's flavor is rendered as the chart flavor's node labels (B105).
+FLAVORS_PAIR = (("converter", "flavors"), "chart `queue.flavors[].name`, `.nodeLabels`")
+PAIRS |= dict([FLAVORS_PAIR, (("chart", "queue.flavors"), "converter `flavors`")])
 
 #: The results base: one value, four names, three consumers.
 RESULTS_BASE = {
