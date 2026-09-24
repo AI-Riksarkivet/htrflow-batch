@@ -1772,7 +1772,7 @@ def test_an_unpause_that_did_not_take_is_a_change_still_to_make(
 def _edit_steps(repo: Path) -> None:
     path = repo / "pipelines" / "demo-v1.yaml"
     doc = yaml.safe_load(path.read_text())
-    doc["steps"][1]["settings"]["model"] = "SomethingElse"
+    doc["steps"][-1]["settings"]["model"] = "SomethingElse"
     path.write_text(yaml.safe_dump(doc, sort_keys=False))
 
 

@@ -4,12 +4,20 @@
 # sections of ../README.md and htrflow-batch's
 # docs/reference/campaign-yaml.md#immutability).
 image: docker.io/riksarkivet/htrflow-batch@sha256:637fbe4a2d66001b8e37966fc1e9f443b2a80809ce6b76c0dd72e9a31e3883f1
+# Regions first, then the lines within them: ALTO and PAGE XML hold the text
+# of lines inside a region only, so a reader with one Segmentation step
+# before it would publish every page empty (validate refuses that shape).
 steps:
   - step: Segmentation
     settings:
       model: yolo
       model_settings:
         model: Riksarkivet/yolov9-regions-1
+  - step: Segmentation
+    settings:
+      model: yolo
+      model_settings:
+        model: Riksarkivet/yolov9-lines-within-regions-1
   - step: TextRecognition
     settings:
       model: TrOCR
