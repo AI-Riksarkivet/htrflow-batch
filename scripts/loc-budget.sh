@@ -694,7 +694,13 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 4064
 # dulwich (C-10), validate --rendered (S-9), and record.py, which lets an
 # already-rendered campaign keep its old rendering under the new rules. Most
 # of it is the sentence each refusal prints and why it exists.
-check converter "$(count packages/converter/src -name '*.py')" 4215
+# 4215 -> 4302 (audit 0923, source_template): the template has no built-in
+# host any more, so a bare reference code with none set is refused -- one
+# sentence per campaign however many codes it has, none when converter.yaml
+# itself did not load -- and an unchanged campaign rendered under the old
+# default keeps the manifest URLs its record holds, with a warning. Most of
+# it is the two sentences and the recorded-manifest lookup.
+check converter "$(count packages/converter/src -name '*.py')" 4302
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

@@ -1,0 +1,8 @@
+pipeline: demo-v1
+volumes:
+  - R1
+  - id: M1
+    manifest: https://iiif.example.org/m1/manifest
+  - R2
+  - R3
+  - R4
