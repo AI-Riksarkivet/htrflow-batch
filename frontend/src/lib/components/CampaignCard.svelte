@@ -1565,10 +1565,13 @@
     color: var(--muted-foreground);
   }
 
-  /* The one column of numbers on the card, between the bar and the pill. */
+  /* The one column of numbers on the card, between the bar and the pill.
+     Left-aligned, so the count starts right after the bar it reads: right-
+     aligned in a fixed track, "1 / 1" sat far from its bar (the repo owner).
+     The track stays fixed, so the columns still line up. */
   .c-fraction {
     min-width: 0;
-    text-align: right;
+    text-align: left;
     font-variant-numeric: tabular-nums;
     color: var(--foreground);
     white-space: nowrap;

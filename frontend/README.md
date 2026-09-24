@@ -184,14 +184,14 @@ order, so ten cards scan like ten rows of one table. Folded, a card is zone
    drawn). Every row uses the same six tracks, declared once as custom
    properties on the card:
 
-   | track                   | holds                                                                          |
-   | ----------------------- | ------------------------------------------------------------------------------ |
-   | 1 (`minmax(6rem, 1fr)`) | the row's words or the volume id — the one flexible track                      |
-   | 2 (`--icon`)            | the source-manifest icon; empty on a totals row                                |
-   | 3 (`--bar`)             | the 3px progress bar                                                           |
-   | 4 (`--fraction`)        | `X / Y`, right-aligned, tabular figures (an em dash when the total is unknown) |
-   | 5 (`--pill`)            | the state pill, fixed width; empty on a totals row                             |
-   | 6 (`--icon`)            | the run-log icon, the row's right edge; empty on a totals row                  |
+   | track                   | holds                                                                            |
+   | ----------------------- | -------------------------------------------------------------------------------- |
+   | 1 (`minmax(6rem, 1fr)`) | the row's words or the volume id — the one flexible track                        |
+   | 2 (`--icon`)            | the source-manifest icon; empty on a totals row                                  |
+   | 3 (`--bar`)             | the 3px progress bar                                                             |
+   | 4 (`--fraction`)        | `X / Y`, left-aligned against the bar, tabular figures (an em dash when unknown) |
+   | 5 (`--pill`)            | the state pill, fixed width; empty on a totals row                               |
+   | 6 (`--icon`)            | the run-log icon, the row's right edge; empty on a totals row                    |
    - A row that lost something carries a second line under its bar
      (`1 failed`, `3 failed · 2 errors`); a clean row is one line.
      `errors` counts ERROR-and-worse only.
@@ -235,8 +235,9 @@ missing link leaves a gap instead of shifting its neighbours. The id opens
 `progress.viewerPublished`, `sourceUrl` before that, plain text with a title
 when there is neither. Fixed slots for the source-manifest icon beside it
 (empty for `images:` volumes) and the run-log icon last on the row, after
-the pill, labelled "manifest for `<id>`" / "run log for `<id>`": inline SVG, `aria-hidden`, `currentColor`,
-24px hit area — inline because the CSP loads no asset.
+the pill, labelled "manifest for `<id>`" / "run log for `<id>`": inline SVG,
+`aria-hidden`, `currentColor`, 24px hit area — inline because the CSP loads
+no asset.
 
 **Warm-up chip.** "warm-up pending/running/failed" or "no warm-up"
 (`missing`). `failed` pushes the accent to the failed colour; `missing` does

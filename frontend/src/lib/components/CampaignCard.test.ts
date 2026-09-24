@@ -3150,6 +3150,23 @@ describe("the bar is the track that stretches, and every volume has one", () => 
     expect(cssOf(".campaign").get("--bar")).toBe("6rem");
   });
 
+  // Right-aligned in a fixed track, a short count such as "1 / 1" sat a
+  // long way from the bar it reads (the repo owner). Left-aligned it starts
+  // right after the bar on every row, and the track keeps its width, so a
+  // long count still fits and the columns still line up.
+  test("the fraction starts where the bar ends, at every width", () => {
+    for (const media of [null, PHONE]) {
+      const fraction = cssOf(".c-fraction", media);
+      expect(fraction.get("text-align"), String(media)).toBe("left");
+      expect(fraction.get("font-variant-numeric")).toBe("tabular-nums");
+    }
+    // No rule anywhere, in a media query or on a totals row, aligns it
+    // otherwise.
+    const aligned = declsOn("c-fraction").filter(([p]) => p === "text-align");
+    expect(aligned.map(([, v]) => v)).toEqual(["left"]);
+    expect(cssOf(".campaign").get("--fraction")).toBe("5rem");
+  });
+
   test("a long volume id clips rather than widening its track", async () => {
     const long = {
       ...volumeDone,
