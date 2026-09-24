@@ -18,8 +18,9 @@ Source: [`packages/converter/src/htrflow_converter/cli.py`](https://github.com/A
 | `apply <repo> [flags]` | Renders into a temporary directory (or `--out`), then applies to the cluster. See below. |
 
 `make campaigns-apply DIR=<repo>` runs
-`uv run htrflow-campaigns apply <repo> --out <repo>/rendered`. `PRUNE=1`
-adds `--prune`, and `ALLOW_EMPTY=1` adds `--allow-empty`.
+`uv run htrflow-campaigns apply <repo> --out <repo>/rendered --namespace
+<namespace>`, the namespace being `HTR_NAMESPACE`. `PRUNE=1` adds
+`--prune`, and `ALLOW_EMPTY=1` adds `--allow-empty`.
 
 | `apply` flag | Meaning |
 |---|---|

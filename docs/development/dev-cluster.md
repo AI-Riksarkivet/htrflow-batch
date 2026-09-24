@@ -197,8 +197,8 @@ make e2e DIR=<campaigns-repo>                       # validate, apply, wait for 
 ```
 
 `campaigns-apply` runs `htrflow-campaigns apply <campaigns-repo> --out
-<campaigns-repo>/rendered` ([CLI](../reference/cli.md)); it is safe to
-re-run. Repeat after every commit to that branch — nothing watches it for
+<campaigns-repo>/rendered --namespace <namespace>`
+([CLI](../reference/cli.md)); it is safe to re-run. Repeat after every commit to that branch — nothing watches it for
 you. `PRUNE=1` cancels everything the checkout does not contain, so only run
 it against the whole repo. `make e2e` waits for the warm-up Jobs, then polls every campaign Job
 until it is Complete or Failed (`CAMPAIGN_TIMEOUT` seconds, default 3600).
