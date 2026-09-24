@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { MAX_POLL_MS, startPolling } from "./poll.js";
+import { gate, MAX_POLL_MS, startPolling } from "./poll.js";
 
 const PERIOD = 1000;
 
@@ -199,5 +199,58 @@ describe("startPolling", () => {
     setHidden(false);
     await vi.advanceTimersByTimeAsync(PERIOD);
     expect(run).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Every folded card on screen reads its own detail now, for the page count
+// in its header, and a page of fifty campaigns opened at once asked the API
+// for fifty details in the same instant. The cards share one gate: a few in
+// flight, the rest waiting their turn, and a card that goes away gives up
+// its place in the queue.
+describe("gate", () => {
+  test("no more than `max` at once, the rest in the order they asked", async () => {
+    const through = gate(2);
+    const held = [deferred(), deferred(), deferred()];
+    const started: number[] = [];
+    const runs = held.map((d, i) =>
+      through(async () => {
+        started.push(i);
+        return d.promise;
+      }),
+    );
+    await Promise.resolve();
+    expect(started).toEqual([0, 1]);
+    held[1]?.done(true);
+    await runs[1];
+    await Promise.resolve();
+    expect(started).toEqual([0, 1, 2]);
+    held[0]?.done(true);
+    held[2]?.done(true);
+    await Promise.all(runs);
+  });
+
+  test("a task that fails still gives its place up", async () => {
+    const through = gate(1);
+    await expect(
+      through(async () => {
+        throw new Error("x");
+      }),
+    ).rejects.toThrow("x");
+    await expect(through(async () => true)).resolves.toBe(true);
+  });
+
+  test("aborted while waiting, a task never runs and says it was aborted", async () => {
+    const through = gate(1);
+    const first = deferred();
+    const running = through(async () => first.promise);
+    const controller = new AbortController();
+    const task = vi.fn(async () => true);
+    const waiting = through(task, controller.signal);
+    controller.abort();
+    await expect(waiting).rejects.toThrow(/abort/i);
+    first.done(true);
+    await running;
+    await Promise.resolve();
+    expect(task).not.toHaveBeenCalled();
   });
 });
