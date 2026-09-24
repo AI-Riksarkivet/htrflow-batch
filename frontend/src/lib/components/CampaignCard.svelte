@@ -69,16 +69,12 @@
   let yamlOpen = $state(false); // collapsed by default
   let volumes = $state<VolumeView[]>([]);
   let failures = $state<VolumeView[]>([]);
-  let latest = $state<VolumeView | null>(null);
-  // Failures the reader cannot already see. With the table open, a failed
-  // row on the loaded page is right there with its reason, so the callout
-  // must not say it again (the product owner, 2026-09-08: "we don't need to
-  // list a failure twice"). Folded, the table is out of sight and every
-  // failure belongs in the callout.
+  // Failures the reader cannot already see: a failed row on the loaded page
+  // is right there with its reason, so the callout must not say it again
+  // (the product owner, 2026-09-08: "we don't need to list a failure
+  // twice").
   let unseenFailures = $derived(
-    collapsed
-      ? failures
-      : failures.filter((f) => !volumes.some((v) => v.id === f.id)),
+    failures.filter((f) => !volumes.some((v) => v.id === f.id)),
   );
   // The pages of the volumes this response covered, summed by the API. Not
   // in JobSummary: the list endpoint reads no volumes at all.
@@ -101,11 +97,6 @@
   // each volume failed, and the last page error -- in the order a reader
   // needs them.
   const lastErrorText = $derived(describeLastError(notice.lastError));
-  // The volumes a reader can actually see right now: the folded card's one
-  // row, or the loaded page of them.
-  const shownVolumes = $derived(
-    collapsed ? (latest === null ? [] : [latest]) : volumes,
-  );
   // A page error is one volume's -- it is that volume's own
   // `progress.lastError` -- so it is said under that volume's row rather
   // than in a line about the campaign (the product owner, 2026-09-16: "seems
@@ -114,7 +105,7 @@
   // sentence in the campaign's line, where it is at least not lost.
   const lastErrorVolume = $derived(
     notice.lastError !== null &&
-      shownVolumes.some((v) => v.id === notice.lastError?.volume)
+      volumes.some((v) => v.id === notice.lastError?.volume)
       ? notice.lastError.volume
       : null,
   );
@@ -273,7 +264,7 @@
   const slug = $derived(
     `${job.namespace}-${job.name}`.replace(/[^a-zA-Z0-9_-]/g, "-"),
   );
-  const tableId = $derived(`volumes-${slug}`);
+  const openId = $derived(`campaign-${slug}`);
   const problemsId = $derived(`problems-${slug}`);
   const yamlId = $derived(`pipeline-${slug}`);
 
@@ -311,10 +302,7 @@
   // everything twice (the product owner, 2026-09-16). Only dropped once
   // there IS a row to carry them -- a detail that has not loaded yet would
   // otherwise leave the card with no numbers at all.
-  const showTotals = $derived(
-    job.counts.total !== 1 ||
-      (collapsed ? latest === null : volumes.length === 0),
-  );
+  const showTotals = $derived(job.counts.total !== 1 || volumes.length === 0);
 
   // The two "partially" words shared one amber, on the chip and on the
   // accent, so a campaign that lost a few pages and one that lost whole
@@ -437,9 +425,6 @@
       // Not paged by the API (up to 50 newest failed-with-a-reason rows,
       // independent of offset/limit) — refreshed on every call.
       failures = detail.failures;
-      // Also computed over every volume, so it is right for a campaign whose
-      // in-flight index is far past the loaded page.
-      latest = detail.latest;
       pages = { done: detail.pagesDone, total: detail.pagesTotal };
       coverage = detail.pagesCoverage;
       notice = {
@@ -483,29 +468,41 @@
       job.phase === "Unknown",
   );
 
+  // The campaign state the last read that landed was of: a settled card is
+  // not read again for the same state, however often it is folded and
+  // opened. Not reactive: it is the effect's memory, not its input.
+  let landedFor = "";
+
   $effect(() => {
     // Tracked on purpose: a change of phase, or the Job being reaped, is
     // news -- a campaign that finishes while shown is read in its final
     // state, a reaped one from the record that replaced its Job, and one
     // re-run under the same name starts polling again.
-    void [job.phase, job.jobGone];
-    const once = settled;
+    const state = `${job.phase}/${job.jobGone}`;
+    // Folded, the card is its header, and the list row carries all of that
+    // but one thing: whether a Succeeded campaign lost pages on the way
+    // ("partially succeeded"). Nothing else is read for a folded card.
+    if (collapsed && job.phase !== "Succeeded") return;
+    const once = settled || collapsed;
     // Read only for a settled card, so a running one is not restarted by it.
-    if (once && !wanted) return;
+    if (once && (!wanted || landedFor === state)) return;
     // untrack: load() reads `volumes` to size its refresh and then writes it,
     // and an effect that reads its own output re-runs forever. The list
     // keys each card by namespace/name, so a card never changes campaign
     // under its own feet. $lib/poll is what keeps a page of cards from each
     // queueing up requests against a slow API, and from polling at all
     // while nobody is looking.
-    return untrack(() => {
-      let landed = false;
-      return startPolling(
-        async (signal) => (landed = await load(true, signal)),
+    return untrack(() =>
+      startPolling(
+        async (signal) => {
+          const landed = await load(true, signal);
+          if (landed && !signal.aborted) landedFor = state;
+          return landed;
+        },
         RELOAD_MS,
-        { until: () => once && landed },
-      );
-    });
+        { until: () => once && landedFor === state },
+      ),
+    );
   });
 
   /**
@@ -692,8 +689,7 @@
 {/snippet}
 
 <!-- Two fixed slots, source manifest then run log (where it came from, then
-     what happened), so a volume with no source leaves a gap, not a shift. One snippet, so the folded strip and
-     the table row can never drift apart. -->
+     what happened), so a volume with no source leaves a gap, not a shift. -->
 {#snippet links(v: VolumeView)}
   {@const source = v.sourceUrl}
   <span class="slot"
@@ -808,30 +804,18 @@
 
 <!-- A volume, as the same four tracks the totals above it use: the id (and,
      when the row has room, what went wrong and what it is doing), the bar,
-     the figures, and the actions. One snippet for the folded card's single
-     row and for every row of the open list, so the two cannot drift -- and
-     with the tracks shared, every number on the card sits in one column and
-     every pill and icon in another (the product owner, 2026-09-16: "the
-     layout of the columns is a bit bad").
-
-     `compact` is the folded row: it is one line, so a failed volume's
-     sentence takes the figures' place there rather than sitting under the
-     id, and what the volume is doing stays inline. `cellRole` is set only
-     inside the open list, which is an ARIA table. -->
-{#snippet volumeRow(
-  v: VolumeView,
-  compact: boolean,
-  cellRole: string | undefined,
-)}
+     the figures, and the actions. With the tracks shared, every number on
+     the card sits in one column and every pill and icon in another (the
+     product owner, 2026-09-16: "the layout of the columns is a bit bad").
+     `cellRole` is the ARIA table's cell role. -->
+{#snippet volumeRow(v: VolumeView, cellRole: string | undefined)}
   {@const lost = lostPages(v)}
   {@const cell = volumePages(v)}
   {@const story =
     v.progress === null ? "" : describeProgress(v.progress, v.state)}
   <span class="c-label" role={cellRole}>
     <span class="vid-line">{@render volumeId(v)}</span>
-    {#if compact && v.state === "failed"}
-      <span class="vreason">{reasonOf(v)}</span>
-    {:else if story !== ""}<span class="vprogress">{story}</span>{/if}
+    {#if story !== ""}<span class="vprogress">{story}</span>{/if}
   </span>
   <span class="c-links" role={cellRole}>{@render links(v)}</span>
   <span class="c-bar" role={cellRole}
@@ -872,9 +856,8 @@
 
 <section class="campaign" data-health={health} use:whenSeen>
   <div class="camp">
-    <!-- aria-controls only while the table exists: it must be an IDREF that
-         resolves, and a folded card renders no table (the pre-Task-7 card
-         dropped the attribute the same way when it had none to point at).
+    <!-- aria-controls only while the card is open: it must be an IDREF that
+         resolves, and a folded card renders nothing below this line.
          aria-expanded alone carries the open/closed state, and aria-controls
          is optional in the disclosure pattern; rendering an empty element
          just to keep the id would be worse — the reference would resolve to
@@ -883,7 +866,7 @@
       type="button"
       class="camp-toggle"
       aria-expanded={!collapsed}
-      aria-controls={collapsed ? undefined : tableId}
+      aria-controls={collapsed ? undefined : openId}
       onclick={toggle}
     >
       <span class="disclosure" aria-hidden="true">{collapsed ? "▸" : "▾"}</span>
@@ -946,99 +929,95 @@
     {/if}
   </div>
 
-  <!-- Zones 2 and 3, and the volumes: ONE column system. Every row below --
-       the campaign's two totals, the folded card's volume, and every row of
-       the open list -- is the same four tracks, so a reader's eye runs down
-       one column of numbers and one column of pills instead of three sets
-       of columns that line up with nothing (the product owner, 2026-09-16).
-       A campaign of one volume drops the totals: that volume's own row is
-       already the total, said twice over. -->
-  <div class="card-body">
-    {#if showTotals}
-      {@render totalsRow("volumes", volumeCell, 0)}
-      {@render totalsRow("pages", pageCell, notice.errors)}
-    {/if}
+  <!-- Folded, the card is the line above and nothing else: a list of folded
+       cards is a list of campaigns to scan (the repo owner). Everything
+       below renders only while the card is open. -->
+  {#if !collapsed}
+    <div id={openId}>
+      <!-- Zones 2 and 3, and the volumes: ONE column system. Every row below --
+       the campaign's two totals and every row of the list -- is the same
+       tracks, so a reader's eye runs down one column of numbers and one
+       column of pills instead of three sets of columns that line up with
+       nothing (the product owner, 2026-09-16). A campaign of one volume
+       drops the totals: that volume's own row is already the total, said
+       twice over. -->
+      <div class="card-body">
+        {#if showTotals}
+          {@render totalsRow("volumes", volumeCell, 0)}
+          {@render totalsRow("pages", pageCell, notice.errors)}
+        {/if}
 
-    <!-- Only when something is wrong, and never the numbers above. The
+        <!-- Only when something is wrong, and never the numbers above. The
          sentences are real text, not a hidden copy of themselves, and they
          wrap: nothing here is cut to one line, so nothing needs a title for
          the mouse (3080). The page error's own "log" goes with it, and only
          while it is one of the sentences shown. -->
-    {#if problems.length > 0}
-      <p class="problems">
-        <span class="problems-text" id={problemsId}
-          >{#each shownProblems as part, i (i)}{i > 0
-              ? " · "
-              : ""}{#if part.id !== null}{#if part.href === null}<span
-                  class="pid">{part.id}</span
-                >{:else}<a class="pid" href={part.href}>{part.id}</a
-                >{/if}{": "}{/if}{part.text}{/each}</span
-        >
-        {#if noticeHref !== null && shownProblems.some((p) => p.id === null)}
-          <a class="problems-log" href={noticeHref}>log</a>
+        {#if problems.length > 0}
+          <p class="problems">
+            <span class="problems-text" id={problemsId}
+              >{#each shownProblems as part, i (i)}{i > 0
+                  ? " · "
+                  : ""}{#if part.id !== null}{#if part.href === null}<span
+                      class="pid">{part.id}</span
+                    >{:else}<a class="pid" href={part.href}>{part.id}</a
+                    >{/if}{": "}{/if}{part.text}{/each}</span
+            >
+            {#if noticeHref !== null && shownProblems.some((p) => p.id === null)}
+              <a class="problems-log" href={noticeHref}>log</a>
+            {/if}
+            {#if heldBack > 0}
+              <button
+                type="button"
+                class="problems-more"
+                aria-expanded={allProblems}
+                aria-controls={problemsId}
+                onclick={() => (allProblems = !allProblems)}
+                >{allProblems ? "fewer" : `${heldBack} more`}</button
+              >
+            {/if}
+          </p>
         {/if}
-        {#if heldBack > 0}
-          <button
-            type="button"
-            class="problems-more"
-            aria-expanded={allProblems}
-            aria-controls={problemsId}
-            onclick={() => (allProblems = !allProblems)}
-            >{allProblems ? "fewer" : `${heldBack} more`}</button
-          >
+        {#if detailError !== null}
+          <p class="notice error-row" role="alert">{detailError}</p>
         {/if}
-      </p>
-    {/if}
-    {#if detailError !== null}
-      <p class="notice error-row" role="alert">{detailError}</p>
-    {/if}
 
-    {#if collapsed && latest !== null}
-      <div class="row volume latest">
-        {@render volumeRow(latest, true, undefined)}
-        {@render volumeNote(latest, undefined)}
-      </div>
-    {/if}
-    {#if !collapsed}
-      <!-- An ARIA table rather than a <table>: the rows have to be the same
+        <!-- An ARIA table rather than a <table>: the rows have to be the same
            grid the totals above them are, and a real table cannot share
            those tracks. The column headers are there, just not drawn -- the
            labels above already say what the columns are. -->
-      <div
-        class="volumes"
-        role="table"
-        aria-label="Volumes in campaign {job.name}"
-        id={tableId}
-      >
-        <div class="row head sr-only" role="row">
-          <span role="columnheader">volume</span>
-          <span role="columnheader">links</span>
-          <span role="columnheader">progress</span>
-          <span role="columnheader">pages</span>
-          <span role="columnheader">status</span>
-        </div>
-        {#each volumes as v (v.id)}
-          <div class="row volume" role="row">
-            {@render volumeRow(v, false, "cell")}
-            {@render volumeNote(v, "cell")}
-          </div>
-        {/each}
-      </div>
-      {#if hasMore}
-        <button
-          type="button"
-          class="load-more"
-          disabled={loadingMore}
-          onclick={loadMore}
+        <div
+          class="volumes"
+          role="table"
+          aria-label="Volumes in campaign {job.name}"
         >
-          {loadingMore
-            ? "loading…"
-            : `load more (${volumes.length}/${job.counts.total})`}
-        </button>
-      {/if}
-    {/if}
-  </div>
-  <!-- Zone 4, and the card's footer: which recipe and which weights produced
+          <div class="row head sr-only" role="row">
+            <span role="columnheader">volume</span>
+            <span role="columnheader">links</span>
+            <span role="columnheader">progress</span>
+            <span role="columnheader">pages</span>
+            <span role="columnheader">status</span>
+          </div>
+          {#each volumes as v (v.id)}
+            <div class="row volume" role="row">
+              {@render volumeRow(v, "cell")}
+              {@render volumeNote(v, "cell")}
+            </div>
+          {/each}
+        </div>
+        {#if hasMore}
+          <button
+            type="button"
+            class="load-more"
+            disabled={loadingMore}
+            onclick={loadMore}
+          >
+            {loadingMore
+              ? "loading…"
+              : `load more (${volumes.length}/${job.counts.total})`}
+          </button>
+        {/if}
+      </div>
+      <!-- Zone 4, and the card's footer: which recipe and which weights produced
        these results. Provenance is checked once and read least, and in the
        header it competed with the campaign's state for the same row (the
        product owner, 2026-09-16: "pipeline and model info ... are a bit
@@ -1050,41 +1029,46 @@
        pipeline names two or three models
        (examples/campaigns/pipelines/demo-v1.yaml), so the whole line fits a
        normal card and clips, with its own title, on a narrow one. -->
-  <p class="card-meta">
-    <span class="provenance">
-      pipeline
-      {#if pipelineYaml !== ""}
-        <button
-          type="button"
-          class="chip pipeline"
-          aria-expanded={yamlOpen}
-          aria-controls={yamlId}
-          title={pipelineSteps.length > 0
-            ? pipelineSteps.join(" → ")
-            : "show pipeline YAML"}
-          onclick={() => (yamlOpen = !yamlOpen)}>{job.pipeline}</button
-        >
-      {:else}
-        <span class="chip pipeline static">{job.pipeline}</span>
-      {/if}
-    </span>
-    {#if models.length > 0}
-      <span class="models" title="Models: {models.map(modelLabel).join(' · ')}">
-        Models:
-        {#each models as model, i (i)}
-          {@const href = modelUrl(model)}
-          {i > 0 ? " · " : ""}
-          {#if href === null}
-            {modelLabel(model)}
+      <p class="card-meta">
+        <span class="provenance">
+          pipeline
+          {#if pipelineYaml !== ""}
+            <button
+              type="button"
+              class="chip pipeline"
+              aria-expanded={yamlOpen}
+              aria-controls={yamlId}
+              title={pipelineSteps.length > 0
+                ? pipelineSteps.join(" → ")
+                : "show pipeline YAML"}
+              onclick={() => (yamlOpen = !yamlOpen)}>{job.pipeline}</button
+            >
           {:else}
-            <a {href} target="_blank" rel="noopener">{modelLabel(model)}</a>
+            <span class="chip pipeline static">{job.pipeline}</span>
           {/if}
-        {/each}
-      </span>
-    {/if}
-  </p>
-  {#if yamlOpen && pipelineYaml !== ""}
-    <pre class="pipeline-yaml" id={yamlId}>{pipelineYaml}</pre>
+        </span>
+        {#if models.length > 0}
+          <span
+            class="models"
+            title="Models: {models.map(modelLabel).join(' · ')}"
+          >
+            Models:
+            {#each models as model, i (i)}
+              {@const href = modelUrl(model)}
+              {i > 0 ? " · " : ""}
+              {#if href === null}
+                {modelLabel(model)}
+              {:else}
+                <a {href} target="_blank" rel="noopener">{modelLabel(model)}</a>
+              {/if}
+            {/each}
+          </span>
+        {/if}
+      </p>
+      {#if yamlOpen && pipelineYaml !== ""}
+        <pre class="pipeline-yaml" id={yamlId}>{pipelineYaml}</pre>
+      {/if}
+    </div>
   {/if}
 </section>
 
@@ -1094,8 +1078,8 @@
      failed index, grey = queued/paused/nothing moving, and amber running
      into green or red for the two partial endings (below). */
   .campaign {
-    /* The card body's fixed tracks, in one place, so every row -- totals,
-       the folded volume, every row of the open list -- is laid out on the
+    /* The card body's fixed tracks, in one place, so every row -- totals
+       and every row of the volume list -- is laid out on the
        same columns. Absolute units, not em: the rows do not all share a
        font-size, and a column that moved with the text would not be a
        column. The bar is short and fixed again ("loading bars are a bit
@@ -1472,8 +1456,7 @@
   }
 
   /* ONE column system for everything the card counts. Every row -- the
-     campaign's totals, the folded card's volume, every row of the open list
-     -- declares the same four tracks from the same custom properties, so
+     campaign's totals and every row of the volume list -- declares the same four tracks from the same custom properties, so
      they coincide exactly without a subgrid and without one table's layout
      leaking into another's. Track 1 flexes (it holds a label or a volume
      id); the other three are fixed, which is what makes a column of numbers
@@ -1637,21 +1620,6 @@
     font-size: 11.5px;
     color: var(--muted-foreground);
     overflow-wrap: anywhere;
-  }
-
-  /* A failed volume's sentence, on the folded strip only -- in the table it
-     is a line under the row. It wraps, onto a line of its own when it does
-     not fit beside the id (3080). */
-  .vreason {
-    min-width: 0;
-    overflow-wrap: anywhere;
-    color: var(--destructive);
-  }
-
-  .latest .vprogress,
-  .latest .vfigures {
-    display: inline;
-    font-size: 11.5px;
   }
 
   /* The bar has a track of its own now, so it needs no width and no margin
@@ -1876,18 +1844,6 @@
     border-radius: 3px;
   }
 
-  /* The folded card's one-line window on the campaign: the volume most
-     likely to be wanted, with the same links every other row has, so the
-     viewer and the run log are one click away without unfolding. It is a
-     row of the same grid, so its numbers sit under the totals' numbers. */
-  .row.latest .c-label {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    column-gap: 0.5rem;
-    min-width: 0;
-  }
-
   .load-more {
     font: inherit;
     color: var(--foreground);
@@ -1985,17 +1941,6 @@
     .when {
       margin-left: 0;
       flex-basis: 100%;
-    }
-
-    /* A 14.5rem status track does not fit beside an id on a phone: the
-       status takes a line of its own, still right-aligned under the id, and
-       the figures still end where the line ends. */
-    .latest {
-      grid-template-columns: minmax(0, 1fr) var(--icons);
-    }
-
-    .latest-status {
-      grid-column: 1 / -1;
     }
   }
 
