@@ -8,7 +8,9 @@ PATCH = Path(__file__).resolve().parents[3] / ".docker" / "uv4-uv-html.patch"
 
 def _added(text: str) -> str:
     return "\n".join(
-        line[1:] for line in text.splitlines() if line.startswith("+") and not line.startswith("+++")
+        line[1:]
+        for line in text.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
     )
 
 
