@@ -13,7 +13,7 @@ dependencies = [
     "boto3>=1.34",
     "pyyaml",
     "pydantic>=2.13.5",
-    "huggingface-hub>=0.30,<2",
+    "huggingface-hub>=1.32.0,<2",
     # fetch.py opens each downloaded image's header to bound its pixel count
     # (W14). The runtime image installs its own pin last (the `wrapper-image`
     # group), which is the one that survives there.
