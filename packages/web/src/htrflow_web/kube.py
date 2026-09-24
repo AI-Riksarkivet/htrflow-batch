@@ -55,6 +55,15 @@ CAMPAIGN_CONFIGMAPS = (
     "htrflow.riksarkivet.se/managed-by=converter,htrflow.riksarkivet.se/campaign"
 )
 
+#: The pipeline ConfigMaps (``htr-pipeline-<id>``), each labelled with its
+#: pipeline id. The campaign record and its status ConfigMap carry the
+#: pipeline label too -- and the record's ``data`` is the campaign's whole
+#: volume list -- so a campaign label is what keeps them out.
+PIPELINE_CONFIGMAPS = (
+    "htrflow.riksarkivet.se/managed-by=converter,htrflow.riksarkivet.se/pipeline,"
+    "!htrflow.riksarkivet.se/campaign"
+)
+
 #: Server-side apply, like `htrflow-campaigns apply`: one request that
 #: creates the status ConfigMap or updates exactly the fields this manager
 #: owns, with no read-modify-write race against a concurrent request.
@@ -201,6 +210,7 @@ class ReaderLike(Protocol):
     def get_job(self, namespace: str, name: str) -> dict | None: ...
     def get_configmap(self, namespace: str, name: str) -> dict | None: ...
     def list_configmaps(self) -> list[dict]: ...
+    def list_pipelines(self) -> list[dict]: ...
     def list_pods(self, namespace: str, job_name: str) -> list[dict]: ...
     def apply_configmap(
         self, body: dict, force: bool = False, manager: str = FIELD_MANAGER
@@ -257,6 +267,22 @@ class Reader:
                 "list_namespaced_config_map",
                 ns,
                 label_selector=f"{CAMPAIGN_CONFIGMAPS},{KIND_LABEL}={STATUS_KIND}",
+            )
+            cms.extend((body or {}).get("items") or [])
+        return cms
+
+    def list_pipelines(self) -> list[dict]:
+        """Every pipeline ConfigMap in every namespace, whole: the list
+        route reads each one's steps to say which campaigns score page
+        quality. One call per namespace, and a pipeline's `data` is one short
+        YAML -- not the megabytes of a campaign record's."""
+        cms: list[dict] = []
+        for ns in self.cfg.namespaces:
+            body = _read(
+                self.core,
+                "list_namespaced_config_map",
+                ns,
+                label_selector=PIPELINE_CONFIGMAPS,
             )
             cms.extend((body or {}).get("items") or [])
         return cms

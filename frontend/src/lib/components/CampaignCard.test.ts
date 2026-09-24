@@ -62,6 +62,7 @@ const job: JobSummary = {
   resultsBase: "https://results.example.org/htr-test/demo-v1",
   warmup: { phase: "succeeded" },
   jobGone: false,
+  qualityPrediction: false,
 };
 
 const volumeDone = {

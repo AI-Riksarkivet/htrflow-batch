@@ -81,3 +81,16 @@ def test_the_reaped_window_is_read_off_the_route():
         "default": app.REAPED_SHOWN,
         "max": app.REAPED_MAX,
     }
+
+
+def test_only_the_scored_campaign_says_it_scores_page_quality():
+    """kyrk's pipeline has a QualityPrediction step and its detail carries a
+    quality block; the reaped campaigns' pipelines have neither."""
+    doc = build()
+    assert {r["name"]: r["qualityPrediction"] for r in doc["summaries"]} == {
+        "kyrk": True,
+        "gamla": False,
+        "okand": False,
+    }
+    for d in doc["details"]:
+        assert d["qualityPrediction"] is (d["name"] == "kyrk")

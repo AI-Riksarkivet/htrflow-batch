@@ -76,7 +76,14 @@ CONFIGMAP = {
 }
 
 PIPELINE_CONFIGMAP = {
-    "metadata": {"name": "htr-pipeline-demo-v1", "namespace": "htr-test"},
+    "metadata": {
+        "name": "htr-pipeline-demo-v1",
+        "namespace": "htr-test",
+        "labels": {
+            "htrflow.riksarkivet.se/managed-by": "converter",
+            "htrflow.riksarkivet.se/pipeline": "demo-v1",
+        },
+    },
     "data": {"pipeline.yaml": "steps:\n- step: Segmentation\n"},
 }
 
@@ -109,6 +116,9 @@ class FakeReader:
 
     def list_configmaps(self) -> list[dict]:
         return []  # no record ConfigMaps: only the Job answers for a campaign
+
+    def list_pipelines(self) -> list[dict]:
+        return [PIPELINE_CONFIGMAP]
 
     def list_pods(self, namespace: str, job_name: str) -> list[dict]:
         return []
@@ -218,8 +228,56 @@ def test_list_jobs_shape(client: TestClient):
             "resultsBase": "https://results.example.org/htr-test/demo-v1",
             "warmup": {"phase": "missing"},
             "jobGone": False,
+            "qualityPrediction": False,
         }
     ]
+
+
+QP_PIPELINE = {
+    **PIPELINE_CONFIGMAP,
+    "data": {
+        "pipeline.yaml": "steps:\n- step: Segmentation\n- step: QualityPrediction\n"
+    },
+}
+
+
+class QualityReader(FakeReader):
+    """A campaign whose pipeline has a QualityPrediction step."""
+
+    def list_pipelines(self) -> list[dict]:
+        # The same pipeline id in a namespace the campaign is not in: it
+        # says nothing about this campaign.
+        other = {
+            "metadata": {**QP_PIPELINE["metadata"], "namespace": "htr-other"},
+            "data": {"pipeline.yaml": "steps:\n- step: Segmentation\n"},
+        }
+        return [other, QP_PIPELINE]
+
+    def get_configmap(self, namespace: str, name: str) -> dict | None:
+        if name == "htr-pipeline-demo-v1":
+            return QP_PIPELINE
+        return super().get_configmap(namespace, name)
+
+
+def test_the_list_says_which_campaigns_score_page_quality():
+    """The card draws its quality column from the list row, before its own
+    detail has landed, so nothing moves when the detail does."""
+    client = TestClient(create_app(QualityReader(), progress=FakeProgress()))
+    (row,) = client.get("/api/v1/jobs").json()
+    assert row["qualityPrediction"] is True
+    detail = client.get("/api/v1/jobs/htr-test/kyrk").json()
+    assert detail["qualityPrediction"] is True
+
+
+class NoPipelinesReader(FakeReader):
+    def list_pipelines(self) -> list[dict]:
+        return []  # pruned, or never applied
+
+
+def test_a_campaign_whose_pipeline_is_gone_does_not_score():
+    client = TestClient(create_app(NoPipelinesReader(), progress=FakeProgress()))
+    (row,) = client.get("/api/v1/jobs").json()
+    assert row["qualityPrediction"] is False
 
 
 def test_job_detail_shape(client: TestClient):
@@ -661,6 +719,25 @@ def test_a_campaign_whose_job_is_gone_still_has_a_row():
     assert gone["counts"] == {"total": 4, "active": 0, "done": 4, "failed": 0}
     assert gone["finishedAt"] == "2025-12-01T05:00:00Z"
     assert body[0]["name"] == "kyrk", "newest first, reaped rows included"
+
+
+class ReapedQualityReader(RecordingReader):
+    def list_pipelines(self) -> list[dict]:
+        return [QP_PIPELINE]
+
+    def get_configmap(self, namespace: str, name: str) -> dict | None:
+        if name == "htr-pipeline-demo-v1":
+            return QP_PIPELINE
+        return super().get_configmap(namespace, name)
+
+
+def test_a_reaped_campaign_says_whether_it_scored_too():
+    reader = ReapedQualityReader([REAPED_RECORD, REAPED_STATUS])
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    by_name = {row["name"]: row for row in client.get("/api/v1/jobs").json()}
+    assert by_name["gamla"]["qualityPrediction"] is True
+    detail = client.get("/api/v1/jobs/htr-test/gamla").json()
+    assert detail["qualityPrediction"] is True
 
 
 def _many_reaped(n: int) -> RecordingReader:
