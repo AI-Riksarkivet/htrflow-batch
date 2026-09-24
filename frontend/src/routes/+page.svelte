@@ -98,9 +98,15 @@
       <h1>HTR Campaigns</h1>
     </div>
     <div class="header-right">
-      {#if version !== null}
-        <span class="version" title="read API {webVersion}">{version}</span>
-      {/if}
+      <!-- Always there, empty until the version is read: it arrives after
+           the list, and taking room only then widened this half of the
+           header -- on a phone, onto a second line that pushed every card
+           down. -->
+      <span
+        class="version"
+        title={version === null ? undefined : `read API ${webVersion}`}
+        >{version ?? ""}</span
+      >
       <!-- The GitHub mark, inline: the page loads nothing from a third
            origin (its CSP would not allow it anyway). -->
       <a
@@ -165,7 +171,17 @@
 
   /* Both sit in the muted colour and take the link colour on hover: the
      header is chrome, not content, in either theme. */
+  /* Right-aligned on the line of its own a phone gives it too, so the
+     version below grows leftwards there as well. */
+  .header-right {
+    margin-left: auto;
+  }
+
+  /* Room for a release name before there is one, filled from the right so
+     a longer one grows away from the icons beside it. */
   .version {
+    min-width: 10rem;
+    text-align: right;
     color: var(--muted-foreground);
     font-size: 0.8rem;
     font-variant-numeric: tabular-nums;
