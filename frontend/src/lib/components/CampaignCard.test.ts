@@ -3387,3 +3387,187 @@ describe("the bar survives a phone's width", () => {
     expect(container.querySelectorAll(".row .c-bar .bar")).toHaveLength(3);
   });
 });
+
+// The header line is what a list of folded cards is made of, and it filled
+// in piece by piece: a chip changing its word when the detail landed pushed
+// the chips after it along, and (the repo owner) it now carries the pages
+// done, a number only the detail has. Every piece that arrives later has a
+// place held for it from the first paint, and nothing that changes on a
+// poll or a detail sits in front of anything that does not.
+describe("the header line holds its shape while it fills in", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    storage = stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const done: JobSummary = { ...job, phase: "Succeeded" };
+
+  function held(): () => void {
+    let answer!: () => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            answer = () =>
+              resolve(
+                jsonResponse({
+                  ...detail0,
+                  ...done,
+                  failures: [],
+                  volumes: [],
+                  pagesDone: 411,
+                  pagesTotal: 1914,
+                  pagesFailed: 3,
+                  pagesCoverage: { counted: 3, of: 3 },
+                }),
+              );
+          }),
+      ),
+    );
+    return () => answer();
+  }
+
+  test("the page count's place is there, empty, before the count is", async () => {
+    const answer = held();
+    const { container } = render(CampaignCard, { job: done });
+    await vi.advanceTimersByTimeAsync(0);
+    const slot = container.querySelector(".camp .stat");
+    expect(slot).not.toBeNull();
+    expect(slot).toHaveTextContent(/^$/);
+    expect(slot).toHaveAttribute("aria-hidden", "true");
+
+    answer();
+    await vi.advanceTimersByTimeAsync(0);
+    // The same element, now saying it.
+    expect(container.querySelector(".camp .stat")).toBe(slot);
+    expect(slot).toHaveTextContent("411 / 1914 pages · 3 failed");
+    expect(slot).not.toHaveAttribute("aria-hidden");
+  });
+
+  test("failed pages are said only when there are some", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          ...done,
+          failures: [],
+          volumes: [],
+          pagesDone: 9,
+          pagesTotal: 9,
+          pagesCoverage: { counted: 3, of: 3 },
+        }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job: done });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(container.querySelector(".stat")).toHaveTextContent(
+      /^9 \/ 9 pages$/,
+    );
+  });
+
+  test("no pages known yet is a dash, and a partial count says so", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          ...done,
+          failures: [],
+          volumes: [],
+          pagesCoverage: { counted: 0, of: 0 },
+        }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job: done });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(container.querySelector(".stat")).toHaveTextContent("— pages");
+    cleanup();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          ...done,
+          failures: [],
+          volumes: [],
+          pagesDone: 4,
+          pagesTotal: 8,
+          pagesCoverage: { counted: 1, of: 3 },
+        }),
+      ),
+    );
+    const again = render(CampaignCard, { job: done }).container;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(again.querySelector(".stat")).toHaveAttribute(
+      "title",
+      expect.stringContaining("counted in 1 of 3 volumes"),
+    );
+  });
+
+  test("open, the totals below say it, and the header's place stays empty", async () => {
+    storage.set(`htrflow.card.${done.namespace}/${done.name}`, "open");
+    const answer = held();
+    const { container } = render(CampaignCard, { job: done });
+    await vi.advanceTimersByTimeAsync(0);
+    answer();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(container.querySelector(".row.totals")).not.toBeNull();
+    const slot = container.querySelector(".camp .stat");
+    expect(slot).not.toBeNull();
+    expect(slot).toHaveTextContent(/^$/);
+  });
+
+  test("the count's place is a fixed width, in tabular figures, filled from the right", () => {
+    const stat = cssOf(".stat");
+    expect(stat.get("min-width")).toMatch(/rem$/);
+    expect(stat.get("text-align")).toBe("right");
+    expect(stat.get("font-variant-numeric")).toBe("tabular-nums");
+    expect(stat.get("white-space")).toBe("nowrap");
+    // So do the times beside it, the other thing at that end of the line.
+    expect(cssOf(".when").get("min-width")).toMatch(/rem$/);
+    expect(cssOf(".when").get("text-align")).toBe("right");
+  });
+
+  test("the line is a grid: the words take what is left, the count and the times have their own tracks", () => {
+    const camp = cssOf(".camp");
+    expect(camp.get("display")).toBe("grid");
+    expect(tracks(camp.get("grid-template-columns"))).toEqual([
+      "minmax(0, 1fr)",
+      "auto",
+      "auto",
+    ]);
+    // A phone: the name and chips first, then the times and the count on a
+    // line of their own that is there whether or not the count is yet.
+    expect(areas(cssOf(".camp", PHONE).get("grid-template-areas"))).toEqual([
+      ["title", "title"],
+      ["when", "stat"],
+    ]);
+    // And the chips a line of their own under the name, so a chip changing
+    // its word never decides whether they wrap.
+    expect(cssOf(".chips", PHONE).get("flex-basis")).toBe("100%");
+  });
+
+  test("the phase chip is the last chip, so its word changing moves no other", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ ...detail0, ...done, volumes: [] })),
+    );
+    const { container } = render(CampaignCard, {
+      job: { ...done, jobGone: true, warmup: { phase: "missing" } },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const chips = [...container.querySelectorAll(".chips > .chip")];
+    expect(chips.map((c) => c.textContent?.trim())).toEqual([
+      "no warm-up",
+      "job removed",
+      "Succeeded",
+    ]);
+  });
+});
