@@ -56,3 +56,33 @@ export function byAttention(jobs: JobSummary[]): JobSummary[] {
     return finishedLast(b).localeCompare(finishedLast(a));
   });
 }
+
+const key = (job: JobSummary) => `${job.namespace}/${job.name}`;
+
+/**
+ * `next` in the order a reader already has: every campaign on screen keeps
+ * its place, with its new row, and a new one goes in front of the first
+ * campaign already shown that `byAttention` would put after it -- so a poll
+ * adds cards but never moves one. Re-sorting on every answer moved a
+ * campaign that had just started from the bottom to the top, and every card
+ * between it and there down one (the repo owner: "things pop all over").
+ */
+export function keepOrder(
+  shown: JobSummary[],
+  next: JobSummary[],
+): JobSummary[] {
+  const fresh = new Map(next.map((j) => [key(j), j]));
+  const out = shown.flatMap((j) => fresh.get(key(j)) ?? []);
+  const had = new Set(out.map(key));
+  // Walked from the end, so each new campaign's anchor is already placed:
+  // the next campaign after it in `byAttention`'s order, shown or new.
+  let anchor: string | null = null;
+  for (const job of byAttention(next).reverse()) {
+    if (!had.has(key(job))) {
+      const at = anchor === null ? -1 : out.findIndex((j) => key(j) === anchor);
+      out.splice(at === -1 ? out.length : at, 0, job);
+    }
+    anchor = key(job);
+  }
+  return out;
+}
