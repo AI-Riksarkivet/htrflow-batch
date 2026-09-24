@@ -488,6 +488,49 @@ describe("/ nothing moves as the page loads", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(names(container)).toEqual(["started", "finishing"]);
     });
+
+    // A poll in flight when the tab hid, answered while it was hidden, used
+    // the one re-sort up on a list nobody was looking at; back on the tab,
+    // the reader got the kept order (review of this change).
+    test("an answer that lands while hidden does not use up the re-sort", async () => {
+      const later = [
+        { ...started, phase: "Running" },
+        {
+          ...finishing,
+          phase: "Succeeded",
+          finishedAt: "2026-09-08T10:00:00Z",
+        },
+      ];
+      let release!: () => void;
+      let n = 0;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+          if (url.toString().endsWith("/version"))
+            return jsonResponse({ version: "v", web: "w" });
+          if (url.toString().includes("/jobs/")) return jsonResponse(detail);
+          n += 1;
+          if (n === 1) return jsonResponse([started, finishing]);
+          if (n === 2)
+            return new Promise<Response>(
+              // Nothing has changed yet when it answers.
+              (resolve) =>
+                (release = () => resolve(jsonResponse([started, finishing]))),
+            );
+          return jsonResponse(later);
+        }) as unknown as typeof fetch,
+      );
+      const { container } = render(CampaignsPage);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(names(container)).toEqual(["finishing", "started"]);
+      await vi.advanceTimersByTimeAsync(RELOAD_MS); // poll 2 is in flight
+      setHidden(true);
+      release();
+      await vi.advanceTimersByTimeAsync(0); // it lands while hidden
+      setHidden(false);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(names(container)).toEqual(["started", "finishing"]);
+    });
   });
 
   // A banner that appeared over a list already on screen pushed every card
