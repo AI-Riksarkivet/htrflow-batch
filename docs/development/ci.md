@@ -178,21 +178,21 @@ must equal `engineVersion` in `dagger.json` (a test asserts it).
 
 ## Dependency pins
 
-Every input is pinned. `renovate.json` holds the policy for moving the
-pins, which [Renovate](https://docs.renovatebot.com/) applies once its app
-is installed on the repository; until then every pin below moves by hand,
-and Dependabot security updates raise pull requests for vulnerable Python
-and frontend dependencies.
+Every input is pinned, and nothing moves the pins on a schedule: every pin
+below moves by hand, in a pull request of its own. The one automatic source
+of updates is Dependabot security updates, enabled in the repository's
+settings, which raise pull requests for vulnerable Python and frontend
+dependencies.
 
 | Pin | Lives in | Updated by |
 |---|---|---|
-| GitHub Actions | `uses:` lines, by commit SHA with the version as a comment | Renovate, one grouped weekly PR |
-| Base and tool images | `FROM` lines in `.docker/*.dockerfile`, image values in both charts' `values.yaml`, `.docker/docker-compose.yml`, the image constants in `.dagger/main.go`, digest-pinned `run:` images in workflows, `TRIVY_IMAGE` in the `Makefile` — each as tag plus digest | Renovate, one grouped weekly PR (regex managers cover the dagger module, workflows and Makefile) |
-| Python dependencies | `uv.lock` (workspace) | Renovate lockfile maintenance weekly; runtime minor and patch grouped, majors and dev tools in their own PRs |
-| Frontend dependencies | `frontend/bun.lock` | Renovate lockfile maintenance weekly; majors separate |
-| Dagger engine | `engineVersion` in `dagger.json`; the CLI version, its checksums and the engine digest in `.github/actions/setup-dagger` | Renovate bumps `dagger.json` in its own PR; the action's three pins follow by hand in that PR, and a test fails until they do |
-| Universal Viewer fork | `UV4_REF` commit in `.docker/htrflow-web.dockerfile` | Renovate, its own PR — `.docker/uv4-uv-html.patch` may need re-deriving |
-| htrflow source for the wrapper's base | `ARG HTRFLOW_REF` in the wrapper dockerfile | Renovate, its own PR — the lock, the base and the wrapper on it must be re-verified |
+| GitHub Actions | `uses:` lines, by commit SHA with the version as a comment | by hand: the new release's commit SHA, its version in the comment |
+| Base and tool images | `FROM` lines in `.docker/*.dockerfile`, image values in both charts' `values.yaml`, `.docker/docker-compose.yml`, the image constants in `.dagger/main.go`, digest-pinned `run:` images in workflows, `TRIVY_IMAGE` in the `Makefile` — each as tag plus digest | by hand: `docker buildx imagetools inspect <ref>` gives the digest of the new tag |
+| Python dependencies | `uv.lock` (workspace) | by hand, `uv lock --upgrade` (or `--upgrade-package <name>`); Dependabot security updates |
+| Frontend dependencies | `frontend/bun.lock` | by hand, `bun update` in `frontend/`; Dependabot security updates |
+| Dagger engine | `engineVersion` in `dagger.json`; the CLI version, its checksums and the engine digest in `.github/actions/setup-dagger` | by hand, all four in one PR: a test fails until the action's version equals `engineVersion` |
+| Universal Viewer fork | `UV4_REF` commit in `.docker/htrflow-web.dockerfile` | by hand, its own PR — `.docker/uv4-uv-html.patch` may need re-deriving |
+| htrflow source for the wrapper's base | `ARG HTRFLOW_REF` in the wrapper dockerfile | by hand, its own PR, with `make lock-htrflow-base` — the lock, the base and the wrapper on it must be re-verified |
 | Dependencies of the wrapper's base, torch included | `.docker/htrflow-base/`: htrflow's `pyproject.toml` plus `overlay.toml`, and `uv.lock`, installed with `uv sync --locked` | by hand with `make lock-htrflow-base`, when the htrflow commit or the overlay moves |
 | transformers line | `.docker/transformers/<major>.in`, compiled with hashes into `<major>.txt` | by hand, `make transformers-requirements`; the dockerfile's `TRANSFORMERS_VERSION` default with it, and the build fails while they disagree |
 | torch / torchvision | per architecture in `.docker/htrflow-base/overlay.toml` (`constraint-dependencies`, and the CUDA wheel index as a source) | by hand, then `make lock-htrflow-base` |
@@ -201,5 +201,4 @@ and frontend dependencies.
 Inside the builds, dagger containers sync with `uv sync --frozen
 --all-packages`, and the wrapper image installs its dependencies from
 `uv export --locked … --require-hashes`, so a stale `uv.lock` fails the
-build instead of resolving freshly. With the app installed, Renovate raises
-security updates at any time, outside the weekly schedule.
+build instead of resolving freshly.
