@@ -21,8 +21,8 @@ class per `queue.priorityClasses` entry
 
 | Object | Name | What it carries |
 |---|---|---|
-| `ResourceFlavor` | `queue.flavor` (default `default-flavor`) | Nothing. With no `nodeLabels` or `nodeTaints`, Kueue injects no `nodeSelector` at admission |
-| `ClusterQueue` | `<queue.name>-cq` (default `htr-batch-cq`) | One resource group, one flavor, `nominalQuota` per covered resource, and a `namespaceSelector` on `kubernetes.io/metadata.name`. A ClusterQueue is cluster-scoped, so the selector keeps any other namespace from pointing a LocalQueue at this quota |
+| `ResourceFlavor` | `queue.flavor` (default `default-flavor`), or one per `queue.flavors` entry | By default nothing: with no `nodeLabels` or `nodeTaints`, Kueue injects no `nodeSelector` at admission. A `queue.flavors` entry carries its node labels, and its taints with tolerations for them ([Several sorts of GPU](#several-sorts-of-gpu)) |
+| `ClusterQueue` | `<queue.name>-cq` (default `htr-batch-cq`) | One resource group, with one flavor or the `queue.flavors` in their order, `nominalQuota` per covered resource and flavor, and a `namespaceSelector` on `kubernetes.io/metadata.name`. A ClusterQueue is cluster-scoped, so the selector keeps any other namespace from pointing a LocalQueue at this quota |
 | `LocalQueue` | `queue.name` (default `htr-batch`), in the release namespace | `spec.clusterQueue` pointing at the ClusterQueue. Jobs name this queue in their `queue-name` label |
 | `WorkloadPriorityClass` | one per `queue.priorityClasses` entry (default `htr-interactive` 1000, `htr-bulk` 0, `htr-idle` -10) | `value` and a `description`. Cluster-scoped, so the names are the same for every namespace. A campaign names one in its `priority-class` label |
 
@@ -55,9 +55,59 @@ The converter puts two Kueue **labels** on each campaign Job
   `priority:`. A Job with no label ranks at 0, which is why `htr-bulk` sits
   at 0: naming it is the same as leaving the field out.
 
-A cluster with several kinds of GPU node gives each group its own flavor with
-`nodeLabels` and covers the flavors separately. That is a values change, not
-a chart change.
+A pipeline that names a [size](../reference/campaign-yaml.md#pod-sizes)
+also puts its requests and limits on the wrapper, and, when the size names a
+flavor, that flavor's node labels in the pod's `nodeSelector`.
+
+## Several sorts of GPU
+
+A cluster with more than one sort of GPU describes each in `queue.flavors`:
+a name, the `nodeLabels` its nodes carry, optional `nodeTaints`, and a quota
+for `cpu`, `memory` and `nvidia.com/gpu`. The chart renders one
+ResourceFlavor per entry and one resource group in the ClusterQueue, with the
+flavors in the order the list gives them.
+
+```yaml
+queue:
+  flavors:
+    - name: large-gpu
+      nodeLabels: { nvidia.com/gpu.product: <product label of the large card> }
+      nodeTaints: [{ key: gpu-pool, value: large, effect: NoSchedule }]
+      quota: { cpu: 16, memory: 128Gi, nvidia.com/gpu: 2 }
+    - name: small-gpu
+      nodeLabels: { nvidia.com/gpu.product: <product label of the small card> }
+      quota: { cpu: 8, memory: 32Gi, nvidia.com/gpu: 4 }
+```
+
+What Kueue does with them:
+
+- **Order.** For each Workload, Kueue tries the group's flavors in order and
+  admits the Workload on the first whose quota it fits.
+- **Node selector.** A flavor is skipped when the pod's `nodeSelector` (or
+  required node affinity) contradicts the flavor's `nodeLabels` on a key the
+  flavor names. A pod that says nothing about those keys may land on any
+  flavor.
+- **Injection.** At admission Kueue writes the chosen flavor's `nodeLabels`
+  into the pod template as its `nodeSelector`, and adds the flavor's
+  `tolerations`. So the pod goes to nodes with that card, whatever the Job
+  said.
+- **Taints.** A flavor's `nodeTaints` are the taints its nodes carry. Kueue
+  admits a Workload on the flavor only if its pods tolerate them, counting
+  the flavor's own tolerations. The chart gives each flavor a toleration for
+  each of its taints, so campaigns reach a tainted pool without a toleration
+  in `converter.yaml`.
+
+A Job cannot ask Kueue for a flavor by name. It picks one through its node
+selector. So a size in `converter.yaml` that names a flavor renders that
+flavor's `nodeLabels` into the Job's `nodeSelector`, and every other flavor's
+labels then contradict it. `converter.yaml`'s `flavors` repeats the chart's
+names and labels for this, and a test holds the two to each other for the
+shipped defaults. A size with no flavor, and a pipeline with no size, may
+land on any flavor that has the quota.
+
+The model cache is one PVC. Campaign pods on every flavor's nodes mount it,
+so on more than one node it needs an access mode those nodes share
+(`modelCache.accessModes` in [Chart Values](../reference/chart.md)).
 
 ## What a Workload holds
 
@@ -67,7 +117,8 @@ it by. `spec.active` is the pause lever. `spec.podSets[0]` copies the pod
 template with a `count` equal to the Job's **`parallelism`**, not its
 `completions`: a podSet describes the pods that exist at once. Quota counts
 pod **requests**: the wrapper requests 8 Gi of memory with a 16 Gi limit, and
-8 Gi is what the quota sees.
+8 Gi is what the quota sees. At a named size, request and limit are one
+number.
 
 ## The webhooks and reconcilers Kueue adds
 
@@ -214,7 +265,7 @@ does not do is turn preemption on.
 | `job.status.completedIndexes`, `failedIndexes`, conditions | Kubernetes Job controller | The only progress the status page reads |
 | `workload.spec.active` | `htrflow-campaigns apply`, by patch | The pause lever |
 | `workload.spec.podSets`, `status.admission`, conditions | Kueue | Nothing else writes these |
-| Pod placement and binding | kube-scheduler | Kueue contributes only flavor `nodeLabels`, and the default flavor has none |
+| Pod placement and binding | kube-scheduler | Kueue contributes the admitted flavor's `nodeLabels` and `tolerations`. The default flavor has neither |
 
 ## Failure interplay
 
@@ -258,6 +309,11 @@ look for, and what "Queued" means on a campaign card are in
   the whole podSet must fit. The shipped defaults (converter `window` 20
   against a one-GPU quota) render `parallelism: 20`, which is inadmissible
   forever and reads only as "Queued".
+- **A size is not checked against the quota.** `validate` does not know the
+  chart's quotas. A size that asks for more than every flavor it may land on
+  has, or a size whose flavor's quota is smaller than it, is inadmissible
+  forever and reads only as "Queued". Size each flavor's quota for at least
+  one pod of the largest size that can land on it.
 - **A reaped campaign is remembered by a ConfigMap, not by Kueue.** The
   Workload is deleted with the Job, so the queue itself remembers nothing.
   What stops the next apply from running every index again is the campaign's
