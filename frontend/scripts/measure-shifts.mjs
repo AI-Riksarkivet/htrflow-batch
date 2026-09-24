@@ -73,7 +73,7 @@ const SHAPES = [
   ["Succeeded", "succeeded", false],
 ];
 const NAMES =
-  "abbot baker carter dyer ellis fisher glover hunter ivy joiner keeper lister mason nash oakes"
+  "abbot baker carter dyer ellis fisher glover hunter ivy joiner keeper lister mason nash oakes pike"
     .split(" ")
     .map((n) => `campaign-${n}`);
 
@@ -111,7 +111,13 @@ function campaign(i, [phase, warmup, gone]) {
   };
 }
 
-let list = SHAPES.map((s, i) => campaign(i, s));
+// And one large campaign first, whose page count runs to six digits and
+// whose sums cover only some of its volumes yet: the widest count a header
+// has to hold, and the partial one.
+let list = [
+  campaign(15, ["Running", "succeeded", false]),
+  ...SHAPES.map((s, i) => campaign(i, s)),
+];
 
 // A detail that agrees with its list row: the failed volumes first, then
 // the active ones, then the done ones, the rest pending -- each shaped like
@@ -175,6 +181,14 @@ function detailOf(job, i) {
     pagesTotal: read.reduce((a, v) => a + v.progress.total, 0),
     pagesFailed: lost,
     pagesCoverage: { counted: read.length, of: read.length },
+    ...(job.name === NAMES[15]
+      ? {
+          pagesDone: 123456,
+          pagesTotal: 234567,
+          pagesFailed: 12,
+          pagesCoverage: { counted: 100, of: 180 },
+        }
+      : {}),
   };
 }
 
