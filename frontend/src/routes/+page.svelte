@@ -150,13 +150,9 @@
        page, arriving on a poll, it pushed every card down by its height.
        With no list yet there is nothing to push, and it sits where the list
        would be. -->
-  {#if error !== null}
+  {#if error !== null || unreadable > 0}
     <p class="banner error" class:floating={jobs !== null} role="alert">
-      {error}
-    </p>
-  {:else if unreadable > 0}
-    <p class="banner error" class:floating={jobs !== null} role="alert">
-      {describeUnreadable(unreadable)}
+      {error ?? describeUnreadable(unreadable)}
     </p>
   {/if}
   {#if jobs === null}
@@ -197,16 +193,16 @@
     align-items: center;
   }
 
-  /* Both sit in the muted colour and take the link colour on hover: the
-     header is chrome, not content, in either theme. */
   /* Right-aligned on the line of its own a phone gives it too, so the
      version below grows leftwards there as well. */
   .header-right {
     margin-left: auto;
   }
 
-  /* Room for a release name before there is one, filled from the right so
-     a longer one grows away from the icons beside it. */
+  /* Both sit in the muted colour and take the link colour on hover: the
+     header is chrome, not content, in either theme. The version has room
+     held for it before there is one, filled from the right so a longer one
+     grows away from the icons beside it. */
   .version {
     min-width: 10rem;
     text-align: right;
