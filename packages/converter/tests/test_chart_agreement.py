@@ -38,14 +38,26 @@ JOB_SKELETON = CONVERTER_SRC / "manifests" / "campaign-job.yaml"
 sys.path.insert(0, str(ROOT / "scripts"))
 from config_reference import (  # noqa: E402
     AGREEMENTS,
+    FREE_ENV,
+    FRONTEND_DOC,
+    IMAGE_ENV_DOC,
     LIST_AGREEMENTS,
+    LOCAL_ONLY,
     PAGE,
     SECURITY,
     SURFACES,
     WEB_DEFAULT_DOC,
     _chart_rows,
     _model_rows,
+    chart_web_env,
+    frontend_rows,
+    image_env,
+    job_shape,
+    overrides,
     render,
+    script_exports,
+    web_set_by,
+    wrapper_set_by,
 )
 
 
@@ -59,10 +71,16 @@ def _at(values: dict, path: str) -> object:
     return values
 
 
+def _default(field: str) -> object:
+    """converter.yaml's default for ``field``: what a file that leaves it
+    out gets."""
+    return ConverterConfig.model_fields[field].get_default(call_default_factory=True)
+
+
 def _disagreements(config: dict) -> list[str]:
     values = _load(CHART / "values.yaml")
     # A key a converter.yaml leaves out is the converter's default.
-    config = {f: config.get(f, getattr(ConverterConfig(), f)) for f, _ in AGREEMENTS}
+    config = {f: config.get(f, _default(f)) for f, _ in AGREEMENTS}
     return [
         f"`{field}` is {config[field]!r} but the chart's `{path}` is "
         f"{_at(values, path)!r} — they name one cluster object"
@@ -72,7 +90,7 @@ def _disagreements(config: dict) -> list[str]:
 
 
 def test_converter_defaults_agree_with_the_chart_defaults():
-    defaults = {f: getattr(ConverterConfig(), f) for f, _ in AGREEMENTS}
+    defaults = {f: _default(f) for f, _ in AGREEMENTS}
     assert _disagreements(defaults) == []
 
 
@@ -213,7 +231,7 @@ def test_the_priority_classes_the_converter_accepts_are_the_ones_the_chart_ships
     because Kueue never refuses an unknown class -- the Job just stays
     suspended, with no event, and reads "Queued" for ever. So the list has
     to be the chart's, and in the same order."""
-    defaults = {f: getattr(ConverterConfig(), f) for f, _, _ in LIST_AGREEMENTS}
+    defaults = {f: _default(f) for f, _, _ in LIST_AGREEMENTS}
     for pair, (ours, theirs) in _names(defaults).items():
         assert ours == theirs, pair
     for pair, (ours, theirs) in _names(_load(EXAMPLE)).items():
@@ -530,3 +548,158 @@ def test_the_job_shape_policy_holds_the_skeletons_env_mounts_and_security(
             assert v["secret"].get("defaultMode") == spec["secretMode"]
         if "configMap" in v:
             assert "defaultMode" not in v["configMap"] and "items" not in v["configMap"]
+
+
+# -- "Set by": each claim on docs/reference/configuration.md, held to a render
+
+
+def _good_fixture():
+    from htrflow_converter.parse import load
+
+    fixture = ROOT / "packages" / "converter" / "tests" / "fixtures" / "good"
+    campaigns, pipelines, cfg = load(
+        fixture / "campaigns", fixture / "pipelines", fixture / "converter.yaml"
+    )
+    return campaigns[0], pipelines["demo-v1"], cfg
+
+
+def _job(campaign, pipeline, cfg) -> dict:
+    from htrflow_converter import render as render_objects
+
+    objects = render_objects.campaign_objects(campaign, pipeline, cfg)
+    return next(o for o in objects if o["kind"] == "Job")
+
+
+def _job_env(job: dict) -> dict[str, str | None]:
+    container = job["spec"]["template"]["spec"]["containers"][0]
+    return {e["name"]: e.get("value") for e in container["env"]}
+
+
+#: A value for each converter.yaml or pipeline key FREE_ENV names that no
+#: fixture uses, so a render with it shows where it lands.
+_CHANGED = {
+    "namespace": "changed-ns",
+    "public_results_base": "https://changed.example.org/results",
+    "manifest_max_bytes": 1234567,
+    "fetch_max_bytes": 7654321,
+    "id": "changed-v9",
+    "image": f"ghcr.io/example/changed@sha256:{'c' * 64}",
+}
+
+
+def test_every_env_job_shape_leaves_free_has_a_named_setter():
+    """render.py fills each `free` env var per campaign. The page says from
+    what, and a free var nobody named would be a setting the page could not
+    place."""
+    assert set(FREE_ENV) == set(job_shape()["batch"]["free"])
+
+
+@pytest.mark.parametrize(
+    "name", [n for n, (kind, _) in FREE_ENV.items() if kind != "fixed"]
+)
+def test_a_wrapper_env_the_page_says_a_file_sets_is_set_from_it(name: str):
+    """ "Set by `converter.yaml` `fetch_max_bytes`" is true only if changing
+    that key changes the rendered Job's env, and changes nothing a `fixed`
+    one says."""
+    kind, key = FREE_ENV[name]
+    campaign, pipeline, cfg = _good_fixture()
+    before = _job_env(_job(campaign, pipeline, cfg))
+    if kind == "converter":
+        cfg = cfg.model_copy(update={key: _CHANGED[key]})
+    else:
+        pipeline = pipeline.model_copy(update={key: _CHANGED[key]})
+    after = _job_env(_job(campaign, pipeline, cfg))
+    assert str(_CHANGED[key]) in (after[name] or "") != before[name]
+    for fixed in (n for n, (k, _) in FREE_ENV.items() if k == "fixed"):
+        assert after[fixed] == before[fixed], fixed
+
+
+def test_a_wrapper_setting_for_a_local_run_only_reaches_no_rendered_job():
+    """The page calls a wrapper setting "a local run only" when nothing a
+    deployment runs can set it: no rendered Job carries it (campaign or
+    warm-up), the prologue does not export it, the image does not bake it,
+    and job-shape -- which admits exactly its own env lists -- does not name
+    it. Everything else the page must place somewhere real."""
+    from htrflow_converter import render as render_objects
+
+    campaign, pipeline, cfg = _good_fixture()
+    rendered = set(_job_env(_job(campaign, pipeline, cfg)))
+    rendered |= {
+        n
+        for o in render_objects.pipeline_objects(pipeline, cfg)
+        if o["kind"] == "Job"
+        for n in _job_env(o)
+    }
+    shape = job_shape()["batch"]
+    admitted = {*shape["pinned"], *shape["free"], *shape["secretEnv"]}
+    admitted |= set(shape["fieldEnv"])
+    baked = image_env("htrflow-batch.dockerfile")
+    for name in (n for n, _ in _model_rows(SURFACES[0][3])):
+        local = wrapper_set_by(name).startswith(LOCAL_ONLY)
+        assert local == (name not in rendered | set(script_exports()) | baked), name
+        assert not (local and name in admitted), name
+
+
+def test_a_web_setting_the_page_says_the_chart_sets_is_set_by_that_value():
+    """Each chart value the page names for a web env var, set to a sentinel,
+    is what the rendered Deployment carries; the namespace comes from the
+    downward API; a local-run setting is not in the Deployment at all."""
+    names = [n for n, _ in _model_rows(SURFACES[1][3])]
+    plain = _rendered("Deployment", "htrflow-web")
+    env = plain["spec"]["template"]["spec"]["containers"][0]["env"]
+    by_name = {e["name"]: e for e in env}
+    for name, paths in chart_web_env().items():
+        assert name in names, name
+        if not paths:
+            assert by_name[name]["valueFrom"] == {
+                "fieldRef": {"fieldPath": "metadata.namespace"}
+            }
+            continue
+        sentinel = f"https://{name.lower().replace('_', '-')}.example.org"
+        web = _rendered("Deployment", "htrflow-web", f"{paths[0]}={sentinel}")
+        env = web["spec"]["template"]["spec"]["containers"][0]["env"]
+        assert {e["name"]: e.get("value") for e in env}[name] == sentinel, name
+    for name in names:
+        if web_set_by(name).startswith(LOCAL_ONLY):
+            assert name not in by_name, name
+
+
+def test_every_image_env_the_page_explains_is_one_an_image_sets():
+    baked = image_env("htrflow-batch.dockerfile") | image_env("htrflow-web.dockerfile")
+    assert set(IMAGE_ENV_DOC) <= baked
+
+
+@pytest.mark.parametrize(
+    "model,key", overrides(), ids=lambda v: getattr(v, "__name__", v)
+)
+def test_a_campaign_or_pipeline_key_the_page_says_overrides_converter_yaml_does(
+    model, key
+):
+    """The page says a pipeline's `max_seconds:` overrides converter.yaml's,
+    and a campaign's `window:` may lower it: rendered, the Job shows it."""
+    from htrflow_converter.models import Pipeline
+
+    where = {
+        "max_seconds": ("spec", "template", "spec", "activeDeadlineSeconds"),
+        "ttl_seconds_after_finished": ("spec", "ttlSecondsAfterFinished"),
+        "window": ("spec", "parallelism"),
+    }
+    assert key in where, f"say how the page's claim about `{key}:` is checked"
+    campaign, pipeline, cfg = _good_fixture()
+    ours = getattr(cfg, key) - 1
+    if model is Pipeline:
+        pipeline = pipeline.model_copy(update={key: ours})
+    else:
+        campaign = campaign.model_copy(update={key: ours})
+    node = _job(campaign, pipeline, cfg)
+    for step in where[key]:
+        node = node[step]
+    assert node == ours
+
+
+def test_the_frontend_build_settings_are_the_ones_config_ts_reads():
+    """The page lists the VITE_ variables frontend/src/lib/config.ts reads
+    and says the published image builds with none of them set."""
+    assert [n for n, _ in frontend_rows()] == list(FRONTEND_DOC)
+    dockerfile = (ROOT / ".docker" / "htrflow-web.dockerfile").read_text("utf-8")
+    assert "VITE_" not in dockerfile
