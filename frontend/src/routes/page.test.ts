@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { clockTime } from "$lib/api.js";
 import { RELOAD_MS } from "$lib/config.js";
 import { cssOf, cssRules } from "$lib/fixtures/css.js";
 import CampaignsPage from "./+page.svelte";
@@ -170,9 +171,11 @@ describe("/ campaign page", () => {
 
     await vi.advanceTimersByTimeAsync(RELOAD_MS);
     expect(listCalls).toBe(2);
+    // Backed off: the next try is two periods away, at a time on the clock.
+    const next = clockTime(new Date(Date.now() + 2 * RELOAD_MS).toISOString());
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Can't reach the campaign service right now (HTTP 503). Showing the " +
-        "list we last received. Retrying every 60 seconds.",
+        `list we last received. Next try at ${next}.`,
     );
     expect(screen.getByText("kyrk")).toBeInTheDocument();
   });

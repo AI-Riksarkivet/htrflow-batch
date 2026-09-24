@@ -157,7 +157,15 @@
   const heldBack = $derived(problems.length - PROBLEMS_SHOWN);
   let pipelineSteps = $state<string[]>([]);
   let pipelineYaml = $state("");
-  let detailError = $state<string | null>(null);
+  // What the last read failed with, and when the next is: the sentence is
+  // made of both, so it names the real next try ($lib/reasons).
+  let detailFailure = $state<unknown>(null);
+  let retryAt = $state<Date | undefined>(undefined);
+  const detailError = $derived(
+    detailFailure === null
+      ? null
+      : describeApiError(detailFailure, volumes.length > 0, retryAt),
+  );
   // When the last read landed, and so whether the page count is known yet.
   let readAt = $state<string | null>(null);
   let loadingMore = $state(false);
@@ -472,14 +480,14 @@
       };
       pipelineSteps = detail.pipelineSteps;
       pipelineYaml = detail.pipelineYaml;
-      detailError = null;
+      detailFailure = null;
       readAt = new Date().toISOString();
       return true;
     } catch (e) {
       if (signal?.aborted) return true;
       // One sentence, never the transport detail or a ZodError: what the
       // reader can do about it is the point ($lib/reasons).
-      detailError = describeApiError(e, volumes.length > 0);
+      detailFailure = e;
       return false;
     }
   }
@@ -572,7 +580,10 @@
           return landed;
         },
         period,
-        { until: () => settled && landedFor === state },
+        {
+          until: () => settled && landedFor === state,
+          onWait: (ms) => (retryAt = new Date(Date.now() + ms)),
+        },
       ),
     );
   });

@@ -6,12 +6,12 @@
 // campaign page can say (B63 Task 20G).
 import {
   ApiUnreachable,
+  clockTime,
   type CampaignNotice,
   type VolumeProgress,
   type VolumeState,
   type VolumeReason,
 } from "./api.js";
-import { RELOAD_MS } from "./config.js";
 
 /** A stage name from the wrapper, as the thing it was doing. */
 // `config` is deliberately absent: it never reaches this map, because a
@@ -298,7 +298,17 @@ export function describeUnreadable(n: number): string {
   );
 }
 
-export function describeApiError(e: unknown, showingLast: boolean): string {
+/**
+ * `retryAt` is when the poll asks next, from $lib/poll's `onWait`: it backs
+ * off after a miss, so "every 60 seconds" was wrong from the first one. The
+ * sentence names the time, which stays true while it is on screen.
+ */
+export function describeApiError(
+  e: unknown,
+  showingLast: boolean,
+  retryAt?: Date,
+  timeZone?: string,
+): string {
   if (!(e instanceof ApiUnreachable)) {
     // A Zod parse failure: the service answered, but not in the shape this
     // build knows. Nothing the reader can fix except a reload.
@@ -323,6 +333,8 @@ export function describeApiError(e: unknown, showingLast: boolean): string {
   const last = showingLast ? "Showing the list we last received. " : "";
   return (
     `Can't reach the campaign service right now${status}. ${last}` +
-    `Retrying every ${Math.round(RELOAD_MS / 1000)} seconds.`
+    (retryAt === undefined
+      ? "It will try again on its own."
+      : `Next try at ${clockTime(retryAt.toISOString(), timeZone)}.`)
   );
 }

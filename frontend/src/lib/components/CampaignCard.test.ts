@@ -574,7 +574,7 @@ describe("CampaignCard", () => {
     expect(alert).toHaveTextContent(
       "Can't reach the campaign service right now (HTTP 503).",
     );
-    expect(alert).toHaveTextContent("Retrying every 60 seconds.");
+    expect(alert).toHaveTextContent(/Next try at \d\d:\d\d\./);
   });
 
   test("folded by default; the toggle opens and closes it, reading once", async () => {

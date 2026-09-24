@@ -207,6 +207,27 @@ describe("startPolling", () => {
 // for fifty details in the same instant. The cards share one gate: a few in
 // flight, the rest waiting their turn, and a card that goes away gives up
 // its place in the queue.
+// The banner over a failed poll said "retrying every 60 seconds" while the
+// poll was backing off to minutes (review of this change): the poller says
+// how long it will wait, each time it decides.
+describe("startPolling's onWait", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  test("hears each wait: the period, then doubled after a miss", async () => {
+    const waits: number[] = [];
+    let ok = true;
+    const stop = startPolling(async () => ok, PERIOD, {
+      onWait: (ms) => waits.push(ms),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    ok = false;
+    await vi.advanceTimersByTimeAsync(PERIOD);
+    expect(waits).toEqual([PERIOD, PERIOD * 2]);
+    stop();
+  });
+});
+
 describe("gate", () => {
   test("no more than `max` at once, the rest in the order they asked", async () => {
     const through = gate(2);

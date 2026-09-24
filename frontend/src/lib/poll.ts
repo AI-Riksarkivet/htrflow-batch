@@ -36,7 +36,14 @@ function hidden(): boolean {
 export function startPolling(
   tick: Tick,
   period: number,
-  { until }: { until?: () => boolean } = {},
+  {
+    until,
+    onWait,
+  }: {
+    until?: () => boolean;
+    /** Told each wait as it is set, backoff included: what a banner says. */
+    onWait?: (ms: number) => void;
+  } = {},
 ): () => void {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let inflight: AbortController | null = null;
@@ -49,7 +56,9 @@ export function startPolling(
 
   function schedule(): void {
     clearTimeout(timer);
-    if (!stopped) timer = setTimeout(() => void run(), wait());
+    if (stopped) return;
+    timer = setTimeout(() => void run(), wait());
+    onWait?.(wait());
   }
 
   async function run(): Promise<void> {
