@@ -3725,7 +3725,11 @@ describe("an open card holds the detail's place before it lands", () => {
     expect(screen.getAllByRole("row")).toHaveLength(4);
   });
 
-  test("no more placeholders than the first page holds, and the load-more is there already", async () => {
+  // Two hundred invisible rows were a blank screenful with nothing saying
+  // anything was coming, and the load-more claimed 200 loaded before any
+  // was (review of this change). A screenful of rows at most, the first
+  // saying they are on their way, the table busy until they land.
+  test("a screenful of placeholders at most, saying so, and a load-more that claims nothing yet", async () => {
     const many: JobSummary = { ...job, counts: { ...job.counts, total: 250 } };
     const land = held({
       volumes: Array.from({ length: 200 }, (_, i) => ({
@@ -3736,11 +3740,19 @@ describe("an open card holds the detail's place before it lands", () => {
     });
     const { container } = render(CampaignCard, { job: many });
     await vi.advanceTimersByTimeAsync(0);
-    expect(placeholders(container)).toHaveLength(200);
+    expect(placeholders(container)).toHaveLength(20);
+    expect(placeholders(container)[0]).toHaveTextContent("loading volumes…");
+    const table = screen.getByRole("table");
+    expect(table).toHaveAttribute("aria-busy", "true");
     const more = screen.getByRole("button", { name: /load more/ });
     expect(more).toBeDisabled();
+    expect(more).toHaveTextContent(/^\s*load more\s*$/);
     await land();
+    expect(table).toHaveAttribute("aria-busy", "false");
     expect(screen.getByRole("button", { name: /load more/ })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /load more/ })).toHaveTextContent(
+      "load more (200/250)",
+    );
   });
 
   test("all on the first page: no load-more before or after", async () => {

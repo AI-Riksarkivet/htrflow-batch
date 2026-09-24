@@ -321,14 +321,16 @@
   );
 
   // Before the first read lands, the rows the list row already promises --
-  // one per volume, up to the first page -- are drawn empty, so the detail
-  // fills rows in rather than adding them under the reader (the shift
-  // script: an open card grew by every row when its detail landed). None
-  // once a read has failed: there is nothing on its way to hold room for.
+  // one per volume, up to a screenful -- are drawn as placeholders, so the
+  // detail fills rows in rather than adding them under the reader (the
+  // shift script: an open card grew by every row when its detail landed).
+  // A screenful, not the first page: two hundred rows were a blank screen
+  // saying nothing (review of this change); past it the rows land below
+  // the fold. None once a read has failed: nothing is on its way.
+  const SKELETON = 20;
+  const pending = $derived(readAt === null && detailError === null);
   const waiting = $derived(
-    readAt === null && detailError === null
-      ? Math.min(Math.max(job.counts.total, 0), PAGE)
-      : 0,
+    pending ? Math.min(Math.max(job.counts.total, 0), SKELETON) : 0,
   );
 
   // A campaign of one volume has nothing to sum: its own row carries the
@@ -405,10 +407,10 @@
   );
 
   // "load more" is there as soon as the list row says there will be more
-  // than a page -- held, disabled, until the first page has landed -- so it
-  // does not come and go with the detail.
+  // than a page -- held, disabled and claiming no count, until the first
+  // page has landed -- so it does not come and go with the detail.
   const hasMore = $derived(
-    job.counts.total > (waiting > 0 ? PAGE : volumes.length),
+    job.counts.total > (pending ? PAGE : volumes.length),
   );
 
   // The one place the chip's word is decided. A campaign whose Job succeeded
@@ -1094,6 +1096,7 @@
           class="volumes"
           role="table"
           aria-label="Volumes in campaign {job.name}"
+          aria-busy={pending}
         >
           <div class="row head sr-only" role="row">
             <span role="columnheader">volume</span>
@@ -1113,9 +1116,14 @@
                cells take the height the real ones do (the pill and the
                icons' hit areas), hidden rather than absent. -->
           {#each { length: waiting } as _, i (i)}
-            <div class="row volume placeholder" aria-hidden="true">
+            <div
+              class="row volume placeholder"
+              class:first={i === 0}
+              aria-hidden="true"
+            >
               <span class="c-label"
-                >&nbsp;{#if i < storied}<span class="vprogress">&nbsp;</span
+                >{i === 0 ? "loading volumes…" : "\u00a0"}{#if i < storied}<span
+                    class="vprogress">&nbsp;</span
                   >{/if}</span
               >
               <span class="c-links"><span class="slot vicon"></span></span>
@@ -1135,12 +1143,14 @@
           <button
             type="button"
             class="load-more"
-            disabled={loadingMore || waiting > 0}
+            disabled={loadingMore || pending}
             onclick={loadMore}
           >
             {loadingMore
               ? "loading…"
-              : `load more (${waiting > 0 ? PAGE : volumes.length}/${job.counts.total})`}
+              : pending
+                ? "load more"
+                : `load more (${volumes.length}/${job.counts.total})`}
           </button>
         {/if}
       </div>
@@ -1525,9 +1535,16 @@
     flex-shrink: 0;
   }
 
-  /* Nothing in the placeholders is drawn; they are there for their size. */
+  /* The placeholders are there for their size: nothing in them is drawn... */
   .placeholder > * {
     visibility: hidden;
+  }
+
+  /* ...but the first says what they are waiting for. */
+  .placeholder.first > .c-label {
+    visibility: visible;
+    font-weight: 400;
+    color: var(--muted-foreground);
   }
 
   .models {
