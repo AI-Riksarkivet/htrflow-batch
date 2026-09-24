@@ -33,7 +33,7 @@ data_pvc: htr-test-data           # PVC mounted as the model cache
 runtime_class: nvidia             # RuntimeClass for GPU pods — on the warm-up Job too
 node_selector: {}
 tolerations: []                   # Kubernetes tolerations, each naming its taint's key (see below)
-public_results_base: ""           # public URL prefix results are served from (required for the read API)
+public_results_base: "https://<results-host>/<bucket>"   # required: the http(s) URL browsers read results at (the chart's publicResultsBase)
 source_template: "https://<iiif-host>/<path>/{ref}/manifest"   # no default; manifest URL for a bare volume id, {ref} is the id
 max_seconds: 21600                # each pod's activeDeadlineSeconds; a pipeline's own `max_seconds:` overrides it
 warmup_wait_seconds: 900          # how long a pod waits for its pipeline's warm-up marker before failing the index; capped by that pod's own deadline
@@ -43,7 +43,10 @@ fetch_max_bytes: 67108864         # 64 MiB
 ```
 
 The file itself is required: every command refuses a repo without one,
-rather than guess the namespace it applies and prunes in.
+rather than guess the namespace it applies and prunes in. So is
+`public_results_base`, and it must be an http(s) URL a browser can open:
+every campaign pod gets it, and without it every volume fails once the pod
+has been admitted and has waited for its warm-up.
 
 `queue`, `s3_secret`, `data_pvc`, `hf_token_secret` and
 `priority_classes` name objects the chart creates or allows;
