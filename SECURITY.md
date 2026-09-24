@@ -69,6 +69,11 @@ The `cosign verify` and `gh attestation verify` commands, anchored to `publish.y
 `main`, are in
 [Releasing → Signing, SBOM and provenance](https://ai-riksarkivet.github.io/htrflow-batch/development/releasing/#signing-sbom-and-provenance).
 
+Each GitHub release also carries both charts as packages, signed the same way by
+`release.yml` at the release's tag, with a `SHA256SUMS` and their SLSA build provenance;
+the `cosign verify-blob` recipe is in
+[Releasing → What a release carries](https://ai-riksarkivet.github.io/htrflow-batch/development/releasing/#what-a-release-carries).
+
 The chart can enforce the signature at admission: `security.verifyImages` is off by
 default, and `charts/htrflow-batch/values-prod.yaml` turns it on for this repository's
 `publish.yml` identity, so Kyverno refuses an image whose signature does not verify.
