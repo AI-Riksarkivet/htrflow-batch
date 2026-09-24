@@ -79,7 +79,7 @@ export function shortDate(
  */
 export const httpUrlSchema = z
   .string()
-  .refine(isHttpUrl, { message: "must be an absolute http(s) URL" });
+  .refine(isHttpUrl, { error: "must be an absolute http(s) URL" });
 
 /** "10:56" — the clock half of `shortDate`, for the end of a same-day range. */
 export function clockTime(iso: string, timeZone?: string): string | null {
