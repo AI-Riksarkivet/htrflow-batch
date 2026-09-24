@@ -1084,6 +1084,41 @@ def _not_cached(*_args) -> tuple[bool, None]:
     return False, None
 
 
+#: The campaign's lowest pages, across every volume read.
+CAMPAIGN_LOWEST = 5
+
+
+def _campaign_quality(rows: list[dict]) -> dict | None:
+    """The campaign's predicted quality over the volumes whose progress
+    carries one: the mean weighted by each volume's scored pages, and the
+    worst pages anywhere, each with the viewer manifest it opens in.
+    ``volumes`` says how many volumes it covers; the card says so when that
+    is not all of them."""
+    scored = [
+        (row, q)
+        for row in rows
+        if (q := (row.get("progress") or {}).get("quality")) is not None
+    ]
+    if not scored:
+        return None
+    pages = sum(q["scored"] for _, q in scored)
+    lowest = sorted(
+        (
+            {"volume": row["id"], **entry, "iiifUrl": row["iiifUrl"]}
+            for row, q in scored
+            for entry in q["lowest"]
+        ),
+        key=lambda e: (e["quality"], e["volume"], e["page"]),
+    )[:CAMPAIGN_LOWEST]
+    return {
+        "mean": round(sum(q["mean"] * q["scored"] for _, q in scored) / pages, 4),
+        "min": min(q["min"] for _, q in scored),
+        "scored": pages,
+        "volumes": len(scored),
+        "lowest": lowest,
+    }
+
+
 def _campaign_pages(rows: list[dict]) -> dict:
     """What the card says above its table, summed over the volumes whose
     progress was read. ``lastError`` is the most recent page failure among
@@ -1104,6 +1139,7 @@ def _campaign_pages(rows: list[dict]) -> dict:
         "pagesFailed": sum(p["failed"] for p in known),
         "errors": sum(p["errors"] for p in known),
         "lastError": max(last_errors, key=lambda e: e[0])[1] if last_errors else None,
+        "quality": _campaign_quality(rows),
     }
 
 

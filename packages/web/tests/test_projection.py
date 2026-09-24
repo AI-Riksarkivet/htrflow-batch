@@ -10,6 +10,7 @@ from htrflow_converter import render
 from htrflow_converter.models import ConverterConfig
 
 from htrflow_web import projection
+from htrflow_web.projection import _campaign_quality
 
 CFG = SimpleNamespace(public_results_base="https://results.example.org")
 #: `warmup` is required (Task 28 fix round item 4) -- this is what every
@@ -1930,3 +1931,54 @@ def test_a_source_the_browser_rejects_is_no_source(url: str):
 @pytest.mark.parametrize("url", WHATWG_ACCEPTS)
 def test_a_source_the_browser_accepts_is_kept(url: str):
     assert projection._source_url(f"vol0\t{url}") == url
+
+
+# --- the campaign's quality, summed over its volumes (Task 6) --------------
+
+
+def _row(vid, q):
+    return {
+        "id": vid,
+        "iiifUrl": f"https://pub/{vid}/iiif.json",
+        "progress": {"quality": q},
+    }
+
+
+def test_the_campaign_mean_is_weighted_by_scored_pages():
+    rows = [
+        _row(
+            "a",
+            {
+                "mean": 0.9,
+                "min": 0.8,
+                "scored": 1,
+                "lowest": [{"page": "1", "quality": 0.8, "canvas": 0}],
+            },
+        ),
+        _row(
+            "b",
+            {
+                "mean": 0.5,
+                "min": 0.2,
+                "scored": 3,
+                "lowest": [{"page": "7", "quality": 0.2, "canvas": 6}],
+            },
+        ),
+        _row("c", None),
+    ]
+    q = _campaign_quality(rows)
+    assert (
+        q["mean"] == 0.6 and q["min"] == 0.2 and q["scored"] == 4 and q["volumes"] == 2
+    )
+    assert q["lowest"][0] == {
+        "volume": "b",
+        "page": "7",
+        "quality": 0.2,
+        "canvas": 6,
+        "iiifUrl": "https://pub/b/iiif.json",
+    }
+
+
+def test_no_scored_volume_is_no_campaign_quality():
+    assert _campaign_quality([_row("a", None)]) is None
+    assert _campaign_quality([]) is None
