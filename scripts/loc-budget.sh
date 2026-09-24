@@ -1461,8 +1461,14 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5176
 # (C-1, I-1, M-4) -- as one spec block the agreement test reads, plus the
 # two ConfigMap-key rules that keep a mounted ConfigMap to the key the
 # converter writes (I-1); the API server joins the egress carve-out (M-3).
-# 1882 -> 1885: the three Pod image rules name Pod/ephemeralcontainers, with
-# one line each saying why -- a rule on kind Pod alone let a `kubectl debug`
-# container past them on the dev cluster.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1885
+# 1882 -> 1936: `kubectl debug` got a busybox container past the image rules
+# on the dev cluster. A rule on kind Pod never sees the pods/ephemeralcontainers
+# subresource request, and one that does is skipped by Kyverno's default for
+# a violation the old Pod already had -- so images-allowed and images-pinned
+# each gain a rule of their own for the subresource (allowExistingViolations:
+# false, the added container's image only), both stop being background
+# policies (Kyverno refuses one that matches a subresource), and
+# verify-images names the subresource too. Proven against the cluster's
+# admission controller, which the Kyverno CLI cannot stand in for here.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1936
 exit $fail

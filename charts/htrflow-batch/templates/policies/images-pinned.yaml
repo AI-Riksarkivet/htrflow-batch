@@ -35,7 +35,8 @@ metadata:
   labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
 spec:
   validationFailureAction: Enforce
-  background: true
+  # false: Kyverno refuses a background policy that matches a subresource
+  background: false
   rules:
     - name: job-images-pinned
       match:
@@ -63,8 +64,7 @@ spec:
       match:
         any:
           - resources:
-              # Pod alone misses the subresource `kubectl debug` goes through
-              kinds: [Pod, Pod/ephemeralcontainers]
+              kinds: [Pod]
               namespaces: [{{ .Release.Namespace | quote }}]
       context:
         - name: unpinned
@@ -74,6 +74,31 @@ spec:
               | [?!regex_match('^\S+@sha256:[0-9a-f]{64}$', @)]
             default: []
       validate:
+        message: >-
+          image must be pinned by digest: {{ `{{ join(', ', unpinned) }}` }}
+        deny:
+          conditions:
+            all:
+              - key: {{ `"{{ length(unpinned) }}"` }}
+                operator: GreaterThan
+                value: 0
+    - name: debug-images-pinned
+      match:
+        any:
+          - resources:
+              kinds: [Pod/ephemeralcontainers]
+              namespaces: [{{ .Release.Namespace | quote }}]
+      context:
+        - name: unpinned
+          variable:
+            jmesPath: >-
+              request.object.spec.ephemeralContainers[].image
+              | [?!regex_match('^\S+@sha256:[0-9a-f]{64}$', @)]
+            default: []
+      validate:
+        # `kubectl debug` is an update to a running Pod: Kyverno's default
+        # skips a rule whose violation the old object already had.
+        allowExistingViolations: false
         message: >-
           image must be pinned by digest: {{ `{{ join(', ', unpinned) }}` }}
         deny:
