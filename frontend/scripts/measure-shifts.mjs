@@ -113,19 +113,68 @@ function campaign(i, [phase, warmup, gone]) {
 
 let list = SHAPES.map((s, i) => campaign(i, s));
 
+// A detail that agrees with its list row: the failed volumes first, then
+// the active ones, then the done ones, the rest pending -- each shaped like
+// the fixture's volume, with progress to match -- so a card's rows say what
+// its counts said. A finished campaign sometimes lost pages, which only the
+// detail says ("partially succeeded").
 function detailOf(job, i) {
   const base = fixture.details[i % fixture.details.length];
-  const volumes = Array.from({ length: job.counts.total }, (_, k) => ({
-    ...base.volumes[k % base.volumes.length],
-    id: `vol${k}`,
-    index: k,
-  }));
+  const shape = base.volumes[0];
+  const { failed, active, done } = job.counts;
+  const lost = job.phase === "Succeeded" && i % 2 === 1 ? 3 : 0;
+  const volumes = Array.from({ length: job.counts.total }, (_, k) => {
+    const state =
+      k < failed
+        ? "failed"
+        : k < failed + active
+          ? "active"
+          : k < failed + active + done
+            ? "done"
+            : "pending";
+    const total = 200 + 37 * k;
+    const progress =
+      state === "pending"
+        ? null
+        : {
+            ...shape.progress,
+            done: state === "done" ? total : 120,
+            total,
+            failed: k === 0 ? lost : 0,
+            errors: 0,
+            lastError: null,
+            stage: state === "done" ? "done" : "stream",
+          };
+    return {
+      ...shape,
+      id: `vol${k}`,
+      index: k,
+      state,
+      progress,
+      ...(state === "failed"
+        ? { reason: { stage: "load", permanent: true, error: "manifest 404" } }
+        : {}),
+    };
+  });
+  const read = volumes.filter((v) => v.progress);
   return {
     ...base,
     ...job,
     volumes,
-    failures: base.failures.filter((f) => f.id !== "vol0"),
-    pagesFailed: job.phase === "Succeeded" && i % 2 === 1 ? 3 : 0,
+    latest: null,
+    // A pipeline that loads models, as every real one does (the fixture's
+    // two-step stub names none, and a card draws no models line for it).
+    pipelineYaml:
+      "steps:\n- step: Segmentation\n  settings:\n    model_settings:\n" +
+      "      model: Riksarkivet/yolov9-lines-within-regions-1\n" +
+      "      revision: 6fb01d2\n",
+    failures: volumes.filter((v) => v.state === "failed"),
+    lastError: null,
+    errors: 0,
+    pagesDone: read.reduce((a, v) => a + v.progress.done, 0),
+    pagesTotal: read.reduce((a, v) => a + v.progress.total, 0),
+    pagesFailed: lost,
+    pagesCoverage: { counted: read.length, of: read.length },
   };
 }
 
