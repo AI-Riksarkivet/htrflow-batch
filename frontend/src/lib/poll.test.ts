@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { MAX_POLL_MS, startPolling } from "./poll.js";
+import { gate, MAX_POLL_MS, startPolling } from "./poll.js";
 
 const PERIOD = 1000;
 
@@ -199,5 +199,163 @@ describe("startPolling", () => {
     setHidden(false);
     await vi.advanceTimersByTimeAsync(PERIOD);
     expect(run).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Every folded card on screen reads its own detail now, for the page count
+// in its header, and a page of fifty campaigns opened at once asked the API
+// for fifty details in the same instant. The cards share one gate: a few in
+// flight, the rest waiting their turn, and a card that goes away gives up
+// its place in the queue.
+// The banner over a failed poll said "retrying every 60 seconds" while the
+// poll was backing off to minutes (review of this change): the poller says
+// how long it will wait, each time it decides.
+describe("startPolling's onWait", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  test("hears each wait: the period, then doubled after a miss", async () => {
+    const waits: number[] = [];
+    let ok = true;
+    const stop = startPolling(async () => ok, PERIOD, {
+      onWait: (ms) => waits.push(ms),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    ok = false;
+    await vi.advanceTimersByTimeAsync(PERIOD);
+    expect(waits).toEqual([PERIOD, PERIOD * 2]);
+    stop();
+  });
+});
+
+// A card back on screen a moment after its last read waited a whole period
+// from then, not from the read (review of this change): the poll can start
+// with the rest of the period that is still to run.
+describe("startPolling's first wait", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  test("the first tick waits `first`, and the rest the period", async () => {
+    const run = vi.fn(async () => true);
+    const stop = startPolling(run, PERIOD, { first: 300 });
+    await vi.advanceTimersByTimeAsync(299);
+    expect(run).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(run).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(PERIOD);
+    expect(run).toHaveBeenCalledTimes(2);
+    stop();
+  });
+});
+
+// Scrolled past at the margin, a folded card's read was aborted after the
+// server had done the work (review of this change): stopped that way, the
+// tick in flight finishes and only the next is not asked for.
+describe("stopping and letting the tick finish", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  test("the tick in flight is not aborted, and nothing more runs", async () => {
+    const held = deferred();
+    let signal: AbortSignal | undefined;
+    const run = vi.fn(async (s: AbortSignal) => {
+      signal = s;
+      return held.promise;
+    });
+    const stop = startPolling(run, PERIOD);
+    await vi.advanceTimersByTimeAsync(0);
+    stop(true);
+    expect(signal?.aborted).toBe(false);
+    held.done(true);
+    await vi.advanceTimersByTimeAsync(PERIOD * 3);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("gate", () => {
+  test("no more than `max` at once, the rest in the order they asked", async () => {
+    const through = gate(2);
+    const held = [deferred(), deferred(), deferred()];
+    const started: number[] = [];
+    const runs = held.map((d, i) =>
+      through(async () => {
+        started.push(i);
+        return d.promise;
+      }),
+    );
+    await Promise.resolve();
+    expect(started).toEqual([0, 1]);
+    held[1]?.done(true);
+    await runs[1];
+    await Promise.resolve();
+    expect(started).toEqual([0, 1, 2]);
+    held[0]?.done(true);
+    held[2]?.done(true);
+    await Promise.all(runs);
+  });
+
+  test("a task that fails still gives its place up", async () => {
+    const through = gate(1);
+    await expect(
+      through(async () => {
+        throw new Error("x");
+      }),
+    ).rejects.toThrow("x");
+    await expect(through(async () => true)).resolves.toBe(true);
+  });
+
+  test("aborted while waiting, a task never runs and says it was aborted", async () => {
+    const through = gate(1);
+    const first = deferred();
+    const running = through(async () => first.promise);
+    const controller = new AbortController();
+    const task = vi.fn(async () => true);
+    const waiting = through(task, controller.signal);
+    controller.abort();
+    await expect(waiting).rejects.toThrow(/abort/i);
+    first.done(true);
+    await running;
+    await Promise.resolve();
+    expect(task).not.toHaveBeenCalled();
+  });
+
+  // An aborted fetch is over as far as anyone waiting is concerned, even
+  // when whatever was asked never answers.
+  test("aborted while running, a task gives its place up at once", async () => {
+    const through = gate(1);
+    const controller = new AbortController();
+    void through(() => new Promise<never>(() => {}), controller.signal).catch(
+      () => {},
+    );
+    const next = vi.fn(async () => true);
+    const waiting = through(next);
+    controller.abort();
+    await expect(waiting).resolves.toBe(true);
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  // What a reader asked for -- a card opened, "load more" -- waited behind
+  // every folded card's background read (review of this change: 30-40 s
+  // behind 25 of them). It goes to the front of the queue, behind only
+  // other asks.
+  test("an urgent task goes ahead of every waiting one that is not", async () => {
+    const through = gate(1);
+    const first = deferred();
+    const order: string[] = [];
+    const runs = [
+      through(async () => first.promise),
+      through(async () => void order.push("background 1")),
+      through(async () => void order.push("background 2")),
+      through(async () => void order.push("asked 1"), undefined, true),
+      through(async () => void order.push("asked 2"), undefined, true),
+    ];
+    first.done(true);
+    await Promise.all(runs);
+    expect(order).toEqual([
+      "asked 1",
+      "asked 2",
+      "background 1",
+      "background 2",
+    ]);
   });
 });

@@ -1,6 +1,12 @@
 import { describe, expect, test } from "vitest";
 import type { JobSummary } from "./api.js";
-import { byAttention, inTrouble, warmupBlocked } from "./order.js";
+import {
+  byAttention,
+  inTrouble,
+  keepOrder,
+  outOfOrder,
+  warmupBlocked,
+} from "./order.js";
 
 function job(name: string, over: Partial<JobSummary> = {}): JobSummary {
   return {
@@ -201,5 +207,90 @@ describe("a partially succeeded campaign in the list", () => {
       "clean",
     ]);
     expect(inTrouble(lostVolume)).toBe(true);
+  });
+});
+
+// A poll lands every minute on a page someone is reading. Re-sorting it
+// moved a campaign that had just started from the bottom of the list to the
+// top and every card between down one (the repo owner: "things pop all
+// over"). The order a reader has is kept; what changed is said by the card
+// itself, and new campaigns take the place the order gives them.
+describe("keepOrder", () => {
+  const names = (jobs: JobSummary[]) => jobs.map((j) => j.name);
+
+  test("a campaign whose band changed stays where it was, with its new row", () => {
+    const shown = byAttention([running, failed, oldFinish, queued]);
+    const started = { ...queued, phase: "Running" as const };
+    const kept = keepOrder(shown, [started, running, failed, oldFinish]);
+    expect(names(kept)).toEqual(["running", "failed", "old", "queued"]);
+    expect(kept.at(-1)?.phase).toBe("Running");
+  });
+
+  test("a new campaign goes where the order puts it among the rest", () => {
+    const shown = byAttention([running, oldFinish, queued]);
+    const kept = keepOrder(shown, [running, oldFinish, queued, failed, paused]);
+    expect(names(kept)).toEqual([
+      "running",
+      "failed",
+      "old",
+      "queued",
+      "paused",
+    ]);
+  });
+
+  test("two new ones in a row keep the order's own order between them", () => {
+    const shown = [queued];
+    const kept = keepOrder(shown, [queued, newFinish, running]);
+    expect(names(kept)).toEqual(["running", "new", "queued"]);
+  });
+
+  test("a campaign that is gone from the answer is gone from the list", () => {
+    const shown = byAttention([running, failed, queued]);
+    expect(names(keepOrder(shown, [running, queued]))).toEqual([
+      "running",
+      "queued",
+    ]);
+  });
+
+  test("nothing shown yet: the order itself", () => {
+    const all = [queued, oldFinish, running, failed];
+    expect(names(keepOrder([], all))).toEqual(names(byAttention(all)));
+  });
+
+  test("the same name in two namespaces is two campaigns", () => {
+    const other = { ...queued, namespace: "htr-other" };
+    expect(
+      keepOrder([queued], [other, queued]).map((j) => j.namespace),
+    ).toEqual(["htr-other", "htr-test"]);
+  });
+
+  // What the order is for is surfacing trouble, and a kept order buried a
+  // campaign that failed under the finished ones for as long as the tab
+  // stayed open (review of this change). Falling into trouble is news worth
+  // a move: the card goes to its place at once, as a new one would.
+  test("a campaign that falls into trouble moves to its place at once", () => {
+    const shown = byAttention([running, oldFinish, queued]);
+    const broke = { ...queued, phase: "Failed" as const };
+    expect(names(keepOrder(shown, [running, oldFinish, broke]))).toEqual([
+      "running",
+      "queued",
+      "old",
+    ]);
+  });
+
+  test("one already in trouble stays where the reader has it", () => {
+    const shown = [oldFinish, failed, running]; // as a reader left it
+    expect(names(keepOrder(shown, [running, failed, oldFinish]))).toEqual([
+      "old",
+      "failed",
+      "running",
+    ]);
+  });
+});
+
+describe("outOfOrder", () => {
+  test("says whether the sort would put the list another way", () => {
+    expect(outOfOrder(byAttention([queued, running, failed]))).toBe(false);
+    expect(outOfOrder([queued, running])).toBe(true);
   });
 });

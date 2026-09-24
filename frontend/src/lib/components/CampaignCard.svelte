@@ -1,3 +1,13 @@
+<script lang="ts" module>
+  import { gate } from "$lib/poll.js";
+
+  // Every card on screen reads its own detail, folded ones included (for
+  // the page count in the header), and a page of fifty campaigns asked for
+  // fifty in the same instant. They share this: four in flight, the rest in
+  // turn, and a card that goes away gives up its place.
+  const detailReads = gate(4);
+</script>
+
 <script lang="ts">
   // One campaign = one Indexed Job. The header is the JobSummary the parent
   // already has (from GET /api/v1/jobs); the volume table is fetched
@@ -13,8 +23,9 @@
     type JobSummary,
     type VolumeView,
   } from "$lib/api.js";
-  import { RELOAD_MS } from "$lib/config.js";
+  import { FOLDED_MS, RELOAD_MS } from "$lib/config.js";
   import { inTrouble } from "$lib/order.js";
+  import { watchOnScreen } from "$lib/onscreen.js";
   import { startPolling } from "$lib/poll.js";
   import { modelLabel, modelUrl, pipelineModels } from "$lib/pipeline.js";
   import {
@@ -49,17 +60,20 @@
   const startsFolded = remembered();
   let collapsed = $state(startsFolded);
 
-  // Whether anyone has had a chance to see this card: it has been on screen,
-  // or open. A finished campaign reads its detail only then -- a page of
-  // them used to make one request per card the moment it opened, each
-  // reading the campaign's volume list, its pods and up to a hundred
-  // progress files, for cards nobody had scrolled to (the 2026-09-23
-  // audit). Sticky: once seen, folding the card is not a reason to forget.
-  let wanted = $state(!startsFolded);
+  // Whether it is on screen now ($lib/onscreen): a folded card reads only
+  // then. A page of finished campaigns used to make one request per card
+  // the moment it opened, each reading the campaign's volume list, its pods
+  // and up to a hundred progress files, for cards nobody had scrolled to
+  // (the 2026-09-23 audit).
+  let onScreen = $state(false);
+  let visible = false;
+  // Set when the reader opens the card: the read that follows is theirs,
+  // and goes ahead of the folded cards' background reads ($lib/poll gate).
+  let asked = false;
 
   function toggle(): void {
     collapsed = !collapsed;
-    if (!collapsed) wanted = true;
+    asked = !collapsed;
     try {
       localStorage.setItem(memoryKey, collapsed ? "closed" : "open");
     } catch {
@@ -144,7 +158,17 @@
   const heldBack = $derived(problems.length - PROBLEMS_SHOWN);
   let pipelineSteps = $state<string[]>([]);
   let pipelineYaml = $state("");
-  let detailError = $state<string | null>(null);
+  // What the last read failed with, and when the next is: the sentence is
+  // made of both, so it names the real next try ($lib/reasons).
+  let detailFailure = $state<unknown>(null);
+  let retryAt = $state<Date | undefined>(undefined);
+  const detailError = $derived(
+    detailFailure === null
+      ? null
+      : describeApiError(detailFailure, volumes.length > 0, retryAt),
+  );
+  // When the last read landed, and so whether the page count is known yet.
+  let readAt = $state<string | null>(null);
   let loadingMore = $state(false);
 
   // Which rows' page counts moved on the last poll, so only those flash.
@@ -297,12 +321,27 @@
     job.phase === "Running" ? "running" : campaignLost ? "lost" : "",
   );
 
+  // Before the first read lands, the rows the list row already promises --
+  // one per volume, up to a screenful -- are drawn as placeholders, so the
+  // detail fills rows in rather than adding them under the reader (the
+  // shift script: an open card grew by every row when its detail landed).
+  // A screenful, not the first page: two hundred rows were a blank screen
+  // saying nothing (review of this change); past it the rows land below
+  // the fold. None once a read has failed: nothing is on its way.
+  const SKELETON = 20;
+  const pending = $derived(readAt === null && detailError === null);
+  const waiting = $derived(
+    pending ? Math.min(Math.max(job.counts.total, 0), SKELETON) : 0,
+  );
+
   // A campaign of one volume has nothing to sum: its own row carries the
   // same two fractions, and stacking a total over an identical row said
   // everything twice (the product owner, 2026-09-16). Only dropped once
   // there IS a row to carry them -- a detail that has not loaded yet would
   // otherwise leave the card with no numbers at all.
-  const showTotals = $derived(job.counts.total !== 1 || volumes.length === 0);
+  const showTotals = $derived(
+    job.counts.total !== 1 || (volumes.length === 0 && waiting === 0),
+  );
 
   // The two "partially" words shared one amber, on the chip and on the
   // accent, so a campaign that lost a few pages and one that lost whole
@@ -360,7 +399,20 @@
   // in one line, matching the model block every ALTO it publishes carries.
   const models = $derived(pipelineModels(pipelineYaml));
 
-  const hasMore = $derived(volumes.length < job.counts.total);
+  // How many of those rows will carry a second line: a volume still
+  // working says its stage and age, and one that failed says where it
+  // stopped, and why on a line under the row; a done or pending one says
+  // nothing (describeProgress). The list row counts both.
+  const storied = $derived(
+    Math.min(job.counts.active + job.counts.failed, waiting),
+  );
+
+  // "load more" is there as soon as the list row says there will be more
+  // than a page -- held, disabled and claiming no count, until the first
+  // page has landed -- so it does not come and go with the detail.
+  const hasMore = $derived(
+    job.counts.total > (pending ? PAGE : volumes.length),
+  );
 
   // The one place the chip's word is decided. A campaign whose Job succeeded
   // but whose volumes lost pages used to wear "Succeeded" painted amber --
@@ -392,7 +444,11 @@
   // next page (the "load more" button). A poll re-fetches every page that is
   // currently open, rounded up to whole pages, so a tick does not undo
   // "load more" under the reader's cursor; counts.total still ends paging.
-  async function load(reset: boolean, signal?: AbortSignal): Promise<boolean> {
+  async function load(
+    reset: boolean,
+    signal?: AbortSignal,
+    urgent = false,
+  ): Promise<boolean> {
     try {
       const offset = reset ? 0 : volumes.length;
       const limit = reset
@@ -401,12 +457,10 @@
             Math.max(PAGE, Math.ceil(volumes.length / PAGE) * PAGE),
           )
         : PAGE;
-      const detail = await fetchJob(
-        job.namespace,
-        job.name,
-        offset,
-        limit,
+      const detail = await detailReads(
+        () => fetchJob(job.namespace, job.name, offset, limit, signal),
         signal,
+        urgent,
       );
       if (signal?.aborted) return true;
       // A short answer is the whole list, so it replaces what is loaded; a
@@ -434,20 +488,21 @@
       };
       pipelineSteps = detail.pipelineSteps;
       pipelineYaml = detail.pipelineYaml;
-      detailError = null;
+      detailFailure = null;
+      readAt = new Date().toISOString();
       return true;
     } catch (e) {
       if (signal?.aborted) return true;
       // One sentence, never the transport detail or a ZodError: what the
       // reader can do about it is the point ($lib/reasons).
-      detailError = describeApiError(e, volumes.length > 0);
+      detailFailure = e;
       return false;
     }
   }
 
   async function loadMore(): Promise<void> {
     loadingMore = true;
-    await load(false);
+    await load(false, undefined, true);
     loadingMore = false;
   }
 
@@ -457,9 +512,10 @@
   // ConfigMaps and up to a hundred progress files (the API's
   // PROGRESS_FETCH_CAP), and a page of old campaigns polling for ever was
   // load that grew with the history and bought nothing (the 2026-09-17
-  // audit, 3079). "Once" means once it has landed: a read that failed is
-  // still retried, on $lib/poll's backoff. And only once the card is
-  // `wanted` -- on screen or open.
+  // audit, 3079). "Once" means once it has landed with whole page sums: a
+  // read that failed is still retried, on $lib/poll's backoff, and one
+  // whose sums the API has not filled in yet is read again. Folded, only
+  // while on screen.
   const settled = $derived(
     job.jobGone ||
       job.phase === "Succeeded" ||
@@ -468,10 +524,53 @@
       job.phase === "Unknown",
   );
 
+  // Whether the page sums are every run volume's. The API reads at most a
+  // hundred volumes' progress per request, so a large campaign's first sums
+  // are short in every figure until later reads fill them in.
+  const whole = $derived(coverage.counted >= coverage.of);
+  const partial = $derived(
+    `counted in ${coverage.counted} of ${coverage.of} volumes`,
+  );
+
+  // The folded card's page count: "411 / 1914 pages · 3 failed", the same
+  // sums the open card's pages row draws, each figure marked "≥" while the
+  // sums are partial -- on the line, where a finger or a keyboard can read
+  // it, not only in a title (review of the loading change). Null (an empty,
+  // held place) until a read has landed, and while the card is open.
+  const statText = $derived.by(() => {
+    if (!collapsed || readAt === null) return null;
+    const at = whole ? "" : "≥";
+    const text =
+      (pages.total > 0 ? `${at}${pages.done} / ${at}${pages.total}` : "—") +
+      " pages" +
+      (notice.pagesFailed > 0 ? ` · ${at}${notice.pagesFailed} failed` : "");
+    // Reads have failed since this one: say when the figures are from.
+    return detailFailure === null
+      ? text
+      : `${text} · as of ${clockTime(readAt)}`;
+  });
+  // The same, and when they were read for a campaign still going; "so far"
+  // only for one whose volumes are still working.
+  const statTitle = $derived(
+    [
+      whole ? null : settled ? partial : `${partial} so far`,
+      !settled && readAt !== null ? `as of ${clockTime(readAt)}` : null,
+    ]
+      .filter((part) => part !== null)
+      .join(" · ") || undefined,
+  );
+
+  /** $lib/onscreen as an action: told on and off screen, until destroyed. */
+  function watch(node: HTMLElement, told: (on: boolean) => void) {
+    return { destroy: watchOnScreen(node, told) };
+  }
+
   // The campaign state the last read that landed was of: a settled card is
   // not read again for the same state, however often it is folded and
   // opened. Not reactive: it is the effect's memory, not its input.
   let landedFor = "";
+  // When it did, for the folded pace (ms since the epoch).
+  let lastRead = 0;
 
   $effect(() => {
     // Tracked on purpose: a change of phase, or the Job being reaped, is
@@ -479,54 +578,58 @@
     // state, a reaped one from the record that replaced its Job, and one
     // re-run under the same name starts polling again.
     const state = `${job.phase}/${job.jobGone}`;
-    // Folded, the card is its header, and the list row carries all of that
-    // but one thing: whether a Succeeded campaign lost pages on the way
-    // ("partially succeeded"). Nothing else is read for a folded card.
-    if (collapsed && job.phase !== "Succeeded") return;
-    const once = settled || collapsed;
-    // Read only for a settled card, so a running one is not restarted by it.
-    if (once && (!wanted || landedFor === state)) return;
+    // A settled campaign has one thing left to learn once read: the rest of
+    // its page sums, which the API fills in a hundred volumes a read. Whole,
+    // there is nothing more to ask for. Untracked: the sums arriving are
+    // what the poll's `until` looks at, not a reason to restart it.
+    if (settled && untrack(() => landedFor === state && whole)) return;
+    // Folded, the card is its header, and its page count is the one thing
+    // on it the list row does not carry: read only while on screen.
+    if (collapsed && !onScreen) return;
+    // Open, at the list's pace; folded -- still going, or finished and
+    // filling in its sums -- at half that.
+    const period = collapsed ? FOLDED_MS : RELOAD_MS;
     // untrack: load() reads `volumes` to size its refresh and then writes it,
     // and an effect that reads its own output re-runs forever. The list
     // keys each card by namespace/name, so a card never changes campaign
     // under its own feet. $lib/poll is what keeps a page of cards from each
     // queueing up requests against a slow API, and from polling at all
     // while nobody is looking.
-    return untrack(() =>
+    const stop = untrack(() =>
       startPolling(
         async (signal) => {
-          const landed = await load(true, signal);
-          if (landed && !signal.aborted) landedFor = state;
+          const urgent = asked;
+          asked = false;
+          const landed = await load(true, signal, urgent);
+          if (landed && !signal.aborted) {
+            landedFor = state;
+            lastRead = Date.now();
+          }
           return landed;
         },
-        RELOAD_MS,
-        { until: () => once && landedFor === state },
+        period,
+        {
+          until: () => settled && landedFor === state && whole,
+          onWait: (ms) => (retryAt = new Date(Date.now() + ms)),
+          // A read of this same state stands until its period is up: back
+          // on screen, or opened, a moment after it, the next read is a
+          // period after it, not after now. A folded card's read is the
+          // whole first page, so the table it opens to is already there.
+          first:
+            landedFor === state
+              ? Math.max(0, lastRead + period - Date.now())
+              : 0,
+        },
       ),
     );
+    // Gone off screen folded, a read in flight is let land: the server
+    // has done its work, and the answer is this card's. Anything else --
+    // opened, folded, a new phase, the card gone -- stops it outright.
+    // A teardown reads state as it was before the change that caused it,
+    // so whether the card has just gone off screen is `visible`, kept beside
+    // `onScreen` by the watcher.
+    return () => stop(untrack(() => collapsed) && !visible);
   });
-
-  /**
-   * Marks the card `wanted` the first time any of it is on screen (or
-   * nearly: the margin reads it just before it scrolls in). A browser with
-   * no IntersectionObserver cannot say, so the card is wanted at once --
-   * what every card did before.
-   */
-  function whenSeen(node: HTMLElement) {
-    if (typeof IntersectionObserver === "undefined") {
-      wanted = true;
-      return {};
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (!entries.some((e) => e.isIntersecting)) return;
-        wanted = true;
-        observer.disconnect();
-      },
-      { rootMargin: "200px" },
-    );
-    observer.observe(node);
-    return { destroy: () => observer.disconnect() };
-  }
 
   /**
    * The fill's width, clamped to the track. `done` and `total` come from the
@@ -860,7 +963,11 @@
   {@render lostLine(cell.failed, 0)}
 {/snippet}
 
-<section class="campaign" data-health={health} use:whenSeen>
+<section
+  class="campaign"
+  data-health={health}
+  use:watch={(on: boolean) => (onScreen = visible = on)}
+>
   <div class="camp">
     <!-- aria-controls only while the card is open: it must be an IDREF that
          resolves, and a folded card renders nothing below this line.
@@ -868,71 +975,90 @@
          is optional in the disclosure pattern; rendering an empty element
          just to keep the id would be worse — the reference would resolve to
          nothing at all. -->
-    <button
-      type="button"
-      class="camp-toggle"
-      aria-expanded={!collapsed}
-      aria-controls={collapsed ? undefined : openId}
-      onclick={toggle}
-    >
-      <span class="disclosure" aria-hidden="true">{collapsed ? "▸" : "▾"}</span>
-      <span class="camp-name"
-        >{showNamespace ? `${job.namespace}/${job.name}` : job.name}</span
+    <!-- Three tracks: the words take what the other two leave, and the
+         page count and the times have tracks of their own that are there
+         from the first paint. The chips follow the name, the phase chip
+         last: its word is the one that can change when the detail lands
+         ("partially succeeded"), and last, it pushes nothing along. -->
+    <div class="title">
+      <button
+        type="button"
+        class="camp-toggle"
+        aria-expanded={!collapsed}
+        aria-controls={collapsed ? undefined : openId}
+        onclick={toggle}
       >
-    </button>
-    {#if warmupChip !== null}
-      <span class="chip warmup {job.warmup.phase}" title={warmupReason}
-        >{warmupChip}</span
-      >
-    {/if}
+        <span class="disclosure" aria-hidden="true"
+          >{collapsed ? "▸" : "▾"}</span
+        >
+        <span class="camp-name"
+          >{showNamespace ? `${job.namespace}/${job.name}` : job.name}</span
+        >
+      </button>
+      <span class="chips">
+        {#if warmupChip !== null}
+          <span class="chip warmup {job.warmup.phase}" title={warmupReason}
+            >{warmupChip}</span
+          >
+        {/if}
+        {#if job.jobGone}
+          <!-- Not a failure: the Job did its work and Kubernetes removed it
+               at its TTL. The chip says why there is no volume table below. -->
+          <span
+            class="chip gone"
+            title="the campaign's Job has passed its ttlSecondsAfterFinished and been removed — this is the record it left"
+            >job removed</span
+          >
+        {/if}
+        <span
+          class="chip phase {job.phase.toLowerCase()}"
+          class:lost={campaignLost}
+          data-mix={mix}
+          title={phaseTitle}
+        >
+          {#if beating}<span class="dot pulse" aria-hidden="true"
+            ></span>{/if}{#if campaignLost}<span aria-hidden="true"
+              >{phaseLabel}</span
+            ><span class="sr-only">{doneWith(notice.pagesFailed)}</span
+            >{:else}{phaseLabel}{/if}</span
+        >
+      </span>
+    </div>
+    <!-- The pages done, on a folded card (the repo owner). Its place is
+         held, empty, until the detail says it, so its arriving moves
+         nothing; open, the totals below say it instead. -->
     <span
-      class="chip phase {job.phase.toLowerCase()}"
-      class:lost={campaignLost}
-      data-mix={mix}
-      title={phaseTitle}
+      class="stat"
+      aria-hidden={statText === null ? "true" : undefined}
+      title={statText === null ? undefined : statTitle}
+      >{statText ?? ""}{#if statText !== null && !whole}<span class="sr-only"
+          >, {partial}</span
+        >{/if}</span
     >
-      {#if beating}<span class="dot pulse" aria-hidden="true"
-        ></span>{/if}{#if campaignLost}<span aria-hidden="true"
-          >{phaseLabel}</span
-        ><span class="sr-only">{doneWith(notice.pagesFailed)}</span
-        >{:else}{phaseLabel}{/if}</span
-    >
-    {#if job.jobGone}
-      <!-- Not a failure: the Job did its work and Kubernetes removed it at
-           its TTL. The chip says why there is no volume table below. -->
-      <span
-        class="chip gone"
-        title="the campaign's Job has passed its ttlSecondsAfterFinished and been removed — this is the record it left"
-        >job removed</span
-      >
-    {/if}
     <!-- When the campaign was created and when it finished, at the right end
          of the identity line. -->
-    {#if job.createdAt !== null || job.finishedAt !== null}
-      <span class="when">
-        {#if job.createdAt !== null}
-          <span class="sr-only">created </span><time
-            datetime={job.createdAt}
-            title={job.createdAt}
-            >{shortDate(job.createdAt) ?? job.createdAt}</time
-          >
-        {/if}
-        {#if finishedLabel !== null}
-          {#if job.createdAt !== null}{" "}<span
-              class="arrow"
-              aria-hidden="true">→</span
-            >{" "}{/if}<span class="sr-only"
-            >{job.createdAt === null ? "finished " : ", finished "}</span
-          ><time datetime={job.finishedAt} title={job.finishedAt}
-            >{finishedLabel}</time
-          >
-        {:else if stillGoing}
-          {" "}<span class="arrow" aria-hidden="true">→</span>{" "}<span
-            aria-hidden="true">…</span
-          ><span class="sr-only">, still running</span>
-        {/if}
-      </span>
-    {/if}
+    <span class="when">
+      {#if job.createdAt !== null}
+        <span class="sr-only">created </span><time
+          datetime={job.createdAt}
+          title={job.createdAt}
+          >{shortDate(job.createdAt) ?? job.createdAt}</time
+        >
+      {/if}
+      {#if finishedLabel !== null}
+        {#if job.createdAt !== null}{" "}<span class="arrow" aria-hidden="true"
+            >→</span
+          >{" "}{/if}<span class="sr-only"
+          >{job.createdAt === null ? "finished " : ", finished "}</span
+        ><time datetime={job.finishedAt} title={job.finishedAt}
+          >{finishedLabel}</time
+        >
+      {:else if stillGoing}
+        {" "}<span class="arrow" aria-hidden="true">→</span>{" "}<span
+          aria-hidden="true">…</span
+        ><span class="sr-only">, still running</span>
+      {/if}
+    </span>
   </div>
 
   <!-- Folded, the card is the line above and nothing else: a list of folded
@@ -995,6 +1121,7 @@
           class="volumes"
           role="table"
           aria-label="Volumes in campaign {job.name}"
+          aria-busy={pending}
         >
           <div class="row head sr-only" role="row">
             <span role="columnheader">volume</span>
@@ -1010,17 +1137,45 @@
               {@render volumeNote(v, "cell")}
             </div>
           {/each}
+          <!-- A row's height, nothing in it but the hairline: the empty
+               cells take the height the real ones do (the pill and the
+               icons' hit areas), hidden rather than absent. -->
+          {#each { length: waiting } as _, i (i)}
+            <div
+              class="row volume placeholder"
+              class:first={i === 0}
+              aria-hidden="true"
+            >
+              <span class="c-label"
+                >{i === 0 ? "loading volumes…" : "\u00a0"}{#if i < storied}<span
+                    class="vprogress">&nbsp;</span
+                  >{/if}</span
+              >
+              <span class="c-links"><span class="slot vicon"></span></span>
+              <span class="c-bar"></span>
+              <span class="c-fraction">&nbsp;</span>
+              <span class="c-status"
+                ><span class="status"
+                  ><span class="status-word">&nbsp;</span></span
+                ></span
+              >
+              <span class="c-log"><span class="slot vicon"></span></span>
+              {#if i < job.counts.failed}<p class="row-note">&nbsp;</p>{/if}
+            </div>
+          {/each}
         </div>
         {#if hasMore}
           <button
             type="button"
             class="load-more"
-            disabled={loadingMore}
+            disabled={loadingMore || pending}
             onclick={loadMore}
           >
             {loadingMore
               ? "loading…"
-              : `load more (${volumes.length}/${job.counts.total})`}
+              : pending
+                ? "load more"
+                : `load more (${volumes.length}/${job.counts.total})`}
           </button>
         {/if}
       </div>
@@ -1054,7 +1209,10 @@
             <span class="chip pipeline static">{job.pipeline}</span>
           {/if}
         </span>
-        {#if models.length > 0}
+        {#if waiting > 0}
+          <!-- The models line's place, until the pipeline is read. -->
+          <span class="models-pending" aria-hidden="true">&nbsp;</span>
+        {:else if models.length > 0}
           <span
             class="models"
             title="Models: {models.map(modelLabel).join(' · ')}"
@@ -1141,12 +1299,44 @@
       linear-gradient(to bottom, var(--warning), var(--mix-to)) border-box;
   }
 
+  /* Zone 1: the words, then two tracks of their own for the page count and
+     the times, so what arrives later has its place before it does. */
   .camp {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas: "title stat when";
+    align-items: center;
+    gap: 0.35rem 0.75rem;
+    padding: 0.3rem 0;
+  }
+
+  .title {
+    grid-area: title;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 0.35rem 0.75rem;
-    padding: 0.3rem 0;
+    min-width: 0;
+  }
+
+  .chips {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem 0.5rem;
+  }
+
+  /* Held to "411 / 1914 pages · 3 failed" before the detail says anything,
+     filled from the right, so the figures arriving -- or growing -- push
+     nothing: the track to its left is the flexible one. */
+  .stat {
+    grid-area: stat;
+    min-width: 11rem;
+    text-align: right;
+    color: var(--muted-foreground);
+    font-size: 0.75rem;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
   }
 
   .camp-toggle {
@@ -1182,10 +1372,12 @@
     overflow-wrap: anywhere;
   }
 
-  /* Pushed to the right end of the identity line, and the first thing to
-     wrap under it when the chips take the width (a phone). */
+  /* The right end of the identity line, as wide on every card, so the
+     page counts beside it line up down the list. */
   .when {
-    margin-left: auto;
+    grid-area: when;
+    min-width: 8.5rem;
+    text-align: right;
     color: var(--muted-foreground);
     font-size: 0.75rem;
     white-space: nowrap;
@@ -1366,6 +1558,18 @@
     align-items: baseline;
     gap: 0.35rem;
     flex-shrink: 0;
+  }
+
+  /* The placeholders are there for their size: nothing in them is drawn... */
+  .placeholder > * {
+    visibility: hidden;
+  }
+
+  /* ...but the first says what they are waiting for. */
+  .placeholder.first > .c-label {
+    visibility: visible;
+    font-weight: 400;
+    color: var(--muted-foreground);
   }
 
   .models {
@@ -1961,9 +2165,32 @@
       padding-left: 0;
     }
 
-    .when {
-      margin-left: 0;
+    /* The name, and the chips on a line of their own under it, so a chip
+       changing its word never decides whether they wrap; then the times;
+       then the count, on a line held a line high before the count is.
+       Beside the times, a six-digit count ran over them at 390px. */
+    .camp {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-areas:
+        "title"
+        "when"
+        "stat";
+    }
+
+    .chips {
       flex-basis: 100%;
+    }
+
+    .when {
+      min-width: 0;
+      text-align: left;
+    }
+
+    .stat {
+      min-width: 0;
+      text-align: left;
+      line-height: 1.4;
+      min-height: 1.4em;
     }
   }
 
