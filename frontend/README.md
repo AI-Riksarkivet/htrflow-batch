@@ -207,8 +207,15 @@ order, so ten cards scan like ten rows of one table. Folded, a card is zone
    - A row that lost something carries a second line under its bar
      (`1 failed`, `3 failed · 2 errors`); a clean row is one line.
      `errors` counts ERROR-and-worse only.
-   - A campaign of one volume drops both totals rows, unless there is no
-     volume row yet to carry them.
+   - A campaign of one volume drops both totals rows, unless its detail
+     came back with no volume row to carry them.
+   - Before the first read lands, the card draws the rows its list row
+     promises: one empty row per volume up to the first page (`aria-hidden`,
+     only the hairline drawn), a second line on as many as are active or
+     failed and a note line on the failed ones, the models line's place, and
+     "load more" (disabled) when there are more volumes than a page. The
+     detail then fills rows in rather than adding them. None after a failed
+     read.
    - Every row with a known total has a bar in the colour of what it
      measures: running blue (with a sheen only while work happens), green
      done, amber done with pages missing, red failed. `pending`/`unknown`
