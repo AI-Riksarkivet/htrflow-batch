@@ -43,7 +43,7 @@ dev = [
     "pytest>=8",
     "ruff>=0.16.8",
     "ty",
-    "moto[s3]>=5",
+    "moto[s3]>=5.2.3",
     "pillow>=12.3.0",
     "httpx>=0.27",
     "dulwich>=1.2",
