@@ -1,0 +1,243 @@
+# helm template of kueue.yaml before queue.flavors existed (B104):
+# what an install without that list must keep rendering. Regenerate
+# only for a deliberate change to the single-flavor queue.
+default:
+- apiVersion: kueue.x-k8s.io/v1beta2
+  kind: ClusterQueue
+  metadata:
+    name: htr-batch-cq
+    labels:
+      app.kubernetes.io/name: htrflow-batch
+      app.kubernetes.io/instance: htr
+      app.kubernetes.io/managed-by: Helm
+  spec:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: htr-batch
+    resourceGroups:
+    - coveredResources:
+      - cpu
+      - memory
+      - nvidia.com/gpu
+      flavors:
+      - name: default-flavor
+        resources:
+        - name: cpu
+          nominalQuota: 4
+        - name: memory
+          nominalQuota: 8Gi
+        - name: nvidia.com/gpu
+          nominalQuota: 1
+- apiVersion: kueue.x-k8s.io/v1beta2
+  kind: LocalQueue
+  metadata:
+    name: htr-batch
+    namespace: htr-batch
+    labels:
+      app.kubernetes.io/name: htrflow-batch
+      app.kubernetes.io/instance: htr
+      app.kubernetes.io/managed-by: Helm
+  spec:
+    clusterQueue: htr-batch-cq
+- apiVersion: kueue.x-k8s.io/v1beta2
+  kind: ResourceFlavor
+  metadata:
+    name: default-flavor
+    labels:
+      app.kubernetes.io/name: htrflow-batch
+      app.kubernetes.io/instance: htr
+      app.kubernetes.io/managed-by: Helm
+- apiVersion: kueue.x-k8s.io/v1beta2
+  kind: WorkloadPriorityClass
+  metadata:
+    name: htr-interactive
+    labels:
+      app.kubernetes.io/name: htrflow-batch
+      app.kubernetes.io/instance: htr
+      app.kubernetes.io/managed-by: Helm
+  value: 1000
+  description: a handful of volumes someone is waiting for
+- apiVersion: kueue.x-k8s.io/v1beta2
+  kind: WorkloadPriorityClass
+  metadata:
+    name: htr-bulk
+    labels:
+      app.kubernetes.io/name: htrflow-batch
+      app.kubernetes.io/instance: htr
+      app.kubernetes.io/managed-by: Helm
+  value: 0
+  description: the normal campaign, the same as leaving priority out
+- apiVersion: kueue.x-k8s.io/v1beta2
+  kind: WorkloadPriorityClass
+  metadata:
+    name: htr-idle
+    labels:
+      app.kubernetes.io/name: htrflow-batch
+      app.kubernetes.io/instance: htr
+      app.kubernetes.io/managed-by: Helm
+  value: -10
+  description: fill the gaps when nothing else is waiting
+flavor-referenced:
+- apiVersion: kueue.x-k8s.io/v1beta2
+  kind: ClusterQueue
+  metadata:
+    name: htr-batch-cq
+    labels:
+      app.kubernetes.io/name: htrflow-batch
+      app.kubernetes.io/instance: htr
+      app.kubernetes.io/managed-by: Helm
+  spec:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: htr-batch
+    resourceGroups:
+    - coveredResources:
+      - cpu
+      - memory
+      - nvidia.com/gpu
+      flavors:
+      - name: default-flavor
+        resources:
+        - name: cpu
+          nominalQuota: 4
+        - name: memory
+          nominalQuota: 8Gi
+        - name: nvidia.com/gpu
+          nominalQuota: 1
+- apiVersion: kueue.x-k8s.io/v1beta2
+  kind: LocalQueue
+  metadata:
+    name: htr-batch
+    namespace: htr-batch
+    labels:
+      app.kubernetes.io/name: htrflow-batch
+      app.kubernetes.io/instance: htr
+      app.kubernetes.io/managed-by: Helm
+  spec:
+    clusterQueue: htr-batch-cq
+- apiVersion: kueue.x-k8s.io/v1beta2
+  kind: WorkloadPriorityClass
+  metadata:
+    name: htr-interactive
+    labels:
+      app.kubernetes.io/name: htrflow-batch
+      app.kubernetes.io/instance: htr
+      app.kubernetes.io/managed-by: Helm
+  value: 1000
+  description: a handful of volumes someone is waiting for
+- apiVersion: kueue.x-k8s.io/v1beta2
+  kind: WorkloadPriorityClass
+  metadata:
+    name: htr-bulk
+    labels:
+      app.kubernetes.io/name: htrflow-batch
+      app.kubernetes.io/instance: htr
+      app.kubernetes.io/managed-by: Helm
+  value: 0
+  description: the normal campaign, the same as leaving priority out
+- apiVersion: kueue.x-k8s.io/v1beta2
+  kind: WorkloadPriorityClass
+  metadata:
+    name: htr-idle
+    labels:
+      app.kubernetes.io/name: htrflow-batch
+      app.kubernetes.io/instance: htr
+      app.kubernetes.io/managed-by: Helm
+  value: -10
+  description: fill the gaps when nothing else is waiting
+queue-referenced:
+- apiVersion: kueue.x-k8s.io/v1beta2
+  kind: LocalQueue
+  metadata:
+    name: htr-batch
+    namespace: htr-batch
+    labels:
+      app.kubernetes.io/name: htrflow-batch
+      app.kubernetes.io/instance: htr
+      app.kubernetes.io/managed-by: Helm
+  spec:
+    clusterQueue: shared-cq
+- apiVersion: kueue.x-k8s.io/v1beta2
+  kind: ResourceFlavor
+  metadata:
+    name: default-flavor
+    labels:
+      app.kubernetes.io/name: htrflow-batch
+      app.kubernetes.io/instance: htr
+      app.kubernetes.io/managed-by: Helm
+- apiVersion: kueue.x-k8s.io/v1beta2
+  kind: WorkloadPriorityClass
+  metadata:
+    name: htr-interactive
+    labels:
+      app.kubernetes.io/name: htrflow-batch
+      app.kubernetes.io/instance: htr
+      app.kubernetes.io/managed-by: Helm
+  value: 1000
+  description: a handful of volumes someone is waiting for
+- apiVersion: kueue.x-k8s.io/v1beta2
+  kind: WorkloadPriorityClass
+  metadata:
+    name: htr-bulk
+    labels:
+      app.kubernetes.io/name: htrflow-batch
+      app.kubernetes.io/instance: htr
+      app.kubernetes.io/managed-by: Helm
+  value: 0
+  description: the normal campaign, the same as leaving priority out
+- apiVersion: kueue.x-k8s.io/v1beta2
+  kind: WorkloadPriorityClass
+  metadata:
+    name: htr-idle
+    labels:
+      app.kubernetes.io/name: htrflow-batch
+      app.kubernetes.io/instance: htr
+      app.kubernetes.io/managed-by: Helm
+  value: -10
+  description: fill the gaps when nothing else is waiting
+renamed:
+- apiVersion: kueue.x-k8s.io/v1beta2
+  kind: ClusterQueue
+  metadata:
+    name: team-b-cq
+    labels:
+      app.kubernetes.io/name: htrflow-batch
+      app.kubernetes.io/instance: htr
+      app.kubernetes.io/managed-by: Helm
+  spec:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: htr-batch
+    resourceGroups:
+    - coveredResources:
+      - cpu
+      - memory
+      - nvidia.com/gpu
+      flavors:
+      - name: team-b-flavor
+        resources:
+        - name: cpu
+          nominalQuota: 8
+        - name: memory
+          nominalQuota: 16Gi
+        - name: nvidia.com/gpu
+          nominalQuota: 2
+- apiVersion: kueue.x-k8s.io/v1beta2
+  kind: LocalQueue
+  metadata:
+    name: htr-batch
+    namespace: htr-batch
+    labels:
+      app.kubernetes.io/name: htrflow-batch
+      app.kubernetes.io/instance: htr
+      app.kubernetes.io/managed-by: Helm
+  spec:
+    clusterQueue: team-b-cq
+- apiVersion: kueue.x-k8s.io/v1beta2
+  kind: ResourceFlavor
+  metadata:
+    name: team-b-flavor
+    labels:
+      app.kubernetes.io/name: htrflow-batch
+      app.kubernetes.io/instance: htr
+      app.kubernetes.io/managed-by: Helm

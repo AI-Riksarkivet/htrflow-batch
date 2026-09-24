@@ -36,12 +36,23 @@ Presentationen (del 1, "ResourceFlavor") beskriver redan detta som målbilden.
 
 ## Klart när
 
-- [ ] Ett values-exempel med två flavors renderar två ResourceFlavors med
+- [x] Ett values-exempel med två flavors renderar två ResourceFlavors med
       `nodeLabels` och en ClusterQueue med en kvot per flavor för alla tre resurser.
-- [ ] Ett install utan `queue.flavors` renderar exakt samma objekt som i dag.
-- [ ] En podd som admitteras på en flavor får flavorns node selector och
+      (`ci/full-values.yaml`, `test_chart_render.py`; kubeconform mot Kueues
+      CRD-scheman i `make helm-template`.)
+- [x] Ett install utan `queue.flavors` renderar exakt samma objekt som i dag.
+      (`tests/golden/chart-queue.yaml`, inspelad före ändringen, ett fall per
+      D-9-växel.)
+- [x] En podd som admitteras på en flavor får flavorns node selector och
       hamnar på en nod med det kortet (verifierat på ett kluster eller i en
-      Kueue-integrationstest).
+      Kueue-integrationstest). Verifierat i en envtest-integrationstest mot
+      Kueue v0.19.5 (i Kueues eget testträd, utanför det här repot): ett Job
+      utan node selector admitteras på den första flavorn och får dess
+      `nodeLabels` som `nodeSelector`; ett Job med den andra flavorns labels
+      admitteras där och får dess toleration; ett andra sådant Job väntar i
+      stället för att spilla över på den första. Att podden sedan hamnar på
+      noden är kube-schedulerns vanliga `nodeSelector` — inte kört på ett
+      kluster med två sorters GPU.
 
 Relaterat: B105 (en pipeline väljer storlek och därmed flavor), T05 (cohorts
 mellan organisationer).

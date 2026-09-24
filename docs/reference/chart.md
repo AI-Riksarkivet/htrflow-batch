@@ -41,7 +41,7 @@ models stay until the PVC is dropped.
 | `modelCache.name` | `htr-test-data` | PVC name; must match `converter.yaml`'s `data_pvc`. With `security.policies.enabled` it is the one PVC a campaign or warm-up Job may mount |
 | `modelCache.size` | `30Gi` | |
 | `modelCache.storageClass` | `""` | `""` = the cluster's default StorageClass |
-| `modelCache.accessModes` | `[ReadWriteOnce]` | RWO pins every pod to the node holding the volume — fine on one GPU node, a scheduling constraint beyond it; use an RWX class (or a per-node cache) to scale out |
+| `modelCache.accessModes` | `[ReadWriteOnce]` | RWO pins every pod to the node holding the volume — fine on one GPU node, a scheduling constraint beyond it, and with `queue.flavors` on several nodes a flavor whose nodes cannot reach it runs nothing; use an RWX class (or a per-node cache) to scale out |
 
 ## Queue (`queue.*`)
 
@@ -55,6 +55,7 @@ models stay until the PVC is dropped.
 | `queue.createPriorityClasses` | `true` | Create one `WorkloadPriorityClass` per `queue.priorityClasses` entry. `false` = the classes are the cluster's; the list then only names them, and `converter.yaml`'s `priority_classes` must still repeat it |
 | `queue.priorityClasses` | `htr-interactive` 1000, `htr-bulk` 0, `htr-idle` -10 | One `WorkloadPriorityClass` per entry: the names a campaign's `priority:` may use. `converter.yaml`'s `priority_classes` must repeat them ([Queueing](../how-it-works/queueing.md)) |
 | `queue.resources` | cpu 4 / memory 8Gi / nvidia.com/gpu 1 | The ClusterQueue's quota. Every resource a pod requests must be listed. The default admits one campaign index at a time; raise it to run more volumes in parallel |
+| `queue.flavors` | `[]` | More than one sort of GPU: one ResourceFlavor per entry (`name`, `nodeLabels`, optional `nodeTaints`, and a `quota` of `cpu`, `memory` and `nvidia.com/gpu`, each above 0), in one resource group Kueue tries in this order, so list the cheapest card first. Every two flavors must name a label key in common with different values. A flavor tolerates its own taints. Set, it replaces `queue.flavor` and `queue.resources` (see the upgrade note in [Several sorts of GPU](../how-it-works/queueing.md#several-sorts-of-gpu)); with `createFlavor: false` the flavors are the cluster's, referenced by name. `converter.yaml`'s `flavors` must repeat the names and node labels, and `apply` checks that they do |
 
 ## Web front (`web.*`)
 
@@ -87,7 +88,7 @@ Its security headers and `/config.js` are described in
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `apply.rbac.enabled` | `false` | Renders the ServiceAccount `htrflow-campaigns` and a namespaced Role for an in-cluster apply (the Argo CD hook): write and delete on `jobs` and `configmaps`, `list`/`patch` on Kueue Workloads, and the apply Lease. Off by default, since an idle account that may delete Jobs is a liability. See [htrflow-campaigns CLI](cli.md#with-argo-cd) |
+| `apply.rbac.enabled` | `false` | Renders the ServiceAccount `htrflow-campaigns` and a namespaced Role for an in-cluster apply (the Argo CD hook): write and delete on `jobs` and `configmaps`, `list`/`patch` on Kueue Workloads, and the apply Lease. Plus one read-only ClusterRole: `get` on this release's LocalQueue, ClusterQueue and ResourceFlavors, by name, so `apply` can check `converter.yaml`'s `flavors` against them. Off by default, since an idle account that may delete Jobs is a liability. See [htrflow-campaigns CLI](cli.md#with-argo-cd) |
 | `apply.gitCidrs` | `[]` | The git host the Argo CD hook clones the campaigns repo from, by address (a NetworkPolicy cannot name a host): an egress rule for the `app=htrflow-campaigns` pod. Empty = no git egress; the pod reaches only DNS and the API server, which is all `apply` on a local checkout needs. See [htrflow-campaigns CLI → The hook manifest](cli.md#the-hook-manifest) |
 | `apply.gitPorts` | `[443]` | Ports of that egress rule. At least one: a rule with no ports would open every port |
 

@@ -772,10 +772,12 @@ _LIVE_WINDOW = _WINDOW_CHANGE + (
 #: applied under one runs every index not yet started on different steps,
 #: under the same results id.
 _LIVE_RECIPE = (
-    "pipeline {id} is in the cluster with different steps and campaigns "
+    "pipeline {id} is in the cluster with {what} and campaigns "
     "{jobs} still run it: a pipeline id is a permanent name for a recipe, so "
     "add a new pipeline file instead — nothing was applied"
 )
+#: What of a live pipeline's recipe the apply holds, as the sentence says it.
+_RECIPE_WHAT = {"steps": "different steps", "size": "a different size"}
 
 
 def _running(cluster) -> list[dict]:
@@ -836,6 +838,96 @@ _SHARED = (
     "still running or starting in this apply: both would write the same "
     "results — let it finish first, or take the volumes out of one of them"
 )
+#: A size's flavor is rendered as its node labels on the pod, which keeps
+#: Kueue to that flavor only while converter.yaml's flavors are the
+#: ClusterQueue's (review of PR #35): a value spelt otherwise is a campaign
+#: never admitted, a flavor it does not list one a sized pod may be admitted
+#: on and never scheduled.
+_FLAVORS_DIFFER = (
+    "campaign {name} runs at size {size}, on flavor {flavor}, and "
+    "converter.yaml's flavors are not ClusterQueue {cq}'s: {diff} — make "
+    "converter.yaml's flavors the chart's queue.flavors, names and nodeLabels "
+    "alike; the campaign was left as it was"
+)
+_FLAVORS_UNCHECKED = (
+    "could not read the ClusterQueue's flavors to check converter.yaml's "
+    "against them ({e}), so campaigns at a size with a flavor were applied "
+    "unchecked — the chart's apply identity may read them"
+)
+
+
+def _shown_labels(labels: dict) -> str:
+    return ", ".join(f"{k}={v}" for k, v in sorted(labels.items())) or "no labels"
+
+
+def flavor_mismatch(
+    ours: dict[str, dict], theirs: dict[str, dict | None]
+) -> str | None:
+    """How converter.yaml's flavors (name -> node labels) differ from a
+    ClusterQueue's, in one clause each; ``None`` when they do not. Order is
+    not compared: the converter never relies on it."""
+    said = []
+    for name, labels in theirs.items():
+        if name not in ours:
+            said.append(
+                f"the cluster has flavor {name}, which converter.yaml does not list"
+            )
+        elif labels is None:
+            said.append(f"flavor {name} has no ResourceFlavor in the cluster")
+        elif labels != ours[name]:
+            said.append(
+                f"flavor {name} is {_shown_labels(labels)} in the cluster and "
+                f"{_shown_labels(ours[name])} in converter.yaml"
+            )
+    said += [
+        f"converter.yaml lists flavor {name}, which the ClusterQueue does not have"
+        for name in ours
+        if name not in theirs
+    ]
+    return "; ".join(said) or None
+
+
+def _check_flavors(cluster, cfg, pipelines, campaigns, done, blocked) -> None:
+    """Hold back each campaign whose size names a flavor, when converter.yaml's
+    flavors are not the cluster's. No read at all when none does."""
+    from .cluster import ClusterError, Forbidden, Unreachable
+
+    size_of = {
+        o["metadata"]["labels"][render._PIPELINE_LABEL]: (
+            o["metadata"].get("annotations") or {}
+        ).get(render._SIZE_ANNOTATION)
+        for o in pipelines
+        if o["kind"] == "ConfigMap"
+    }
+    flavored = {}
+    for obj in campaigns:
+        name = _campaign_of(obj)
+        size = size_of.get(obj["metadata"]["labels"].get(render._PIPELINE_LABEL))
+        if obj["kind"] == "Job" and name not in done | set(blocked) and size:
+            if (flavor := cfg.sizes[size].flavor) is not None:
+                flavored[name] = (size, flavor)
+    if not flavored:
+        return
+    try:
+        cq, live = cluster.queue_flavors(cfg.queue)
+        diff = flavor_mismatch({f.name: f.node_labels for f in cfg.flavors}, live)
+    except Forbidden as e:
+        print(_FLAVORS_UNCHECKED.format(e=e), file=sys.stderr)
+        return
+    except Unreachable:
+        raise
+    except ClusterError as e:
+        cq, diff = "(unread)", str(e)
+    if diff is None:
+        return
+    for name, (size, flavor) in flavored.items():
+        blocked[name] = ClusterError(
+            _FLAVORS_DIFFER.format(
+                name=name, size=size, flavor=flavor, cq=cq, diff=diff
+            )
+        )
+
+
 _UNCHECKED = (
     "could not tell whether campaign {name} shares a volume with a running "
     "campaign, so it was left as it was: {e}"
@@ -927,11 +1019,17 @@ def _moved_recipe(cluster, pipelines: list[dict], running: list[dict]) -> str | 
     for obj in rendered:
         cm = obj["metadata"]["name"]
         live = cluster.get("ConfigMap", cm) if cm in users else None
-        if made_here(live) and (
-            render.recipe([live])["steps"] != render.recipe([obj])["steps"]
-        ):
+        if not made_here(live):
+            continue
+        before, after = render.recipe([live]), render.recipe([obj])
+        # The size (B105) is on the ConfigMap too; a record written before
+        # it had one had no size, which is what a pipeline without one says.
+        what = next((w for k, w in _RECIPE_WHAT.items() if before[k] != after[k]), None)
+        if what is not None:
             return _LIVE_RECIPE.format(
-                id=cm.removeprefix("htr-pipeline-"), jobs=", ".join(sorted(users[cm]))
+                id=cm.removeprefix("htr-pipeline-"),
+                what=what,
+                jobs=", ".join(sorted(users[cm])),
             )
     return None
 
@@ -1282,6 +1380,7 @@ def _apply(
                     print(said)
                     _repair_stamp(cluster, name, lives[name])
             _claim_volumes(cluster, campaigns, volumes_of, done, blocked, running)
+            _check_flavors(cluster, cfg, pipelines, campaigns, done, blocked)
             mounting = _mounts_foreign(cluster, pipelines + campaigns)
             for name, why in mounting.items():
                 if name in volumes_of and name not in done:  # a campaign's Job

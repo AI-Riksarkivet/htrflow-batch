@@ -734,7 +734,31 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 4212
 # and the unvalidated stand-in config `load` checks campaigns against when
 # converter.yaml itself did not load (no default can stand in any more).
 # 4514 -> 4516 (hard-coded audit D): why a Job runs at most 10 000 volumes.
-check converter "$(count packages/converter/src -name '*.py')" 4516
+# 4516 -> 4731 (B105, pod sizes): a pipeline's `size:` picks a named size
+# from converter.yaml. models.py +163: Size and Flavor (the quantities a pod
+# takes, parsed so memory can be held above the in-memory /work it has to
+# cover; a flavor's node labels, since Kueue can be steered to a flavor only
+# by the pod's node selector), the cross-checks a size needs (a flavor
+# converter.yaml does not list, labels that contradict node_selector, memory
+# not above workdir), and the node-label check lifted into one helper that
+# node_selector now shares. render.py +35: the size on the wrapper, its /work
+# and the lookahead derived from it (E-14), and the size on the pipeline's
+# record. parse.py +9: an unknown size refused naming the sizes there are,
+# and a recorded recipe compared with its size. cli.py +8: apply holds a
+# running pipeline's live size as it holds its steps. Most of it is the
+# sentence each refusal prints.
+# 4731 -> 4915 (review of the pod sizes PR): cli.py +91 -- apply reads the
+# LocalQueue, ClusterQueue and ResourceFlavors behind a campaign whose size
+# names a flavor and holds it back when converter.yaml's flavors are not
+# those (a flavor it does not list is one a sized pod can be admitted on
+# and never scheduled; a label spelt otherwise, one it is never admitted
+# on), warning instead when the identity may not read them; flavor_mismatch
+# says each difference in a clause. cluster.py +48: those reads, by name,
+# with a Forbidden of their own so a laptop kubeconfig warns rather than
+# fails. models.py +39: every two flavors differ on a key both name (Kueue
+# compares only the keys a flavor names), default_size and size_of, the
+# workdir floor and the memory margin with their sentences.
+check converter "$(count packages/converter/src -name '*.py')" 4915
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
@@ -1496,5 +1520,19 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5180
 # policies (Kyverno refuses one that matches a subresource), and
 # verify-images names the subresource too. Proven against the cluster's
 # admission controller, which the Kyverno CLI cannot stand in for here.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1936
+# 1936 -> 1995 (B104/B105, flavors and sizes): kueue.yaml +32 -- one
+# ResourceFlavor per queue.flavors entry, with node labels, taints and the
+# tolerations for them, and one resource group in the ClusterQueue in values
+# order; the one-flavor values are folded into the same list, so both render
+# through one loop and an install without the list renders what it did.
+# _helpers.tpl +22: the two cross-entry rules the schema cannot say (a name
+# twice, a quota of nothing written as a quantity) with their sentences.
+# job-shape +5: LOOKAHEAD_BYTES, which a sized Job carries, and every *_BYTES
+# env held to a whole number.
+# 1995 -> 2056 (review of the pod sizes PR): apply-rbac.yaml +40 -- a
+# read-only ClusterRole and its binding, `get` by name on this release's
+# ClusterQueue and ResourceFlavors, and `get` on its LocalQueue, for the
+# apply's flavor check. _helpers.tpl +20: every two queue.flavors must differ
+# on a label key both name, with its sentence.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2056
 exit $fail

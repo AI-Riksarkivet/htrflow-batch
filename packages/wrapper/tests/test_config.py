@@ -271,3 +271,24 @@ def test_key_shaped_fields_are_refused(name, value):
 @pytest.mark.parametrize("value", ["SE-RA-1234", "demo-v1", "vol.2", "a_b", "0"])
 def test_key_shaped_fields_accept_the_names_campaigns_use(value):
     Config.from_env(dict(REQUIRED_ENV, VOLUME_REF=value, PIPELINE_ID=value))
+
+
+def test_the_default_lookahead_is_half_the_jobs_workdir():
+    """The lookahead lives in the Job's memory-backed /work, next to the
+    outputs, HOME and TMPDIR (audit 0923 E-14). A pipeline at a named size
+    gets LOOKAHEAD_BYTES rendered from its own workdir; one without runs the
+    Job skeleton's /work and this default, so the two are held together."""
+    import yaml
+
+    from htrflow_batch.stream import LOOKAHEAD_BYTES
+
+    skeleton = (
+        Path(__file__).resolve().parents[2]
+        / "converter/src/htrflow_converter/manifests/campaign-job.yaml"
+    )
+    volumes = yaml.safe_load(skeleton.read_text())["spec"]["template"]["spec"]
+    work = next(v for v in volumes["volumes"] if v["name"] == "work")["emptyDir"]
+    assert work["medium"] == "Memory" and work["sizeLimit"].endswith("Gi")
+    half = int(work["sizeLimit"].removesuffix("Gi")) * 1024**3 // 2
+    default = Config.from_env(REQUIRED_ENV).lookahead_bytes
+    assert default == LOOKAHEAD_BYTES == half
