@@ -3625,12 +3625,18 @@ describe("the header line holds its shape while it fills in", () => {
       "auto",
       "auto",
     ]);
-    // A phone: the name and chips first, then the times and the count on a
-    // line of their own that is there whether or not the count is yet.
+    // A phone: the name and chips first, then the times, then the count on
+    // a line of its own that is there, a line high, whether or not the
+    // count is yet. Side by side, a six-digit count ran over the times at
+    // 390px, and any count did at 320px (review of this change).
     expect(areas(cssOf(".camp", PHONE).get("grid-template-areas"))).toEqual([
-      ["title", "title"],
-      ["when", "stat"],
+      ["title"],
+      ["when"],
+      ["stat"],
     ]);
+    const stat = cssOf(".stat", PHONE);
+    expect(stat.get("min-height")).toBe(stat.get("line-height") + "em");
+    expect(stat.get("text-align")).toBe("left");
     // And the chips a line of their own under the name, so a chip changing
     // its word never decides whether they wrap.
     expect(cssOf(".chips", PHONE).get("flex-basis")).toBe("100%");
