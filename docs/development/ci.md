@@ -188,7 +188,7 @@ Every such pull request goes through the full CI. Patch and minor updates of the
 actions, `uv.lock` and `frontend/bun.lock` merge themselves once every required
 check passes (`.github/workflows/dependabot-automerge.yml`); a major version, a
 base image and the dagger module are merged by hand, because a new major is a
-migration and pull-request CI does not build the amd64 wrapper or the web image.
+migration and pull-request CI does not build every image it would ship.
 Everything else moves by hand, in a pull request of its own.
 
 | Pin | Lives in | Updated by |
