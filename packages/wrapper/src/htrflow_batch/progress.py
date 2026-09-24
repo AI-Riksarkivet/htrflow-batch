@@ -81,6 +81,10 @@ class Progress:
         #: able to sit out its own timeouts against a sick bucket, ahead of
         #: the final log ship, which is the evidence that matters.
         self.terminating = False
+        #: The volume's quality block, set by main once publish has built it,
+        #: so the final progress.json carries what the read API shows --
+        #: no second GET of manifest.json. None until then, and absent below.
+        self.quality: dict | None = None
 
     def _counts(self) -> tuple[int, int]:
         """Done and failed. A skipped page is one an earlier run finished and
@@ -121,6 +125,7 @@ class Progress:
             "viewer_published": self.viewer_published,
             "started_at": self.started_at,
             "updated_at": _now(),
+            **({"quality": self.quality} if self.quality is not None else {}),
         }
 
     def write(self) -> None:
