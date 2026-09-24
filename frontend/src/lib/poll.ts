@@ -39,12 +39,16 @@ export function startPolling(
   {
     until,
     onWait,
+    first = 0,
   }: {
     until?: () => boolean;
     /** Told each wait as it is set, backoff included: what a banner says. */
     onWait?: (ms: number) => void;
+    /** How long before the first tick: what is left of a period already
+     *  begun, for a poll restarted a moment after its last answer. */
+    first?: number;
   } = {},
-): () => void {
+): (finish?: boolean) => void {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let inflight: AbortController | null = null;
   let failures = 0;
@@ -87,17 +91,21 @@ export function startPolling(
     if (!hidden()) void run();
   }
 
-  function stop(): void {
+  // `finish`: the tick in flight is let finish rather than aborted -- its
+  // answer is on its way and the server has done the work -- and only the
+  // next one is not asked for.
+  function stop(finish = false): void {
     stopped = true;
     clearTimeout(timer);
-    inflight?.abort();
+    if (!finish) inflight?.abort();
     if (typeof document !== "undefined")
       document.removeEventListener("visibilitychange", onVisible);
   }
 
   if (typeof document !== "undefined")
     document.addEventListener("visibilitychange", onVisible);
-  void run();
+  if (first > 0) timer = setTimeout(() => void run(), first);
+  else void run();
 
   return stop;
 }
@@ -108,14 +116,18 @@ export function startPolling(
  * fifty campaigns asked the API for fifty at the same instant; the cards
  * share one of these. A task whose `signal` aborts while it waits never
  * runs, and its promise rejects the way an aborted fetch does; one that
- * aborts while it runs gives its place up at once.
+ * aborts while it runs gives its place up at once. An `urgent` task -- one
+ * a reader asked for -- goes ahead of every waiting task that is not.
  */
 export function gate(max: number) {
   let running = 0;
-  const waiting: (() => void)[] = [];
+  // In turn, each with whether a reader asked for it: those go ahead of
+  // every waiting one that nobody asked for, and behind each other.
+  const waiting: { turn: () => void; urgent: boolean }[] = [];
   return async function through<T>(
     task: () => Promise<T>,
     signal?: AbortSignal,
+    urgent = false,
   ): Promise<T> {
     // A finished task hands its place straight to the next in line rather
     // than freeing it, so nothing that asks in between can jump the queue
@@ -123,15 +135,19 @@ export function gate(max: number) {
     if (running < max) running += 1;
     else
       await new Promise<void>((go, stop) => {
-        const turn = () => {
-          signal?.removeEventListener("abort", leave);
-          go();
+        const place = {
+          urgent,
+          turn: () => {
+            signal?.removeEventListener("abort", leave);
+            go();
+          },
         };
         const leave = () => {
-          waiting.splice(waiting.indexOf(turn), 1);
+          waiting.splice(waiting.indexOf(place), 1);
           stop(new DOMException("aborted while waiting", "AbortError"));
         };
-        waiting.push(turn);
+        const behind = urgent ? waiting.findIndex((w) => !w.urgent) : -1;
+        waiting.splice(behind === -1 ? waiting.length : behind, 0, place);
         signal?.addEventListener("abort", leave, { once: true });
       });
     // Given up once: when the task ends, or when its signal aborts -- an
@@ -142,9 +158,9 @@ export function gate(max: number) {
       if (!held) return;
       held = false;
       signal?.removeEventListener("abort", release);
-      const turn = waiting.shift();
-      if (turn === undefined) running -= 1;
-      else turn();
+      const next = waiting.shift();
+      if (next === undefined) running -= 1;
+      else next.turn();
     };
     signal?.addEventListener("abort", release, { once: true });
     try {
