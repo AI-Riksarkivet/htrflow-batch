@@ -54,6 +54,89 @@
     "volume": "vol0",
     "wall_seconds": 12.5
   },
+  "manifestScored": {
+    "bytes_fetched": 123456,
+    "canvas_ids": {
+      "0001": "https://iiif.example.org/vol0/canvas/1",
+      "0002": "https://iiif.example.org/vol0/canvas/2",
+      "0003": "https://iiif.example.org/vol0/canvas/3",
+      "0004": "https://iiif.example.org/vol0/canvas/4"
+    },
+    "gpu_stall_seconds": 0.4,
+    "htrflow_version": "0.0.0-contract",
+    "image_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "max_image_width": 2500,
+    "page_source_digests": {
+      "0001": "b2bdc44d3a3c574b6b99bbfb016475e282c4fc2ec62bb332f86c5c3ebb1c5071",
+      "0002": "095e3c2abfb3388c1766ca9d53eafc0ec81edf99a9591910b1754b30c5f2e7fc",
+      "0003": "1f55a93fb6784954c3f9360cbbb46d1689e2c66b8514a018f4dc31b8f31c302d",
+      "0004": "a348add2a7b07367a54694f5e9aa0a43d75342e87b2048074524a4aaddfa3b75"
+    },
+    "page_sources": {
+      "0001": "https://iiif.example.org/vol0/p1/full/2500,/0/default.jpg",
+      "0002": "https://iiif.example.org/vol0/p2/full/2500,/0/default.jpg",
+      "0003": "https://iiif.example.org/vol0/p3/full/2500,/0/default.jpg",
+      "0004": "https://iiif.example.org/vol0/p4/full/2500,/0/default.jpg"
+    },
+    "pages": 4,
+    "pages_failed": 1,
+    "pages_ok": 2,
+    "pages_per_second": 0.16,
+    "pipeline_id": "demo-v1",
+    "pipeline_sha256": "5ece9af35002a2e14719f85bbca7fd1a228b50ab3f20ef954625ec02db952f97",
+    "pipeline_yaml": "steps:\n- step: Segmentation\n- step: QualityPrediction\n  settings:\n    model_settings:\n      model: org/qp-model\n      revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n- step: Export\n",
+    "quality": {
+      "lowest": [
+        {
+          "canvas": 1,
+          "page": "0003",
+          "quality": 0.41
+        },
+        {
+          "canvas": 2,
+          "page": "0004",
+          "quality": 0.7
+        },
+        {
+          "canvas": 0,
+          "page": "0001",
+          "quality": 0.9123
+        }
+      ],
+      "mean": 0.6741,
+      "min": 0.41,
+      "model": "org/qp-model",
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scored": 3,
+      "target": "bow_f1"
+    },
+    "results": {
+      "0001": {
+        "quality": 0.9123,
+        "seconds": 4.21,
+        "status": "ok"
+      },
+      "0002": {
+        "error": "page 0002: htrflow's Segmentation worker thread died",
+        "seconds": 1.5,
+        "status": "failed"
+      },
+      "0003": {
+        "quality": 0.41,
+        "seconds": 0.0,
+        "status": "skipped"
+      },
+      "0004": {
+        "quality": 0.7,
+        "seconds": 3.9,
+        "status": "ok"
+      }
+    },
+    "source_manifest": "https://iiif.example.org/vol0/manifest",
+    "viewer_url": "https://results.example.org/htr-test/demo-v1/vol0/iiif.json",
+    "volume": "vol0",
+    "wall_seconds": 12.5
+  },
   "terminations": {
     "sigterm": {
       "error": "SIGTERM",
