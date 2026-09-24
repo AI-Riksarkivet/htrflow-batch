@@ -72,7 +72,7 @@ pipeline: demo-v1        # exactly one pipeline per campaign
 priority: ""             # optional: htr-interactive / htr-bulk / htr-idle; empty is htr-bulk
 window: 20               # optional: this campaign's parallelism, capped by converter.yaml's window
 volumes:
-  - <ref>                          # shorthand: expanded through converter.yaml's source_template
+  - <ref>                          # shorthand: expanded through converter.yaml's source_template, which must be set
   - id: volume-2                   # any IIIF manifest (Presentation 2 or 3), http(s) only
     manifest: https://iiif.example.org/volume-2/manifest
   - id: loose-scans                # bare image URLs: the wrapper builds
