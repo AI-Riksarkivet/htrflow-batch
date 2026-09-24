@@ -77,6 +77,19 @@ describe("the read API's contract", () => {
     expect(detail?.quality?.volumes).toBe(1);
   });
 
+  // The list row says which campaigns score, so a card holds its column
+  // before its detail lands; an API from before the field reads as no.
+  test("the list row says which campaigns score page quality", () => {
+    const scoring = contract.summaries
+      .map((r) => jobSummarySchema.parse(r))
+      .filter((s) => s.qualityPrediction)
+      .map((s) => s.name);
+    expect(scoring).toEqual(["kyrk"]);
+    const older = { ...contract.summaries[0] } as Record<string, unknown>;
+    delete older.qualityPrediction;
+    expect(jobSummarySchema.parse(older).qualityPrediction).toBe(false);
+  });
+
   // The page asks for reaped campaigns REAPED_PAGE at a time and never past
   // REAPED_MAX; the numbers are the route's own -- how many it sends unasked,
   // and the last `?reaped=` it answers 200 to. A page asking past the cap

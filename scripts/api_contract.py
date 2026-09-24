@@ -102,9 +102,32 @@ CAMPAIGN_CM = {
     },
 }
 
-PIPELINE_CM = {
-    "metadata": {"name": "htr-pipeline-demo-v1", "namespace": "htr-test"},
-    "data": {"pipeline.yaml": "steps:\n- step: Segmentation\n- step: Export\n"},
+
+def _pipeline(pipeline: str, *steps: str) -> dict:
+    return {
+        "metadata": {
+            "name": f"htr-pipeline-{pipeline}",
+            "namespace": "htr-test",
+            "labels": {
+                "htrflow.riksarkivet.se/managed-by": "converter",
+                "htrflow.riksarkivet.se/pipeline": pipeline,
+            },
+        },
+        "data": {
+            "pipeline.yaml": "steps:\n" + "".join(f"- step: {s}\n" for s in steps)
+        },
+    }
+
+
+#: The live campaign's pipeline scores page quality (its detail carries a
+#: quality block); the reaped campaigns' two do not.
+PIPELINES = {
+    cm["metadata"]["name"]: cm
+    for cm in (
+        _pipeline("demo-v1", "Segmentation", "Export", "QualityPrediction"),
+        _pipeline("demo-v0", "Segmentation", "Export"),
+        _pipeline("demo-v2", "Segmentation", "Export"),
+    )
 }
 
 FAILED_POD = {
@@ -295,7 +318,7 @@ class ContractReader:
 
     def get_configmap(self, namespace: str, name: str) -> dict | None:
         if name.startswith("htr-pipeline-"):
-            return PIPELINE_CM
+            return PIPELINES.get(name)
         return CONFIGMAPS.get(name)
 
     def list_configmaps(self) -> list[dict]:
@@ -304,6 +327,9 @@ class ContractReader:
             for name, cm in CONFIGMAPS.items()
             if name.startswith("campaign-") and name != "campaign-kyrk"
         ]
+
+    def list_pipelines(self) -> list[dict]:
+        return list(PIPELINES.values())
 
     def list_pods(self, namespace: str, job_name: str) -> list[dict]:
         return {

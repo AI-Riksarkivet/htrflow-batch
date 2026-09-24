@@ -1991,3 +1991,25 @@ def test_a_scored_count_at_the_cap_does_not_overflow_the_mean():
     rows = [_row("a", {"mean": 0.5, "min": 0.5, "scored": MAX_SCORED, "lowest": []})]
     q = _campaign_quality(rows)
     assert q["scored"] == MAX_SCORED and q["mean"] == 0.5
+
+
+def _pipeline(text: str) -> dict:
+    return {"metadata": {"name": "htr-pipeline-p"}, "data": {"pipeline.yaml": text}}
+
+
+@pytest.mark.parametrize(
+    ("configmap", "expected"),
+    [
+        (_pipeline("steps:\n- step: Segmentation\n- step: QualityPrediction\n"), True),
+        # htrflow resolves a step by its lower-cased name, and so does this.
+        (_pipeline("steps:\n- step: qualityprediction\n"), True),
+        (_pipeline("steps:\n- step: Segmentation\n- step: Export\n"), False),
+        (_pipeline("steps: [unclosed\n"), False),
+        (_pipeline(""), False),
+        ({"metadata": {}}, False),
+        (None, False),
+    ],
+    ids=["qp", "lower-case", "no-qp", "bad-yaml", "empty", "no-data", "missing"],
+)
+def test_a_pipeline_scores_quality_when_it_has_the_step(configmap, expected):
+    assert projection.quality_prediction(configmap) is expected

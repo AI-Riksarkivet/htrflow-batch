@@ -61,6 +61,12 @@ def _labels(obj: dict) -> dict:
     return (obj.get("metadata") or {}).get("labels") or {}
 
 
+def pipeline_of(obj: dict) -> str:
+    """The pipeline id an object is labelled with: a campaign's Job, its
+    record, or a pipeline ConfigMap itself."""
+    return _labels(obj).get(_PIPELINE_LABEL, "")
+
+
 def configmap_ref(job: dict, volume: str = "campaign") -> str | None:
     """Name of the ConfigMap mounted as one of the Job's volumes: ``campaign``
     holds ``volumes.txt``, ``pipeline`` holds ``pipeline.yaml``. Reading the
@@ -131,9 +137,11 @@ def _finished_at(job: dict) -> str | None:
     return None
 
 
-def summarize(job: dict, cfg, warmup: dict) -> dict:
+def summarize(job: dict, cfg, warmup: dict, quality_prediction: bool = False) -> dict:
     """``JobSummary``: one row for ``GET /api/v1/jobs``. ``warmup`` is the
-    caller's pre-matched ``{phase, reason?}`` (Task 28)."""
+    caller's pre-matched ``{phase, reason?}`` (Task 28), and
+    ``quality_prediction`` whether the campaign's pipeline scores page
+    quality (``quality_prediction`` below, on its pipeline ConfigMap)."""
     meta = job.get("metadata") or {}
     namespace = meta.get("namespace", "")
     pipeline = _labels(job).get(_PIPELINE_LABEL, "")
@@ -157,6 +165,10 @@ def summarize(job: dict, cfg, warmup: dict) -> dict:
         "warmup": warmup,
         # There is a Job behind this row. The record's rows say False (B76).
         "jobGone": False,
+        # On the list row, not only the detail: the card holds its quality
+        # column (and the line under the totals) from its first paint, so
+        # nothing moves when the detail lands.
+        "qualityPrediction": quality_prediction,
     }
 
 
@@ -242,7 +254,9 @@ def _int(text: object) -> int:
         return 0
 
 
-def record_summary(record: dict, status: dict, cfg, warmup: dict) -> dict | None:
+def record_summary(
+    record: dict, status: dict, cfg, warmup: dict, quality_prediction: bool = False
+) -> dict | None:
     """One row for a campaign whose Job is gone -- reaped by its
     ``ttlSecondsAfterFinished`` -- from the two ConfigMaps it left behind
     (B76). The same shape ``summarize`` returns, so the page draws it with
@@ -285,6 +299,7 @@ def record_summary(record: dict, status: dict, cfg, warmup: dict) -> dict | None
         "resultsBase": _results_base(namespace, pipeline, cfg),
         "warmup": warmup,
         "jobGone": True,
+        "qualityPrediction": quality_prediction,
     }
 
 
@@ -409,6 +424,7 @@ def record_detail(
     return {
         **row,
         **pages,
+        "qualityPrediction": quality_prediction(pipeline_configmap),
         "pipelineSteps": _pipeline_steps(pipeline_yaml),
         "pipelineYaml": pipeline_yaml,
         "latest": latest,
@@ -991,6 +1007,15 @@ def _pipeline_steps(text: str) -> list[str]:
     ]
 
 
+def quality_prediction(configmap: dict | None) -> bool:
+    """Whether a pipeline ConfigMap's YAML has a QualityPrediction step --
+    by its lower-cased name, the way htrflow resolves a step. A ConfigMap
+    that is missing or unreadable scores nothing, never an error: the card
+    then simply has no quality column."""
+    steps = _pipeline_steps(_pipeline_yaml(configmap))
+    return any(step.lower() == "qualityprediction" for step in steps)
+
+
 def _failures(volumes: list[dict]) -> list[dict]:
     """The newest failed rows, newest index first -- every one of them,
     with a reason or without: a failure nobody could explain is still a
@@ -1165,7 +1190,7 @@ def detail(
     INTERNAL results base (this pod's own way to the bucket), never the
     public one every URL below is built from: on the PoC they are not the
     same address (docs: development/local-k3s)."""
-    summary = summarize(job, cfg, warmup)
+    summary = summarize(job, cfg, warmup, quality_prediction(pipeline_configmap))
     status = job.get("status") or {}
     completed = parse_index_ranges(status.get("completedIndexes"))
     failed = parse_index_ranges(status.get("failedIndexes"))

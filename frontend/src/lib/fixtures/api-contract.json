@@ -90,9 +90,10 @@
       "pipeline": "demo-v1",
       "pipelineSteps": [
         "Segmentation",
-        "Export"
+        "Export",
+        "QualityPrediction"
       ],
-      "pipelineYaml": "steps:\n- step: Segmentation\n- step: Export\n",
+      "pipelineYaml": "steps:\n- step: Segmentation\n- step: Export\n- step: QualityPrediction\n",
       "quality": {
         "lowest": [
           {
@@ -108,6 +109,7 @@
         "scored": 3,
         "volumes": 1
       },
+      "qualityPrediction": true,
       "resultsBase": "https://results.example.org/htr-test/demo-v1",
       "startedAt": "2026-09-14T07:01:00Z",
       "suspended": false,
@@ -307,6 +309,7 @@
       ],
       "pipelineYaml": "steps:\n- step: Segmentation\n- step: Export\n",
       "quality": null,
+      "qualityPrediction": false,
       "resultsBase": "https://results.example.org/htr-test/demo-v0",
       "startedAt": "2026-09-01T08:00:00Z",
       "suspended": false,
@@ -468,6 +471,7 @@
       ],
       "pipelineYaml": "steps:\n- step: Segmentation\n- step: Export\n",
       "quality": null,
+      "qualityPrediction": false,
       "resultsBase": "https://results.example.org/htr-test/demo-v2",
       "startedAt": "2026-09-01T08:00:00Z",
       "suspended": false,
@@ -607,6 +611,7 @@
       "namespace": "htr-test",
       "phase": "Running",
       "pipeline": "demo-v1",
+      "qualityPrediction": true,
       "resultsBase": "https://results.example.org/htr-test/demo-v1",
       "startedAt": "2026-09-14T07:01:00Z",
       "suspended": false,
@@ -629,6 +634,7 @@
       "namespace": "htr-test",
       "phase": "Succeeded",
       "pipeline": "demo-v0",
+      "qualityPrediction": false,
       "resultsBase": "https://results.example.org/htr-test/demo-v0",
       "startedAt": "2026-09-01T08:00:00Z",
       "suspended": false,
@@ -651,6 +657,7 @@
       "namespace": "htr-test",
       "phase": "Unknown",
       "pipeline": "demo-v2",
+      "qualityPrediction": false,
       "resultsBase": "https://results.example.org/htr-test/demo-v2",
       "startedAt": "2026-09-01T08:00:00Z",
       "suspended": false,

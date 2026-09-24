@@ -184,6 +184,10 @@ export const jobSummarySchema = z.object({
   // status ConfigMap beside it, which have no TTL (B76). The counts and the
   // dates are what the API last observed, and there are no per-volume rows.
   jobGone: z.boolean().default(false),
+  // The campaign's pipeline has a QualityPrediction step, so the card holds
+  // its quality column from the first paint rather than when the detail
+  // lands. An older API sends nothing, which reads as no.
+  qualityPrediction: z.boolean().catch(false),
 });
 
 // The wrapper's predicted page quality (docs: reference/web): null without
