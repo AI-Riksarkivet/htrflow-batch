@@ -389,6 +389,19 @@ describe("describeProgress", () => {
     );
   });
 
+  test("a stage it has no words for is said as it is, even an Object key", () => {
+    // A plain-object lookup answers `constructor` with Object itself, which
+    // rendered as a function's source code.
+    for (const stage of ["constructor", "toString", "__proto__"]) {
+      expect(describeProgress({ ...progress, stage }, "active")).toBe(
+        `${stage} · updated 12 s ago`,
+      );
+      expect(reasonOf({ stage, permanent: false, error: "boom" })).toBe(
+        "Failed: boom. It will be retried automatically.",
+      );
+    }
+  });
+
   test("the counts are not repeated here", () => {
     expect(
       describeProgress({ ...progress, failed: 2 }, "active"),
