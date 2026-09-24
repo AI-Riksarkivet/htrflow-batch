@@ -157,7 +157,7 @@ covers the bucket.
 Nobody, unless a pipeline needs one. Then only the warm-up pod, the one pod
 with egress to the Hub, gets it as `HF_TOKEN`, with **read** scope; campaign
 pods run `HF_HUB_OFFLINE=1` and never see it. The Secret is the operator's
-object ([Deploy](../getting-started/deploy.md#hugging-face-token-for-a-private-model)).
+object ([Deploy](../getting-started/deploy.md#options)).
 
 ## Pod security posture
 
@@ -287,7 +287,7 @@ exposure is deliberate. So do an empty list, which a NetworkPolicy reads
 as every source, and any entry wider than `/8`. Listing the ranges that may
 reach it needs no such flag. In ingress mode none of these guards apply:
 the NetworkPolicy admits the controller, and who may reach the front is the
-controller's allow-list ([Behind an ingress controller](../getting-started/deploy.md#behind-an-ingress-controller)).
+controller's allow-list ([Behind an ingress controller](../getting-started/deploy.md#web-front-access)).
 
 Under the default deny, anything applied by hand in the namespace has no
 network access unless it gets its own policy. The Argo CD hook is not by
@@ -317,7 +317,7 @@ wider internet should all be refused.
 
 The warm-up writes the cache as uid 1000. On a provisioner that ignores
 `fsGroup`, the PVC needs a one-time `chown` first
-([Deploy](../getting-started/deploy.md#model-cache)).
+([Deploy](../getting-started/deploy.md#options)).
 
 ## devstack caveats
 

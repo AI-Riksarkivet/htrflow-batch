@@ -17,8 +17,7 @@ nav = [
     {"Presentations" = "presentations.md"},
   ]},
   { "Getting Started" = [
-    {"Try it" = "getting-started/try-it.md"},
-    {"Prerequisites" = "getting-started/index.md"},
+    {"Quickstart" = "getting-started/try-it.md"},
     {"Deploy" = "getting-started/deploy.md"},
     {"Run a Campaign" = "getting-started/campaigns.md"},
     {"View Results" = "getting-started/viewing.md"},
