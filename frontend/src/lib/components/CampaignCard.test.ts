@@ -5,70 +5,23 @@ import {
   screen,
   within,
 } from "@testing-library/svelte";
-import { parse, type AST } from "svelte/compiler";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { JobSummary } from "$lib/api.js";
 import { RELOAD_MS } from "$lib/config.js";
 import { describeReason } from "$lib/reasons.js";
 import CampaignCard from "./CampaignCard.svelte";
 import cardSource from "./CampaignCard.svelte?raw";
+import { cssOf as cssOfRule, cssRules, squash } from "$lib/fixtures/css.js";
 
-// jsdom applies none of a component's scoped styles, so the layout promises
-// below are read from the card's own <style> as the Svelte compiler parses
-// it -- every rule, media queries included, in source order -- rather than
-// by regexes that only ever saw the first rule of a name at one indentation.
-type CssRule = {
-  selectors: string[];
-  media: string | null;
-  decls: [string, string][];
-};
-
-const squash = (text: string) => text.replace(/\s+/g, " ").trim();
-
-const cardRules: CssRule[] = (() => {
-  const rules: CssRule[] = [];
-  const walk = (
-    nodes: (AST.CSS.Rule | AST.CSS.Atrule | AST.CSS.Declaration)[],
-    media: string | null,
-  ) => {
-    for (const node of nodes) {
-      if (node.type === "Atrule" && node.name === "media" && node.block)
-        walk(node.block.children, squash(node.prelude));
-      if (node.type !== "Rule") continue;
-      rules.push({
-        selectors: node.prelude.children.map((c) =>
-          squash(cardSource.slice(c.start, c.end)),
-        ),
-        media,
-        decls: node.block.children.flatMap((d) =>
-          d.type === "Declaration"
-            ? [[d.property, squash(d.value)] as [string, string]]
-            : [],
-        ),
-      });
-    }
-  };
-  walk(parse(cardSource, { modern: true }).css?.children ?? [], null);
-  return rules;
-})();
+// The card's own <style>, as the Svelte compiler parses it (see
+// $lib/fixtures/css).
+const cardRules = cssRules(cardSource);
 
 const PHONE = "(max-width: 520px)";
 
-/**
- * What `selector` (exactly that selector) ends up with, at full width or at
- * `media`: the top-level rules and that media query's, the later one of two
- * winning as in the cascade.
- */
-function cssOf(selector: string, media: string | null = null) {
-  const out = new Map<string, string>();
-  for (const rule of cardRules)
-    if (
-      (rule.media === null || rule.media === media) &&
-      rule.selectors.includes(selector)
-    )
-      for (const [property, value] of rule.decls) out.set(property, value);
-  return out;
-}
+/** `selector`'s declarations on the card, at full width or at `media`. */
+const cssOf = (selector: string, media: string | null = null) =>
+  cssOfRule(cardRules, selector, media);
 
 /** Every declaration of every rule whose subject is `cls`, anywhere. */
 function declsOn(cls: string): [string, string][] {
