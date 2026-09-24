@@ -1907,6 +1907,29 @@ def test_a_steps_edit_under_a_running_campaign_is_refused_by_the_live_record(
     assert _live(cluster, "htr-pipeline-demo-v1")["data"]["pipeline.yaml"] == before
 
 
+def test_a_size_edit_under_a_running_campaign_is_refused_by_the_live_record(
+    tmp_path, cluster, capsys
+):
+    """The size is part of the recipe (B105), and the live pipeline
+    ConfigMap records it: with no `rendered/` to hold the edit against, the
+    live record refuses it as it refuses a steps edit."""
+    repo = _repo(tmp_path)
+    config = repo / "converter.yaml"
+    config.write_text(
+        config.read_text()
+        + "sizes:\n  small: {cpu: 4, memory: 16Gi}\n  large: {cpu: 8, memory: 32Gi}\n"
+    )
+    _edit(repo / "pipelines" / "demo-v1.yaml", size="small")
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "one")]) == 0
+    _edit(repo / "pipelines" / "demo-v1.yaml", size="large")
+    cluster.calls.clear()
+    capsys.readouterr()
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "two")]) == 1
+    err = capsys.readouterr().err
+    assert "pipeline demo-v1 is in the cluster with a different size" in err
+    assert cluster.of("apply") == [] and cluster.of("dry-run") == []
+
+
 def test_a_steps_edit_once_every_campaign_on_it_has_ended_is_applied(tmp_path, cluster):
     """The rule is the render's own: an id is held while a campaign still
     runs it. A Job that has ended runs nothing more, and a warm-up is not a

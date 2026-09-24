@@ -772,10 +772,12 @@ _LIVE_WINDOW = _WINDOW_CHANGE + (
 #: applied under one runs every index not yet started on different steps,
 #: under the same results id.
 _LIVE_RECIPE = (
-    "pipeline {id} is in the cluster with different steps and campaigns "
+    "pipeline {id} is in the cluster with {what} and campaigns "
     "{jobs} still run it: a pipeline id is a permanent name for a recipe, so "
     "add a new pipeline file instead — nothing was applied"
 )
+#: What of a live pipeline's recipe the apply holds, as the sentence says it.
+_RECIPE_WHAT = {"steps": "different steps", "size": "a different size"}
 
 
 def _running(cluster) -> list[dict]:
@@ -927,11 +929,17 @@ def _moved_recipe(cluster, pipelines: list[dict], running: list[dict]) -> str | 
     for obj in rendered:
         cm = obj["metadata"]["name"]
         live = cluster.get("ConfigMap", cm) if cm in users else None
-        if made_here(live) and (
-            render.recipe([live])["steps"] != render.recipe([obj])["steps"]
-        ):
+        if not made_here(live):
+            continue
+        before, after = render.recipe([live]), render.recipe([obj])
+        # The size (B105) is on the ConfigMap too; a record written before
+        # it had one had no size, which is what a pipeline without one says.
+        what = next((w for k, w in _RECIPE_WHAT.items() if before[k] != after[k]), None)
+        if what is not None:
             return _LIVE_RECIPE.format(
-                id=cm.removeprefix("htr-pipeline-"), jobs=", ".join(sorted(users[cm]))
+                id=cm.removeprefix("htr-pipeline-"),
+                what=what,
+                jobs=", ".join(sorted(users[cm])),
             )
     return None
 
