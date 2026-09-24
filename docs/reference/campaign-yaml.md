@@ -326,6 +326,35 @@ page whose ALTO or PAGE XML holds none of the text htrflow recognized for
 it fails. If every page of a volume fails that way, the volume fails
 permanently (see [the wrapper's stages](../how-it-works/wrapper.md#stages-around-the-streaming-loop)).
 
+### Predicted page quality
+
+```yaml
+  - step: QualityPrediction
+    settings:
+      model_settings:
+        model: <org>/<qp-model-repo>        # Hub repo id
+        revision: <40-hex commit sha>
+        model_file: <name>.joblib
+        bin_config_file: <name>.json
+      feature_groups: [segmentation, layout, htr_confidence, text]   # optional
+```
+
+A `QualityPrediction` step scores each page's transcription, so it is
+refused wherever it sits before the pipeline's `TextRecognition` step, and
+refused the same way when the pipeline has no `TextRecognition` step at
+all. Its model is a pickle, so `model_settings.model` must be a Hugging
+Face Hub repo id, never a local path, and `model_settings.revision` must be
+the model's 40-hex commit sha. `model_settings.model_file` and
+`model_settings.bin_config_file` must each be a plain file name inside
+that repo — no path separator, and never `.` or `..`. The optional
+`feature_groups` list may only name groups this image can compute
+(`segmentation`, `layout`, `htr_confidence`, `text`); a group that needs
+the page image, a DiT model or a language model this image does not run
+is refused by name, the same as a group that does not exist at all. A
+pipeline may carry at most one `QualityPrediction` step. Its settings are
+part of the recipe like every other step's: changing them changes
+`recipe_sha256`, so a pinned pipeline is never rewritten in place.
+
 Two more rules are the **cluster's**, enforced by Kyverno at admission and
 by the Kyverno CLI in the campaigns repo's CI:
 
