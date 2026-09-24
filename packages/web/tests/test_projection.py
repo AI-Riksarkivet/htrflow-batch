@@ -2020,6 +2020,13 @@ def _pipeline(text: str) -> dict:
             False,
         ),
         ({"data": {"pipeline.yaml": 123}}, False),
+        (
+            _pipeline(
+                "steps:\n- step: QualityPrediction\n"
+                "  at: !!timestamp '99999999999999999999-01-01'\n"
+            ),
+            False,
+        ),
     ],
     ids=[
         "qp",
@@ -2035,6 +2042,7 @@ def _pipeline(text: str) -> dict:
         "bad-int",
         "over-the-cap",
         "not-a-string",
+        "bad-timestamp",
     ],
 )
 def test_a_pipeline_scores_quality_when_it_has_the_step(configmap, expected):
