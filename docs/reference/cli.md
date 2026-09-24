@@ -270,7 +270,7 @@ well.
 | What `apply` finds | What happens |
 |---|---|
 | A campaign's live ConfigMap has a different volume list, pipeline or image | `campaign <name> is in the cluster with different …`, nothing is applied, exit `1`. |
-| A pipeline's live steps differ, and a campaign Job that has not ended mounts it | `pipeline <id> is in the cluster with different steps and campaigns … still run it`, nothing is applied, exit `1`. Steps are compared parsed. |
+| A pipeline's live steps or size differ, and a campaign Job that has not ended mounts it | `pipeline <id> is in the cluster with different steps and campaigns … still run it` (or `with a different size`), nothing is applied, exit `1`. Steps are compared parsed. |
 | A ConfigMap it may not read | Stops the same way: a check that cannot be made has not passed. |
 
 The rules themselves are in
