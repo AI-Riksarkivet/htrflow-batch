@@ -119,6 +119,12 @@ class Unreachable(ClusterError):
     -- so ``cli._apply`` stops on it instead of carrying on (3091)."""
 
 
+class Forbidden(ClusterError):
+    """A read this identity may not make: the queue check (B105) is skipped
+    with a warning, rather than failing an apply run from a kubeconfig that
+    was never given the right."""
+
+
 class Conflict(ClusterError):
     """A 409: another field manager owns what the request would change, or
     another writer got to the object first."""
@@ -729,6 +735,48 @@ class Cluster:
             )
         items = listed.get("items", [])
         return items[0] if items else None
+
+    def _kueue_get(self, plural: str, name: str, namespaced: bool) -> dict | None:
+        """One Kueue object by name, or ``None`` when there is none."""
+        api = self._kueue()
+        call, where = (
+            (api.get_namespaced_custom_object, (self.namespace,))
+            if namespaced
+            else (api.get_cluster_custom_object, ())
+        )
+        try:
+            return _retrying(
+                call, *_KUEUE, *where, plural, name, _request_timeout=REQUEST_TIMEOUT
+            )
+        except ApiException as e:
+            if e.status == 404:
+                return None
+            if e.status in (401, 403):
+                raise Forbidden(f"not allowed to get {plural}/{name}") from e
+            raise _api_error("get", plural, name, self.namespace, e) from e
+        except HTTPError as e:
+            raise _unreachable(e) from e
+
+    def queue_flavors(self, queue: str) -> tuple[str, dict[str, dict | None]]:
+        """The ClusterQueue LocalQueue ``queue`` points at, and each of its
+        flavors' node labels (``None`` for a flavor with no ResourceFlavor).
+        Read by name only: the chart's apply identity may get these objects
+        and no others (B105)."""
+        lq = self._kueue_get("localqueues", queue, namespaced=True)
+        if lq is None:
+            raise ClusterError(f"LocalQueue {queue} does not exist in {self.namespace}")
+        cq_name = (lq.get("spec") or {}).get("clusterQueue", "")
+        cq = self._kueue_get("clusterqueues", cq_name, namespaced=False)
+        if cq is None:
+            raise ClusterError(f"ClusterQueue {cq_name} does not exist")
+        flavors: dict[str, dict | None] = {}
+        for group in (cq.get("spec") or {}).get("resourceGroups") or []:
+            for flavor in group.get("flavors") or []:
+                rf = self._kueue_get("resourceflavors", flavor["name"], False)
+                flavors[flavor["name"]] = (
+                    None if rf is None else (rf.get("spec") or {}).get("nodeLabels", {})
+                )
+        return cq_name, flavors
 
     def sync_pause(self, job: dict, suspended: bool, wait: int) -> int:
         """Put ``suspended`` on the Job's Workload. Non-zero when it cannot.

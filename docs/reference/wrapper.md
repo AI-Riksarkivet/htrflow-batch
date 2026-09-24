@@ -179,9 +179,11 @@ stack does exactly this without a cluster — see
 [Try it](../getting-started/try-it.md#without-a-cluster-docker-compose).
 
 **Workdir bound.** `LOOKAHEAD_BYTES` bounds the images in `WORKDIR_PATH`
-to 1 GiB of the Job's 2 Gi memory-backed `emptyDir`. Heavier images shorten
-the lookahead window rather than overflow it; a smaller workdir wants
-`LOOKAHEAD_BYTES` lowered with it
+to half the Job's memory-backed `emptyDir`: the default 1 GiB is half the
+default 2 Gi, and a pipeline at a named size gets `LOOKAHEAD_BYTES` rendered
+as half its size's `workdir`
+([Pod sizes](campaign-yaml.md#pod-sizes)). Heavier images shorten
+the lookahead window rather than overflow it
 ([Memory bounds](../how-it-works/wrapper.md#memory-bounds)).
 
 ### Warm-up entrypoint

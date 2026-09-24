@@ -51,6 +51,9 @@ PAIRS = {("converter", f): f"chart `{p}`" for f, p in AGREEMENTS}
 PAIRS |= {("chart", p): f"converter `{f}`" for f, p in AGREEMENTS}
 PAIRS |= {("converter", f): f"chart `{p}[].{k}`" for f, p, k in LIST_AGREEMENTS}
 PAIRS |= {("chart", p): f"converter `{f}`" for f, p, k in LIST_AGREEMENTS}
+#: A size's flavor is rendered as the chart flavor's node labels (B105).
+FLAVORS_PAIR = (("converter", "flavors"), "chart `queue.flavors[].name`, `.nodeLabels`")
+PAIRS |= dict([FLAVORS_PAIR, (("chart", "queue.flavors"), "converter `flavors`")])
 
 #: The results base: one value, four names, three consumers.
 RESULTS_BASE = {
@@ -121,11 +124,14 @@ FREE_ENV = {
     "MANIFEST_MAX_BYTES": ("converter", "manifest_max_bytes"),
     "FETCH_MAX_BYTES": ("converter", "fetch_max_bytes"),
     "BACKOFF_LIMIT_PER_INDEX": ("fixed", "the Job's `backoffLimitPerIndex`"),
+    "LOOKAHEAD_BYTES": ("size", "workdir"),
 }
 _FREE_SHOWN = {
     "pipeline": "the pipeline file's `{}`",
     "converter": "`converter.yaml` `{}`",
     "fixed": "the converter, fixed: {}",
+    "size": "half the pipeline's size's `{}` (`converter.yaml` `sizes`); "
+    "no size, the default",
 }
 #: What an image's own `ENV` holds, where it comes from at build time.
 IMAGE_ENV_DOC = {
