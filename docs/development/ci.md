@@ -184,7 +184,11 @@ on its own, and nothing younger than a week — for the pins a registry can
 answer for: the actions, `uv.lock`, `frontend/bun.lock`, the dockerfiles'
 `FROM` lines and the dagger module's `go.mod`. Its security updates, enabled
 in the repository's settings, come as soon as an advisory is published.
-Every such pull request goes through the full CI and is merged by hand.
+Every such pull request goes through the full CI. Patch and minor updates of the
+actions, `uv.lock` and `frontend/bun.lock` merge themselves once every required
+check passes (`.github/workflows/dependabot-automerge.yml`); a major version, a
+base image and the dagger module are merged by hand, because a new major is a
+migration and pull-request CI does not build every image it would ship.
 Everything else moves by hand, in a pull request of its own.
 
 | Pin | Lives in | Updated by |

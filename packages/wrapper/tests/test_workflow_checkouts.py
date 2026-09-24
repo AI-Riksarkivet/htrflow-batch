@@ -23,6 +23,15 @@ import yaml
 _DIR = Path(__file__).resolve().parents[3] / ".github" / "workflows"
 WORKFLOWS = sorted(p for p in _DIR.iterdir() if p.suffix in (".yml", ".yaml"))
 
+#: Workflows that read no code and so check nothing out. Named here rather
+#: than let through by an empty match, so a checkout that moves out of any
+#: other workflow still fails the test below.
+CHECKS_OUT_NOTHING = {
+    # Turns on auto-merge through the API; it must never run the pull
+    # request's code with its write token.
+    "dependabot-automerge.yml",
+}
+
 
 def _checkout_steps(workflow: dict) -> list[tuple[str, dict]]:
     return [
@@ -37,6 +46,9 @@ def _checkout_steps(workflow: dict) -> list[tuple[str, dict]]:
 def test_every_checkout_drops_the_token(path: Path) -> None:
     workflow = yaml.safe_load(path.read_text())
     steps = _checkout_steps(workflow)
+    if path.name in CHECKS_OUT_NOTHING:
+        assert not steps, f"{path.name} is listed as checking out nothing"
+        return
     assert steps, f"{path.name} checks out nothing — did the step move?"
     for job, step in steps:
         assert step.get("with", {}).get("persist-credentials") is False, (
