@@ -1346,6 +1346,43 @@ describe("CampaignCard", () => {
     ).toHaveLength(within(row as HTMLElement).getAllByRole("cell").length);
   });
 
+  // The API names each (volume, page) once; an older or broken one that did
+  // not would make a keyed each throw in production (each_key_duplicate)
+  // and take the whole card with it. The schema drops the second one.
+  test("a campaign whose lowest names a page twice still renders, naming it once", async () => {
+    const low = {
+      volume: "vol0",
+      page: "0002",
+      quality: 0.41,
+      canvas: 1,
+      iiifUrl: volumeDone.iiifUrl,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...job,
+          ...detailBase,
+          pipelineSteps: qpSteps,
+          volumes: [scoredVolume],
+          failures: [],
+          pagesCoverage: { counted: 1, of: 1 },
+          quality: {
+            mean: 0.8123,
+            min: 0.41,
+            scored: 3,
+            volumes: 1,
+            lowest: [low, { ...low, quality: 0.5 }],
+          },
+        }),
+      ),
+    );
+    render(CampaignCard, { job });
+    await expand();
+    await screen.findByText("vol0");
+    expect(screen.getAllByRole("link", { name: "vol0/0002" })).toHaveLength(1);
+  });
+
   test("a partial mean says how many volumes it covers", async () => {
     vi.stubGlobal(
       "fetch",
