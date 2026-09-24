@@ -54,16 +54,18 @@
     }
   }
 
-  // Set while the tab is in the background: the next answer is sorted
-  // afresh rather than kept in the order the reader left it in.
+  // Set when the reader comes back to the tab: the next answer is sorted
+  // afresh rather than kept in the order they left it in. Set on the
+  // return, not on leaving: an answer that lands while the tab is hidden
+  // must not use the re-sort up on a list nobody is looking at.
   let resort = false;
 
   $effect(() => {
-    const away = () => {
-      if (document.hidden) resort = true;
+    const back = () => {
+      if (!document.hidden) resort = true;
     };
-    document.addEventListener("visibilitychange", away);
-    return () => document.removeEventListener("visibilitychange", away);
+    document.addEventListener("visibilitychange", back);
+    return () => document.removeEventListener("visibilitychange", back);
   });
 
   // One request in flight at a time, nothing polled while the tab is in the
