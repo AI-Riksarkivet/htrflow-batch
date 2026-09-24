@@ -140,7 +140,7 @@ applied. The full order and what to do about a refusal are in
 ```yaml title="campaigns/<campaign>.yaml"
 pipeline: <id>
 volumes:
-  - <reference>                    # expanded through converter.yaml's source_template
+  - <reference>                    # expanded through converter.yaml's source_template (set it first)
   - id: <volume-id>
     manifest: <iiif-manifest-url>
 ```

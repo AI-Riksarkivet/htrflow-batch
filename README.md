@@ -55,7 +55,7 @@ pipeline: demo-v1            # a pipeline file in the same repository
 window: 4                    # optional: how many volumes run at once
 priority: htr-bulk           # optional: where it goes in the line
 volumes:
-  - R0001203                 # a reference code is enough
+  - R0001203                 # a reference code, once converter.yaml's source_template is set
   - id: loc-mal2459400
     manifest: https://…/manifest.json
   - id: loose-scans

@@ -150,8 +150,9 @@ volumes:
 ```
 
 A bare string instead of `id:` plus `manifest:` is a reference code, expanded
-through `source_template` in `converter.yaml`. Set that template for your
-source before you use bare references.
+through `source_template` in `converter.yaml`. That template has no default:
+set it for your source before you use bare references, or `validate` refuses
+them.
 [Campaign & Pipeline YAML](../reference/campaign-yaml.md) has every format.
 
 ```bash

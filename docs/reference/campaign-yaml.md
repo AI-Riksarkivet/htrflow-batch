@@ -14,8 +14,9 @@ Source: [`packages/converter/src/htrflow_converter/parse.py`](https://github.com
 
 Cluster-wide defaults for everything the converter renders. Unknown keys are
 rejected. Every field is optional; the values below are the defaults, except
-`source_template`, which is shown as a placeholder — set it to your IIIF
-source whenever a campaign lists bare volume ids.
+`source_template`, which is shown as a placeholder. It has no default: set it
+to your IIIF source before a campaign lists a volume as a bare reference code
+(`- R0001203`). Without it, only `manifest:` and `images:` volumes are allowed.
 
 In all three kinds of file, a key written twice in one mapping is a
 validation error naming both lines (YAML itself would silently keep the
@@ -33,7 +34,7 @@ runtime_class: nvidia             # RuntimeClass for GPU pods — on the warm-up
 node_selector: {}
 tolerations: []                   # Kubernetes tolerations, each naming its taint's key (see below)
 public_results_base: ""           # public URL prefix results are served from (required for the read API)
-source_template: "https://<iiif-host>/<path>/{ref}/manifest"   # manifest URL for a bare volume id; {ref} is the id
+source_template: "https://<iiif-host>/<path>/{ref}/manifest"   # no default; manifest URL for a bare volume id, {ref} is the id
 max_seconds: 21600                # each pod's activeDeadlineSeconds; a pipeline's own `max_seconds:` overrides it
 warmup_wait_seconds: 900          # how long a pod waits for its pipeline's warm-up marker before failing the index; capped by that pod's own deadline
 ttl_seconds_after_finished: 604800  # a week: how long a finished campaign's Job stays before Kubernetes deletes it; a pipeline's own `ttl_seconds_after_finished:` overrides it
@@ -89,7 +90,7 @@ window: 20                   # optional: this campaign's parallelism, clamped to
 suspend: false               # optional: true pauses this campaign (see the CLI reference, "Pausing")
 volumes:
   # 1) Bare string: a reference code at your IIIF source. The manifest URL
-  #    is templated from converter.yaml's source_template.
+  #    is templated from converter.yaml's source_template, which must be set.
   - R0001203
 
   # 2) Explicit IIIF manifest (Presentation v2 or v3), http(s) only:
@@ -146,11 +147,14 @@ running campaign's window, two campaigns sharing a volume) are made by
 **A rule added later does not reach a campaign already rendered.** A
 campaign whose volume list is exactly what the committed `rendered/`
 recorded for it keeps that rendering, even where a rule added since would
-refuse it: a volume id written unquoted that YAML reads as a number, or a
-source URL a browser cannot open. Its list is append-only, so it could never
-be brought to pass. `validate` and `render` print a `warning:` line for each
-such volume instead, which says the id the volume was rendered under (write
-it quoted, as that id) or what the browser would refuse. A new campaign, or
+refuse it: a volume id written unquoted that YAML reads as a number, a
+source URL a browser cannot open, or a bare volume id with no
+`source_template` set (it keeps the manifest URL it was rendered with). Its
+list is append-only, so it could never be brought to pass. `validate` and
+`render` print a `warning:` line instead, which says the id the volume was
+rendered under (write it quoted, as that id), what the browser would refuse,
+or that `source_template` should be set to the template the bare ids were
+rendered with. A new campaign, or
 a rendered one whose list changes, is held to every rule.
 
 The campaign file stem becomes the value of the converter's `campaign` label
@@ -262,6 +266,7 @@ campaigns/broken.yaml: volume "R1" is listed twice — remove the duplicate
 | `queue:`, `s3_secret:`, `data_pvc:` or `runtime_class:` written as anything but a Kubernetes object name | `"queue" is not a Kubernetes object name (got "HTR-Batch") — use lower-case letters, digits, "-" and ".", starting and ending with a letter or digit, at most 253 characters` |
 | A `node_selector:` key or value that is not a label | `"node_selector" has a key that is not a Kubernetes node label (got "Bad Key") — a key is a name, optionally after a "<dns-prefix>/"; both halves and the value are letters, digits, ".", "_" and "-", at most 63 characters` |
 | `allowed_image_repos:` or `require_model_revision:` in `converter.yaml` | `allowed_image_repos moved to the htrflow-batch chart (security.allowedImageRepos, enforced by Kyverno) — remove it from converter.yaml` |
+| Bare volume ids (`- R1`) with no `source_template:` in `converter.yaml` (one line per campaign) | `volumes "R1", "R2" and "R3" are bare reference codes, and converter.yaml has no source_template to turn them into manifest URLs — set source_template in converter.yaml (e.g. "https://iiif.example.org/{ref}/manifest"), or write each volume as "id:" with "manifest: <url>"` |
 | A `source_template:` with no `{ref}` in it, with `{ref}` twice, or with any other placeholder | `"source_template" must have {ref} in it exactly once and nothing else in braces (got "https://iiif.example.org/{id}/manifest") — {ref} is where a campaign's bare volume id goes` |
 | `steps:` that is not a list | `"steps" must be a list of steps — write steps: and then "- step: <Name>" entries under it` |
 | `window: "5"` (quoted, so YAML makes it text), `window: 0`, `window: true` | `"window" must be a whole number of 1 or more (got "5" — quotes make it text)` |

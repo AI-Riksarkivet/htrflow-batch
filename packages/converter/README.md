@@ -85,7 +85,8 @@ ServiceAccount behind `apply.rbac.enabled`.
 | `campaigns/<name>.yaml` | `Campaign` (`pipeline`, `volumes`, optional `priority`, `window`, `suspend`; unknown keys rejected, on the campaign and on each volume) | ConfigMap `campaign-<name>` with `volumes.txt`; Indexed Job `<name>` with `completions = len(volumes)` |
 
 A volume is either a bare id (the manifest URL comes from
-`source_template`) or a mapping with `id` and exactly one of `manifest` or
+`source_template`, which has no default: a bare id with none set is refused,
+one line per campaign) or a mapping with `id` and exactly one of `manifest` or
 `images`. Validation collects every problem before failing, so one run shows
 the whole list.
 
