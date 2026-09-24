@@ -685,7 +685,7 @@ class Pipeline(BaseModel):
     ttl_seconds_after_finished: int | None = None
     #: One of converter.yaml's ``sizes`` (B105): what each campaign pod on
     #: this pipeline asks for. Part of the recipe its id names for good.
-    size: str | None = None
+    size: str | None = Field(default=None, min_length=1)
 
     @field_validator("id")
     @classmethod
@@ -795,15 +795,6 @@ class Pipeline(BaseModel):
             )
         if isinstance(v, int) and v > _INT32_MAX:
             raise ValueError(f"must be {_INT32_MAX} or less (got {shown(v)})")
-        return v
-
-    @field_validator("size")
-    @classmethod
-    def _check_size(cls, v: str | None) -> str | None:
-        if v == "":
-            raise ValueError(
-                "is empty — name one of converter.yaml's sizes, or leave size out"
-            )
         return v
 
     def pipeline_yaml(self) -> str:
@@ -1136,10 +1127,16 @@ class ConverterConfig(BaseModel):
     #: The chart's ``queue.flavors`` by name and node labels, in its order
     #: (``Flavor``). Empty: the chart's one flavor, which no size names.
     flavors: list[Flavor] = Field(default_factory=list)
-    #: Named pod sizes a pipeline's ``size:`` picks (``Size``). A pipeline
-    #: that names none keeps the Job skeleton's own: 4 CPU, 8Gi requested
-    #: and 16Gi at most, 1 GPU and a 2Gi ``/work``.
+    #: Named pod sizes a pipeline's ``size:`` picks (``Size``).
     sizes: dict[str, Size] = Field(default_factory=dict)
+    #: The size a pipeline that names none runs at. Unset, it keeps the Job
+    #: skeleton's own -- 4 CPU, 8Gi requested and 16Gi at most, 1 GPU, a 2Gi
+    #: ``/work`` -- on whichever flavor Kueue tries first with the quota.
+    default_size: str | None = None
+
+    def size_of(self, p: Pipeline) -> str | None:
+        """The size ``p``'s campaign pods run at: its own, or the default."""
+        return p.size or self.default_size
 
     @field_validator("namespace")
     @classmethod
@@ -1198,6 +1195,12 @@ class ConverterConfig(BaseModel):
         for name in names:
             if names.count(name) > 1:
                 raise ValueError(f'"flavors" lists flavor "{name}" twice')
+        if self.default_size is not None and self.default_size not in self.sizes:
+            raise ValueError(
+                f'default_size "{self.default_size}" is not one of the sizes '
+                f"({', '.join(self.sizes) or 'none'}) — name one of them, or "
+                "leave default_size out"
+            )
         labels = {f.name: f.node_labels for f in self.flavors}
         for i, a in enumerate(names):
             for b in names[i + 1 :]:

@@ -155,8 +155,8 @@ def _pipeline_configmap(p: Pipeline, cfg: ConverterConfig) -> dict:
     _set(cm, "metadata.namespace", cfg.namespace)
     cm["metadata"]["labels"][_PIPELINE_LABEL] = label_value(p.id)
     cm["metadata"]["annotations"][_SHA_ANNOTATION] = p.sha256
-    if p.size is not None:
-        cm["metadata"]["annotations"][_SIZE_ANNOTATION] = p.size
+    if (size := cfg.size_of(p)) is not None:
+        cm["metadata"]["annotations"][_SIZE_ANNOTATION] = size
     cm["data"]["pipeline.yaml"] = p.pipeline_yaml()
     return cm
 
@@ -396,8 +396,8 @@ def _campaign_job(
     )
 
     _scheduling(job, cfg)
-    if p.size is not None:
-        _size(job, cfg.sizes[p.size], cfg)
+    if (size := cfg.size_of(p)) is not None:
+        _size(job, cfg.sizes[size], cfg)
     return job
 
 

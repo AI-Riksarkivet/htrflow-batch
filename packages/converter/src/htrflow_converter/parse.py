@@ -162,6 +162,7 @@ _TYPE_SENTENCES = {
     "int_parsing": "must be a whole number (got {got})",
     "int_from_float": "must be a whole number (got {got})",
     "string_type": "must be text (got {got})",
+    "string_too_short": "is empty — give it a value, or leave it out",
     "bool_type": "must be true or false (got {got})",
     "bool_parsing": "must be true or false (got {got})",
     "list_type": "must be a list of entries (got {got})",
@@ -391,6 +392,7 @@ def _parse_pipeline(
         recorded_recipe(record / "pipelines" / f"{path.stem}.yaml") if record else {}
     )
     as_written = {k: doc.get(k) for k in ("image", "steps", "size")}
+    as_written["size"] = as_written["size"] or context.get("default_size")
     if recorded and recorded == as_written:
         try:
             p = Pipeline.model_validate(data, context={**context, "as_recorded": True})
@@ -423,6 +425,7 @@ def load(
     context = {
         "source_template": template,
         "record": Path(campaigns_dir).parent / RENDERED,
+        "default_size": cfg.default_size,
     }
 
     pipelines: dict[str, Pipeline] = {}

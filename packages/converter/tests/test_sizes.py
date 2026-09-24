@@ -258,3 +258,49 @@ def test_memory_in_bytes_is_a_number_as_cpu_is():
     refused it as "must be text" (review item 5)."""
     size = _config("sizes: {big: {cpu: 8, memory: 17179869184}}").sizes["big"]
     assert size.resources()["memory"] == "17179869184"
+
+
+# --- default_size (review of PR #35, item 2) -------------------------------
+
+
+def test_a_default_size_is_what_a_pipeline_without_one_runs_at(tmp_path):
+    """Without it an unsized pipeline takes the Job skeleton's numbers and
+    lands on the first flavor with quota; with it, it runs where the
+    operator says light work belongs."""
+    repo = _repo(tmp_path, config=SIZES + "default_size: small\n")
+    job = _kyrk_job(repo)
+    pod = _pod(job)
+    want = {"cpu": "4", "memory": "16Gi", "nvidia.com/gpu": "1"}
+    assert pod["containers"][0]["resources"] == {"requests": want, "limits": want}
+    assert pod["nodeSelector"] == {"nvidia.com/gpu.product": "NVIDIA-L4"}
+    _, pipelines, cfg = _load(repo)
+    objects = render.pipeline_objects(pipelines["demo-v1"], cfg)
+    assert render.recipe(objects)["size"] == "small"
+
+
+def test_a_default_size_that_is_not_a_size_is_refused():
+    with pytest.raises(PydanticError) as refused:
+        _config(SIZES + "default_size: huge\n")
+    assert 'default_size "huge" is not one of the sizes (small, large)' in str(
+        refused.value
+    )
+
+
+def test_setting_a_default_size_under_a_running_unsized_pipeline_is_a_change(
+    tmp_path, capsys
+):
+    """Its campaign pods would change size, which a live Job cannot."""
+    repo = _repo(tmp_path)
+    assert main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    config = repo / "converter.yaml"
+    config.write_text(config.read_text() + "default_size: small\n")
+    capsys.readouterr()
+    assert main(["validate", str(repo)]) == 1
+    assert "pipeline demo-v1 changed (size)" in capsys.readouterr().out
+
+
+def test_an_empty_size_is_refused_not_read_as_none(tmp_path):
+    with pytest.raises(ValidationError) as refused:
+        _load(_repo(tmp_path, ""))
+    (problem,) = refused.value.problems
+    assert problem.startswith('pipelines/demo-v1.yaml: "size" is empty')
