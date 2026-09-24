@@ -92,3 +92,44 @@ export function startPolling(
 
   return stop;
 }
+
+/**
+ * At most `max` tasks at once; the rest wait their turn, in the order they
+ * asked. Every folded card on screen reads its own detail, and a page of
+ * fifty campaigns asked the API for fifty at the same instant; the cards
+ * share one of these. A task whose `signal` aborts while it waits never
+ * runs, and its promise rejects the way an aborted fetch does.
+ */
+export function gate(max: number) {
+  let running = 0;
+  const waiting: (() => void)[] = [];
+  return async function through<T>(
+    task: () => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    // A finished task hands its place straight to the next in line rather
+    // than freeing it, so nothing that asks in between can jump the queue
+    // and put one more in flight than `max`.
+    if (running < max) running += 1;
+    else
+      await new Promise<void>((go, stop) => {
+        const turn = () => {
+          signal?.removeEventListener("abort", leave);
+          go();
+        };
+        const leave = () => {
+          waiting.splice(waiting.indexOf(turn), 1);
+          stop(new DOMException("aborted while waiting", "AbortError"));
+        };
+        waiting.push(turn);
+        signal?.addEventListener("abort", leave, { once: true });
+      });
+    try {
+      return await task();
+    } finally {
+      const turn = waiting.shift();
+      if (turn === undefined) running -= 1;
+      else turn();
+    }
+  };
+}
