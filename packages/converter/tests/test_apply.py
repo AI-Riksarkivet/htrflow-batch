@@ -161,6 +161,22 @@ class _Kueue:
         wl = self.outer.workloads.get(uid)
         return {"items": [wl] if wl else []}
 
+    def _read(self, plural: str, name: str) -> dict:
+        status = self.outer.kueue_errors.get(plural)
+        if status is not None:
+            raise ApiException(status=status, reason="Forbidden")
+        self.outer.calls.append(("get", plural, name))
+        found = self.outer.kueue_objects.get((plural, name))
+        if found is None:
+            raise ApiException(status=404, reason="Not Found")
+        return found
+
+    def get_namespaced_custom_object(self, group, version, ns, plural, name, **kw):
+        return self._read(plural, name)
+
+    def get_cluster_custom_object(self, group, version, plural, name, **kw):
+        return self._read(plural, name)
+
     def patch_namespaced_custom_object(
         self, group, version, ns, plural, name, body, **kw
     ):
@@ -250,6 +266,10 @@ class FakeCluster(Cluster):
         self.owners: dict[tuple[str, str], dict[tuple[str, str], set]] = {}
         self.workloads: dict[str, dict] = {}
         self.workload_errors: dict[str, int] = {}
+        #: Kueue's queue objects by (plural, name), and a status per plural
+        #: to refuse every read of it with.
+        self.kueue_objects: dict[tuple[str, str], dict] = {}
+        self.kueue_errors: dict[str, int] = {}
         self.leases: dict[str, dict] = {}
         self.lease_log: list[str | None] = []
         self.lease_errors: dict[str, int] = {}
@@ -1907,6 +1927,29 @@ def test_a_steps_edit_under_a_running_campaign_is_refused_by_the_live_record(
     assert _live(cluster, "htr-pipeline-demo-v1")["data"]["pipeline.yaml"] == before
 
 
+def test_a_size_edit_under_a_running_campaign_is_refused_by_the_live_record(
+    tmp_path, cluster, capsys
+):
+    """The size is part of the recipe (B105), and the live pipeline
+    ConfigMap records it: with no `rendered/` to hold the edit against, the
+    live record refuses it as it refuses a steps edit."""
+    repo = _repo(tmp_path)
+    config = repo / "converter.yaml"
+    config.write_text(
+        config.read_text()
+        + "sizes:\n  small: {cpu: 4, memory: 16Gi}\n  large: {cpu: 8, memory: 32Gi}\n"
+    )
+    _edit(repo / "pipelines" / "demo-v1.yaml", size="small")
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "one")]) == 0
+    _edit(repo / "pipelines" / "demo-v1.yaml", size="large")
+    cluster.calls.clear()
+    capsys.readouterr()
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "two")]) == 1
+    err = capsys.readouterr().err
+    assert "pipeline demo-v1 is in the cluster with a different size" in err
+    assert cluster.of("apply") == [] and cluster.of("dry-run") == []
+
+
 def test_a_steps_edit_once_every_campaign_on_it_has_ended_is_applied(tmp_path, cluster):
     """The rule is the render's own: an id is held while a campaign still
     runs it. A Job that has ended runs nothing more, and a warm-up is not a
@@ -2486,3 +2529,98 @@ def test_a_running_campaigns_volumes_it_may_not_read_hold_the_newcomers(
     assert "could not tell whether campaign rerun shares a volume" in (
         capsys.readouterr().err
     )
+
+
+# --- a size's flavor against the cluster's (review of PR #35, item 3) -----
+
+SIZED = """
+flavors:
+  - name: small-gpu
+    nodeLabels: {nvidia.com/gpu.product: NVIDIA-L4}
+  - name: large-gpu
+    nodeLabels: {nvidia.com/gpu.product: NVIDIA-A100}
+sizes:
+  large: {flavor: large-gpu, cpu: 8, memory: 32Gi}
+"""
+
+
+def _sized_repo(tmp_path) -> Path:
+    repo = _repo(tmp_path)
+    config = repo / "converter.yaml"
+    config.write_text(config.read_text() + SIZED)
+    _edit(repo / "pipelines" / "demo-v1.yaml", size="large")
+    return repo
+
+
+def _queue(cluster, **labels: dict) -> None:
+    """The LocalQueue converter.yaml names, its ClusterQueue, and one
+    ResourceFlavor per keyword, in that order."""
+    kueue = cluster.kueue_objects
+    kueue[("localqueues", "htr-test")] = {"spec": {"clusterQueue": "team-cq"}}
+    flavors = [{"name": name.replace("_", "-")} for name in labels]
+    kueue[("clusterqueues", "team-cq")] = {
+        "spec": {"resourceGroups": [{"flavors": flavors}]}
+    }
+    for name, node_labels in labels.items():
+        kueue[("resourceflavors", name.replace("_", "-"))] = {
+            "spec": {"nodeLabels": node_labels}
+        }
+
+
+def test_a_sized_campaign_goes_out_when_its_flavors_are_the_clusters(tmp_path, cluster):
+    repo = _sized_repo(tmp_path)
+    _queue(
+        cluster,
+        small_gpu={"nvidia.com/gpu.product": "NVIDIA-L4"},
+        large_gpu={"nvidia.com/gpu.product": "NVIDIA-A100"},
+    )
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "out")]) == 0
+    assert ("get", "resourceflavors", "large-gpu") in cluster.calls
+    assert _live(cluster, "kyrk")
+
+
+def test_a_sized_campaign_is_held_when_the_clusters_flavors_differ(
+    tmp_path, cluster, capsys
+):
+    """A label value converter.yaml spells otherwise is a campaign Kueue
+    never admits; a flavor it does not list is one a sized pod may be
+    admitted on and never scheduled. Either holds the campaign back."""
+    repo = _sized_repo(tmp_path)
+    _queue(
+        cluster,
+        small_gpu={"nvidia.com/gpu.product": "NVIDIA-L4"},
+        large_gpu={"nvidia.com/gpu.product": "NVIDIA-A100-SXM4-80GB"},
+        spare_gpu={"pool": "spare"},
+    )
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "out")]) == (
+        cli.REFUSED
+    )
+    err = capsys.readouterr().err
+    assert (
+        "campaign kyrk runs at size large, on flavor large-gpu, and converter.yaml's"
+        " flavors are not ClusterQueue team-cq's: flavor large-gpu is"
+        " nvidia.com/gpu.product=NVIDIA-A100-SXM4-80GB in the cluster and"
+        " nvidia.com/gpu.product=NVIDIA-A100 in converter.yaml; the cluster has"
+        " flavor spare-gpu, which converter.yaml does not list" in err
+    )
+    assert not any(o["metadata"]["name"] == "kyrk" for o in cluster.live)
+    assert _live(cluster, "htr-pipeline-demo-v1")
+
+
+def test_without_the_right_to_read_the_flavors_the_apply_warns_and_goes_on(
+    tmp_path, cluster, capsys
+):
+    """A laptop kubeconfig may not read cluster-scoped Kueue objects; the
+    chart's apply identity may."""
+    repo = _sized_repo(tmp_path)
+    _queue(cluster, small_gpu={"x": "1"})
+    cluster.kueue_errors = {"clusterqueues": 403}
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "out")]) == 0
+    assert "applied unchecked" in capsys.readouterr().err
+    assert _live(cluster, "kyrk")
+
+
+def test_an_apply_with_no_flavored_size_reads_no_queue(tmp_path, cluster):
+    repo = _repo(tmp_path)
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "out")]) == 0
+    assert not [c for c in cluster.calls if c[0] == "get"]

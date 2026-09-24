@@ -96,7 +96,7 @@ Each key is an environment variable of the container.
 | `MAX_IMAGE_WIDTH` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | `2500` | — | no secret — nobody |
 | `RESUME` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | `true` | — | no secret — nobody |
 | `LOOKAHEAD_PAGES` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | `64` | — | no secret — nobody |
-| `LOOKAHEAD_BYTES` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | `1073741824` | — | no secret — nobody |
+| `LOOKAHEAD_BYTES` | half the pipeline's size's `workdir` (`converter.yaml` `sizes`); no size, the default | `1073741824` | — | no secret — nobody |
 | `MAX_PAGES` | **a local run only** (the compose stack sets it): no converter key renders it, and job-shape refuses a Job that sets it | `0` | — | no secret — nobody |
 | `WORKDIR_PATH` | the converter, fixed: `/work` | `/work` | — | no secret — nobody |
 | `DOWNLOAD_CONCURRENCY` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | `12` | — | no secret — nobody |
@@ -162,6 +162,9 @@ Each key is a key of `converter.yaml`.
 | `manifest_max_bytes` | `converter.yaml` | `16777216` | — | no secret — nobody |
 | `fetch_max_bytes` | `converter.yaml` | `67108864` | — | no secret — nobody |
 | `priority_classes` | `converter.yaml` | `[htr-interactive, htr-bulk, htr-idle]` | chart `queue.priorityClasses[].name` | no secret — nobody |
+| `flavors` | `converter.yaml` | *(empty)* | chart `queue.flavors[].name`, `.nodeLabels` | no secret — nobody |
+| `sizes` | `converter.yaml` | *(empty)* | — | no secret — nobody |
+| `default_size` | `converter.yaml` | *(empty)* | — | no secret — nobody |
 
 ## chart — `charts/htrflow-batch`
 
@@ -183,6 +186,7 @@ Each key is a key of its `values.yaml`.
 | `queue.clusterQueueName` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `queue.createClusterQueue` | `values.yaml` | `true` | — | no secret — nobody |
 | `queue.resources` | `values.yaml` | `[{name: cpu, quota: 4}, {name: memory, quota: 8Gi}, {name: …` | — | no secret — nobody |
+| `queue.flavors` | `values.yaml` | *(empty)* | converter `flavors` | no secret — nobody |
 | `queue.createPriorityClasses` | `values.yaml` | `true` | — | no secret — nobody |
 | `queue.priorityClasses` | `values.yaml` | `[{description: a handful of volumes someone is waiting for,…` | converter `priority_classes` | no secret — nobody |
 | `web.image` | `values.yaml` | `docker.io/riksarkivet/htrflow-web@sha256:1fbabef550593f6d77…` | — | digest-pinned unless `security.allowTagImages` — render |

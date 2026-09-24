@@ -276,7 +276,7 @@ well.
 | What `apply` finds | What happens |
 |---|---|
 | A campaign's live ConfigMap has a different volume list, pipeline or image | `campaign <name> is in the cluster with different …`, nothing is applied, exit `1`. |
-| A pipeline's live steps differ, and a campaign Job that has not ended mounts it | `pipeline <id> is in the cluster with different steps and campaigns … still run it`, nothing is applied, exit `1`. Steps are compared parsed. |
+| A pipeline's live steps or size differ, and a campaign Job that has not ended mounts it | `pipeline <id> is in the cluster with different steps and campaigns … still run it` (or `with a different size`), nothing is applied, exit `1`. Steps are compared parsed. |
 | A ConfigMap it may not read | Stops the same way: a check that cannot be made has not passed. |
 
 The rules themselves are in
@@ -296,6 +296,20 @@ running pod and queues the campaign again. So:
 
 The safe way: pause the campaign, change the window once the pause is
 applied, then resume it. A paused campaign's Workload is updated in place.
+
+### A size's flavor against the cluster's
+
+A campaign whose size names a flavor is sent only while `converter.yaml`'s
+`flavors` are the ClusterQueue's, names and node labels alike. `apply` reads
+the LocalQueue `converter.yaml` names, its ClusterQueue and each of that
+queue's ResourceFlavors, by name. When they differ, the campaign is left as
+it was with a sentence naming each difference (a flavor one side has and the
+other does not, a label value spelt otherwise), and the apply exits `3`.
+Campaigns with no flavor, and the pipelines, go out as usual. An identity
+that may not make those reads (a kubeconfig without the rights the chart's
+apply identity has) gets a warning, and the campaign goes out unchecked.
+[Several sorts of GPU](../how-it-works/queueing.md#several-sorts-of-gpu)
+says why a difference matters.
 
 ### Two campaigns on one volume
 
