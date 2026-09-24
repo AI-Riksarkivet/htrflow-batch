@@ -12,7 +12,9 @@ export const pageResultSchema = z.object({
   seconds: z.number(),
   error: z.string().optional(),
   // Present only on a page the QualityPrediction step scored (quality.py).
-  quality: z.number().optional(),
+  // A score that is not one (a string, outside [0, 1]) loses only itself:
+  // a failed parse would blank the whole run viewer.
+  quality: z.number().min(0).max(1).optional().catch(undefined),
 });
 
 export const runManifestSchema = z
@@ -32,16 +34,11 @@ export const runManifestSchema = z
     // viewer derives each page's ALTO URL from it (altoUrl). Absent on a
     // volume whose ALTO would not parse (build_viewer_manifest skipped).
     viewer_url: z.string().optional(),
-    // publish.py's `quality` block, present only when at least one page was
-    // scored; the rest of its shape (target, model, revision, lowest) rides
-    // through the `.loose()` below, unread here.
-    quality: z
-      .object({ mean: z.number(), min: z.number(), scored: z.number() })
-      .loose()
-      .optional(),
   })
   // Everything else the wrapper writes (bytes_fetched, canvas_ids, the
-  // digests resume compares...) is kept as it came and read by nothing here;
+  // digests resume compares, publish.py's volume `quality` block -- the
+  // pages table reads each page's own score instead...) is kept as it came
+  // and read by nothing here, so no shape of it can fail the parse;
   // wrapper-contract.test.ts checks the fields above against the real file.
   .loose();
 
