@@ -50,10 +50,11 @@ uploads the result and exits. That takes one to three minutes. Follow it:
 docker compose -f .docker/docker-compose.yml logs -f wrapper
 ```
 
-It is done when the log ends with:
+It returns by itself when the wrapper exits, and ends with:
 
 ```
-[mock-vol] COMPLETE 1 pages (1 processed, 0 failed) in …s, viewer: http://localhost:19000/htr-results/demo-v1/mock-vol/iiif.json
+wrapper-1  | … INFO [mock-vol] COMPLETE 1 pages (1 processed, 0 failed) in …s, viewer: http://localhost:19000/htr-results/demo-v1/mock-vol/iiif.json
+wrapper-1 exited with code 0
 ```
 
 ## 4. Open the result

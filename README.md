@@ -42,7 +42,7 @@ GPU.
 ```bash
 git clone https://github.com/AI-Riksarkivet/htrflow-batch && cd htrflow-batch
 make compose-up
-docker compose -f .docker/docker-compose.yml logs -f wrapper    # wait for "COMPLETE 1 pages"
+docker compose -f .docker/docker-compose.yml logs -f wrapper    # returns after "COMPLETE 1 pages"
 ```
 
 Then open
