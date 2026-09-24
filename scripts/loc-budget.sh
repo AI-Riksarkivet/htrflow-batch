@@ -747,7 +747,18 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 4212
 # and a recorded recipe compared with its size. cli.py +8: apply holds a
 # running pipeline's live size as it holds its steps. Most of it is the
 # sentence each refusal prints.
-check converter "$(count packages/converter/src -name '*.py')" 4731
+# 4731 -> 4915 (review of the pod sizes PR): cli.py +91 -- apply reads the
+# LocalQueue, ClusterQueue and ResourceFlavors behind a campaign whose size
+# names a flavor and holds it back when converter.yaml's flavors are not
+# those (a flavor it does not list is one a sized pod can be admitted on
+# and never scheduled; a label spelt otherwise, one it is never admitted
+# on), warning instead when the identity may not read them; flavor_mismatch
+# says each difference in a clause. cluster.py +48: those reads, by name,
+# with a Forbidden of their own so a laptop kubeconfig warns rather than
+# fails. models.py +39: every two flavors differ on a key both name (Kueue
+# compares only the keys a flavor names), default_size and size_of, the
+# workdir floor and the memory margin with their sentences.
+check converter "$(count packages/converter/src -name '*.py')" 4915
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
@@ -1518,5 +1529,10 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5180
 # twice, a quota of nothing written as a quantity) with their sentences.
 # job-shape +5: LOOKAHEAD_BYTES, which a sized Job carries, and every *_BYTES
 # env held to a whole number.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1995
+# 1995 -> 2056 (review of the pod sizes PR): apply-rbac.yaml +40 -- a
+# read-only ClusterRole and its binding, `get` by name on this release's
+# ClusterQueue and ResourceFlavors, and `get` on its LocalQueue, for the
+# apply's flavor check. _helpers.tpl +20: every two queue.flavors must differ
+# on a label key both name, with its sentence.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2056
 exit $fail
