@@ -177,7 +177,7 @@ since no pod can start without it; its reason is in the chip's title.
 its own detail, re-fetching every open page on each poll. A folded card
 fetches nothing, except a succeeded campaign's, which is read once for
 whether it lost pages. A finished, unknown or reaped campaign is read once,
-when its card is first on screen or opened, and not polled again. A failed poll puts a banner over the last list, and
+when its card is first on screen or opened, and not polled again. A failed poll puts a banner at the foot of the window, over the last list, and
 backs off. Older reaped campaigns wait behind "show older campaigns", 20 at
 a time.
 

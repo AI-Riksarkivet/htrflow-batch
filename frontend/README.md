@@ -263,7 +263,9 @@ new row, and a new campaign goes in front of the first card already shown
 that the sort would put after it. The next answer after the tab was hidden
 is sorted afresh, since nobody was reading it. "Loading…" shows only once
 the first answer is 400 ms late, and there is no empty state or banner
-before an answer.
+before an answer. A banner that arrives over a list floats at the foot of
+the window (the page gains room under its last card) rather than pushing
+the cards down; with no list yet it sits where the list would be.
 
 **Motion and accessibility.** Only what runs moves: the pulsing dot, the
 bar sheen, and a one-second fade behind a progress line whose `done`
