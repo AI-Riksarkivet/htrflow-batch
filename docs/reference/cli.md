@@ -297,6 +297,20 @@ running pod and queues the campaign again. So:
 The safe way: pause the campaign, change the window once the pause is
 applied, then resume it. A paused campaign's Workload is updated in place.
 
+### A size's flavor against the cluster's
+
+A campaign whose size names a flavor is sent only while `converter.yaml`'s
+`flavors` are the ClusterQueue's, names and node labels alike. `apply` reads
+the LocalQueue `converter.yaml` names, its ClusterQueue and each of that
+queue's ResourceFlavors, by name. When they differ, the campaign is left as
+it was with a sentence naming each difference (a flavor one side has and the
+other does not, a label value spelt otherwise), and the apply exits `3`.
+Campaigns with no flavor, and the pipelines, go out as usual. An identity
+that may not make those reads (a kubeconfig without the rights the chart's
+apply identity has) gets a warning, and the campaign goes out unchecked.
+[Several sorts of GPU](../how-it-works/queueing.md#several-sorts-of-gpu)
+says why a difference matters.
+
 ### Two campaigns on one volume
 
 Results are keyed by pipeline and volume, so two campaigns on one pipeline

@@ -24,8 +24,9 @@ exec python -m htrflow_batch.warmup
 {{- /*
 The rest of the two skeletons, as the converter renders them: every env var
 by name -- `pinned` at the skeleton's own value, `free` set by render.py per
-campaign (a plain value; `bytes` among them a whole number of bytes, and
-LOOKAHEAD_BYTES only at a named size), `secretEnv` from a Secret key,
+campaign (a plain value; `bytes` among them a whole number of bytes --
+the converter renders LOOKAHEAD_BYTES only at a named size, but a Job
+without one is admitted too), `secretEnv` from a Secret key,
 `fieldEnv` from that one field -- the mounts of each container, the Secret volume's file
 mode and the two securityContexts. An env var, a file mode or a mount point
 is enough to run code out of a ConfigMap the apply identity may write

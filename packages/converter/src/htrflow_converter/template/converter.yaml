@@ -43,14 +43,20 @@ public_results_base: "http://localhost:30900/htr-results"
 # everything the namespace admits — and re-run against rendered/ by the
 # Kyverno CLI in this repo's CI, so a pull request still fails early.
 
-# Named pod sizes a pipeline's `size:` picks; a pipeline without one asks
-# for 4 CPU, 8Gi (16Gi limit), 1 GPU and a 2Gi /work. A size's `flavor`
-# names an entry of `flavors`, which repeats the chart's `queue.flavors`
-# names and nodeLabels: Kueue picks a flavor by the pod's node selector, so
-# the flavor's labels are what the converter renders (docs:
-# reference/campaign-yaml.md, Pod sizes).
+# Named pod sizes a pipeline's `size:` picks; a pipeline without one runs
+# at `default_size`, or with none set asks for 4 CPU, 8Gi (16Gi limit), 1
+# GPU and a 2Gi /work on the first flavor with room. A size's `flavor` names
+# an entry of `flavors`, which repeats the chart's `queue.flavors` names and
+# nodeLabels (apply checks it against the cluster): Kueue picks a flavor by
+# the pod's node selector, so the flavor's labels are what the converter
+# renders, and every two flavors must share a label key with different
+# values (docs: reference/campaign-yaml.md, Pod sizes).
 # flavors:
+#   - name: small-gpu
+#     nodeLabels: { nvidia.com/gpu.product: <product label of the card> }
 #   - name: large-gpu
 #     nodeLabels: { nvidia.com/gpu.product: <product label of the card> }
 # sizes:
+#   small: { flavor: small-gpu, gpu: 1, cpu: 4, memory: 16Gi }
 #   large: { flavor: large-gpu, gpu: 1, cpu: 8, memory: 32Gi, workdir: 4Gi }
+# default_size: small
