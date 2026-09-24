@@ -211,6 +211,22 @@ REFUSED = {
         "flavors: [{name: a, nodeLabels: {x: '1'}}, {name: a, nodeLabels: {x: '2'}}]",
         'lists flavor "a" twice',
     ),
+    # review of PR #35, item 1: Kueue compares only the keys the flavor it
+    # tries names, so these let a pod sent to one be admitted on the other
+    "flavors-no-shared-key": (
+        "flavors: [{name: large-gpu, nodeLabels: {pool: large}}, {name: "
+        "small-gpu, nodeLabels: {nvidia.com/gpu.product: NVIDIA-L4}}]",
+        'flavors "large-gpu" and "small-gpu" name no label key with different values',
+    ),
+    "flavors-same-labels": (
+        "flavors: [{name: a, nodeLabels: {x: '1'}}, {name: b, nodeLabels: {x: '1'}}]",
+        'flavors "a" and "b" name no label key with different values',
+    ),
+    "flavors-subset": (
+        "flavors: [{name: a, nodeLabels: {x: '1'}}, {name: b, nodeLabels: "
+        "{x: '1', y: '2'}}]",
+        'flavors "a" and "b" name no label key with different values',
+    ),
     "no-labels": ("flavors: [{name: a, nodeLabels: {}}]", "has no nodeLabels"),
     "selector-conflict": (
         "node_selector: {nvidia.com/gpu.product: NVIDIA-L4}\n"

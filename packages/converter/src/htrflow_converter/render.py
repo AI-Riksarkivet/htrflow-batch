@@ -405,8 +405,11 @@ def _size(job: dict, size: Size, cfg: ConverterConfig) -> None:
     """A named size on the campaign pod (B105): the wrapper's requests and
     limits, alike; its in-memory ``/work``, and the page lookahead that
     lives in it at half of it (the rest holds outputs, HOME and TMPDIR --
-    audit 0923 E-14); and the flavor's node labels as the node selector,
-    which is how a Job keeps Kueue off every other flavor. A pipeline with
+    audit 0923 E-14); and the flavor's node labels as the node selector.
+    That keeps Kueue off the other flavors converter.yaml lists only because
+    every two of them differ on a key both name (``ConverterConfig``), and
+    off the cluster's only while those are the ClusterQueue's (``cli``
+    checks at apply). A pipeline with
     no size keeps the skeleton's numbers, and the wrapper's own default
     lookahead is half the skeleton's ``/work`` (a wrapper test holds it)."""
     pod = job["spec"]["template"]["spec"]

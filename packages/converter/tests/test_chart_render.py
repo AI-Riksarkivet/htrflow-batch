@@ -1472,6 +1472,26 @@ BATCH_GUARDS = {
         "queue.flavors names small-gpu twice: a ClusterQueue lists a flavor"
         " once, so rename one of them",
     ),
+    # review of PR #35, item 1: Kueue drops the node-selector keys a flavor
+    # does not name, so a size:small pod was admitted on large-gpu
+    "flavors-indistinct": (
+        yaml.safe_dump(
+            {
+                "queue": {
+                    "flavors": [
+                        {**TWO_FLAVORS[0], "nodeLabels": {"pool": "large"}},
+                        TWO_FLAVORS[1],
+                    ]
+                }
+            }
+        ),
+        DEFAULT_SETS,
+        "queue.flavors large-gpu and small-gpu name no label key with different"
+        " values: Kueue compares a pod's node selector only on the keys of the"
+        " flavor it tries, so a pod meant for one can be admitted on the other"
+        " and never scheduled; give every flavor the same label key"
+        " (nvidia.com/gpu.product, say) with a value of its own",
+    ),
     "flavor-zero-quota": (
         yaml.safe_dump(
             {
