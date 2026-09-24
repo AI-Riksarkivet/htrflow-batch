@@ -332,7 +332,11 @@ fail=0
 # it the tree the run returned, and verify makes a volume whose every page
 # failed that way permanent, with the cause said once. Most of it is the
 # sentence the page records and why the rule is what it is.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 4203
+# 4203 -> 4212 (hard-coded audit D): the reason next to each safety cap
+# that had only its number -- the info.json cap, five upload and three
+# rebuild failures in a row, the S3 client's timeouts and retries. Comments
+# that state WHY, which this budget is not meant to squeeze.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 4212
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
@@ -724,7 +728,13 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 4203
 # checks skip an object that is no campaign's record, and the warm-up and
 # campaigns that mount a foreign pipeline ConfigMap are held back with it
 # (they would run its recipe under this pipeline's id), with the sentence.
-# 4495 -> 4710 (B105, pod sizes): a pipeline's `size:` picks a named size
+# 4495 -> 4514 (hard-coded audit B10): converter.yaml's public_results_base
+# is required and must be a URL a browser can open -- empty, it failed every
+# volume of every campaign after admission. The validator and its sentence,
+# and the unvalidated stand-in config `load` checks campaigns against when
+# converter.yaml itself did not load (no default can stand in any more).
+# 4514 -> 4516 (hard-coded audit D): why a Job runs at most 10 000 volumes.
+# 4516 -> 4731 (B105, pod sizes): a pipeline's `size:` picks a named size
 # from converter.yaml. models.py +163: Size and Flavor (the quantities a pod
 # takes, parsed so memory can be held above the in-memory /work it has to
 # cover; a flavor's node labels, since Kueue can be steered to a flavor only
@@ -737,7 +747,7 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 4203
 # and a recorded recipe compared with its size. cli.py +8: apply holds a
 # running pipeline's live size as it holds its steps. Most of it is the
 # sentence each refusal prints.
-check converter "$(count packages/converter/src -name '*.py')" 4710
+check converter "$(count packages/converter/src -name '*.py')" 4731
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

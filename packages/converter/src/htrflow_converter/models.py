@@ -1059,7 +1059,9 @@ class ConverterConfig(BaseModel):
     runtime_class: str = "nvidia"
     node_selector: dict[str, str] = Field(default_factory=dict)
     tolerations: list[Toleration] = Field(default_factory=list)
-    public_results_base: str = ""
+    #: Required: without it every campaign pod exits 13 on every volume,
+    #: after its GPU wait (hard-coded audit B10).
+    public_results_base: str
     #: How a campaign's bare reference code becomes a manifest URL: ``{ref}``
     #: is the code. No archive's IIIF host is built in, so empty (the
     #: default) allows only ``manifest:`` and ``images:`` volumes.
@@ -1188,6 +1190,17 @@ class ConverterConfig(BaseModel):
                         f"{key}={self.node_selector[key]} — no node is both"
                     )
         return self
+
+    @field_validator("public_results_base")
+    @classmethod
+    def _check_public_results_base(cls, v: str) -> str:
+        if why := _unopenable(v) if _http_url(v) else "it is not an http(s) URL":
+            raise ValueError(
+                "must be the URL browsers read the results bucket at, the "
+                f'chart\'s publicResultsBase (got "{_shown_url(v)}": {why}) — '
+                "write the whole URL, e.g. https://results.example.org/htr-results"
+            )
+        return v
 
     @field_validator("source_template")
     @classmethod

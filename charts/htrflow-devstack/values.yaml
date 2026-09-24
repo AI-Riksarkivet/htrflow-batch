@@ -20,9 +20,10 @@
 devStack:
   insecureDefaults: false
 
-# Must match charts/htrflow-batch's `s3.bucket` / `s3.existingSecret`
-# defaults (both default to the same names) so the Secret and bucket this
-# chart creates are the ones the platform's pods already expect.
+# `secretName` must match charts/htrflow-batch's `s3.existingSecret` (both
+# default to the same name) so the Secret this chart creates is the one the
+# platform's pods already expect. `bucket` is written into that Secret as
+# `S3_BUCKET`, which is where every pod takes the bucket's name from.
 s3:
   bucket: htr-results
   secretName: htr-batch-s3

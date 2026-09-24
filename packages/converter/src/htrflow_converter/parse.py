@@ -116,25 +116,31 @@ def _not_a_mapping(rel: str, what: str) -> str:
     )
 
 
+#: The config campaigns are still checked against when converter.yaml did
+#: not load (its problem is listed, nothing renders) or is not there (the CLI
+#: refuses that first). Unvalidated: ``public_results_base`` has no default.
+_UNLOADED = ConverterConfig.model_construct(public_results_base="")
+
+
 def _load_config(path: Path, problems: list[str]) -> tuple[ConverterConfig, str | None]:
     """converter.yaml, and the source_template bare volume ids are expanded
     with -- ``None`` when the file did not load: its problem is on the list,
     and a bare id its template would have expanded is not another one."""
     if not path.exists():
-        return ConverterConfig(), ""
+        return _UNLOADED, ""
     try:
         doc = _safe_load(path) or {}
     except yaml.YAMLError as e:
         problems.append(_not_yaml(path.name, e))
-        return ConverterConfig(), None
+        return _UNLOADED, None
     if not isinstance(doc, dict):
         problems.append(_not_a_mapping(path.name, "converter"))
-        return ConverterConfig(), None
+        return _UNLOADED, None
     try:
         cfg = ConverterConfig.model_validate(doc)
     except _PydanticValidationError as e:
         problems.extend(_problems(path.name, e))
-        return ConverterConfig(), None
+        return _UNLOADED, None
     return cfg, cfg.source_template
 
 

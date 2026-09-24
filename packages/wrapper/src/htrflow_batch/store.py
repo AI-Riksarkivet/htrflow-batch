@@ -89,6 +89,9 @@ class ResultStore:
         # W6: default boto timeouts (60 s connect/read, legacy retries) let an
         # S3 outage pin every PUT for minutes and the run for hours. Bounded
         # here; stream.consume aborts after N consecutive upload failures.
+        # 10 s to connect is an endpoint that is not there; 60 s without a
+        # byte is a stalled one (a page's files are a few MB). `max_attempts`
+        # counts RETRIES: three, after the first try, rides out a throttle.
         self.client = _s3_client(
             cfg,
             connect_timeout=10,
