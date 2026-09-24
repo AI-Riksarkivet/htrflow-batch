@@ -41,6 +41,13 @@ updates:
         update-types: [minor, patch]
 
   # The campaign browser, from frontend/bun.lock.
+  #
+  # TypeScript stays on 6: svelte-check (`bun run check`) and @sveltejs/kit
+  # declare `typescript: ^5 || ^6` as their peer, and svelte-check runs
+  # TypeScript 7 only beside a second install of 6 and behind its
+  # experimental `--tsgo` flag. Revisit when a svelte-check release checks
+  # against TypeScript 7 without that flag (its README's "TypeScript 7"
+  # section, and its peer range).
   - package-ecosystem: bun
     directory: /frontend
     schedule: {interval: weekly, day: monday}
@@ -48,6 +55,9 @@ updates:
     open-pull-requests-limit: 5
     labels: [dependencies]
     commit-message: {prefix: "chore(deps)"}
+    ignore:
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
     groups:
       frontend:
         patterns: ["*"]

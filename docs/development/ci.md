@@ -197,7 +197,7 @@ Everything else moves by hand, in a pull request of its own.
 | Base images | `FROM` lines in `.docker/*.dockerfile`, as tag plus digest | Dependabot, within the major (and, for the CUDA base, within the CUDA release line); a new major by hand |
 | Tool and chart images | image values in both charts' `values.yaml`, `.docker/docker-compose.yml`, the image constants in `.dagger/main.go`, digest-pinned `run:` images in workflows and actions, `TRIVY_IMAGE` in the `Makefile` — each as tag plus digest | by hand: `docker buildx imagetools inspect <ref>` gives the digest of the new tag |
 | Python dependencies | `uv.lock` (workspace) | Dependabot; by hand, `uv lock --upgrade` (or `--upgrade-package <name>`) |
-| Frontend dependencies | `frontend/bun.lock` | Dependabot; by hand, `bun update` in `frontend/` |
+| Frontend dependencies | `frontend/bun.lock` | Dependabot, except a new TypeScript major, held until svelte-check supports it without an experimental flag; by hand, `bun update` in `frontend/` |
 | Dagger engine | `engineVersion` in `dagger.json`; the CLI version, its checksums and the engine digest in `.github/actions/setup-dagger`; the SDK modules in `.dagger/go.mod` | by hand, all in one PR: a test fails until the action's version equals `engineVersion`. Dependabot moves the module's other Go dependencies |
 | Universal Viewer fork | `UV4_REF` commit in `.docker/htrflow-web.dockerfile` | by hand, its own PR — `.docker/uv4-uv-html.patch` may need re-deriving |
 | htrflow source for the wrapper's base | `ARG HTRFLOW_REF` in the wrapper dockerfile | by hand, its own PR, with `make lock-htrflow-base` — the lock, the base and the wrapper on it must be re-verified |
