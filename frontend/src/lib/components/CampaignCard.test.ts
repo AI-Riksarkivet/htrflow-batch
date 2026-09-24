@@ -1260,6 +1260,182 @@ describe("CampaignCard", () => {
     expect(screen.getByText("demo-v1")).toBeInTheDocument();
   });
 
+  // Predicted page quality (htrflow's QualityPrediction step): a column of
+  // its own, the campaign's mean on the pages row, and the lowest pages as
+  // links into the viewer. No colour and no threshold ($lib/quality).
+  const progressDone = {
+    done: 3,
+    total: 3,
+    failed: 0,
+    lastPage: "0003",
+    stage: "done",
+    updatedAt: null,
+    ageSeconds: null,
+    lastError: null,
+    errors: 0,
+    viewerPublished: true,
+  };
+  const scoredVolume = {
+    ...volumeDone,
+    progress: {
+      ...progressDone,
+      quality: {
+        mean: 0.8123,
+        min: 0.41,
+        scored: 3,
+        model: "org/qp",
+        revision: null,
+        lowest: [{ page: "0002", quality: 0.41, canvas: 1 }],
+      },
+    },
+  };
+  const qpSteps = [
+    "Segmentation",
+    "Segmentation",
+    "TextRecognition",
+    "QualityPrediction",
+  ];
+
+  test("a QP campaign shows each volume's quality, the campaign mean and the lowest pages", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...job,
+          ...detailBase,
+          pipelineSteps: qpSteps,
+          volumes: [scoredVolume],
+          failures: [],
+          pagesCoverage: { counted: 1, of: 1 },
+          quality: {
+            mean: 0.8123,
+            min: 0.41,
+            scored: 3,
+            volumes: 1,
+            lowest: [
+              {
+                volume: "vol0",
+                page: "0002",
+                quality: 0.41,
+                canvas: 1,
+                iiifUrl: volumeDone.iiifUrl,
+              },
+            ],
+          },
+        }),
+      ),
+    );
+    render(CampaignCard, {
+      job: { ...job, counts: { ...job.counts, total: 2 } },
+    });
+    await expand();
+    expect(await screen.findAllByText("0.81")).not.toHaveLength(0);
+    const low = screen.getByRole("link", { name: /vol0 0002/ });
+    expect(low).toHaveAttribute(
+      "href",
+      "uv.html#?manifest=" + encodeURIComponent(volumeDone.iiifUrl) + "&cv=1",
+    );
+    // The ARIA table's header row names the new column, so every volume
+    // row's cells still have a header each.
+    const [head, row] = screen.getAllByRole("row");
+    expect(
+      within(head as HTMLElement).getAllByRole("columnheader"),
+    ).toHaveLength(within(row as HTMLElement).getAllByRole("cell").length);
+  });
+
+  test("a partial mean says how many volumes it covers", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...job,
+          ...detailBase,
+          pipelineSteps: qpSteps,
+          volumes: [scoredVolume],
+          failures: [],
+          pagesCoverage: { counted: 1, of: 3 },
+          quality: { mean: 0.8, min: 0.41, scored: 3, volumes: 1, lowest: [] },
+        }),
+      ),
+    );
+    render(CampaignCard, { job });
+    await expand();
+    expect(
+      await screen.findByText(/scored in 1 of 3 volumes/),
+    ).toBeInTheDocument();
+  });
+
+  test("a QP campaign with nothing scored yet keeps the column and draws no lowest line", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...job,
+          ...detailBase,
+          pipelineSteps: qpSteps,
+          volumes: [
+            { ...volumeDone, progress: { ...progressDone, quality: null } },
+          ],
+          failures: [],
+          quality: null,
+        }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job });
+    await expand();
+    await screen.findByText("vol0");
+    expect(container.querySelector(".card-body.with-quality")).not.toBeNull();
+    expect(screen.queryByText(/lowest predicted quality/)).toBeNull();
+  });
+
+  test("a campaign without a QP step has no quality track", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...job,
+          ...detailBase,
+          volumes: [volumeDone],
+          failures: [],
+          quality: null,
+        }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job });
+    await expand();
+    await screen.findByText("vol0");
+    expect(container.querySelector(".card-body.with-quality")).toBeNull();
+    expect(container.querySelector(".c-quality")).toBeNull();
+  });
+
+  test("the quality track is fixed-width at every size", () => {
+    const withQ = tracks(
+      cssOf(".card-body.with-quality .row").get("grid-template-columns"),
+    );
+    expect(withQ).toContain("var(--quality)");
+    expect(withQ).toHaveLength(7);
+    expect(cssOf(".campaign").get("--quality")).toBe("3rem");
+    // A phone has no room on line 2 for a seventh track: its six fixed
+    // tracks and their gaps already take nearly all of a 390px card. The
+    // score is the far end of line 1 instead, in the run log's track, which
+    // is at least the score's own fixed width.
+    const phone = cssOf(".card-body.with-quality .row", PHONE);
+    const phoneTracks = tracks(phone.get("grid-template-columns"));
+    expect(phoneTracks).toHaveLength(6);
+    expect(phoneTracks[5]).toBe("max(var(--icon), var(--quality))");
+    expect(cssOf(".card-body.with-quality", PHONE).get("--quality")).toMatch(
+      /rem$/,
+    );
+    const grid = areas(phone.get("grid-template-areas"));
+    for (const line of grid) expect(line).toHaveLength(6);
+    expect(grid[0]).toEqual([...Array(5).fill("label"), "quality"]);
+    // Line 2 is what it is on a card without scores.
+    expect(grid[1]).toEqual(
+      areas(cssOf(".row", PHONE).get("grid-template-areas"))[1],
+    );
+    expect(cssOf(".c-quality", PHONE).get("grid-area")).toBe("quality");
+  });
+
   describe("warm-up status chip", () => {
     function stubDetail(j: JobSummary): void {
       vi.stubGlobal(

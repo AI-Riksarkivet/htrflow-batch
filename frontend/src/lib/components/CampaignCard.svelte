@@ -20,6 +20,7 @@
     sameDay,
     shortDate,
     type CampaignNotice,
+    type CampaignQuality,
     type JobSummary,
     type VolumeView,
   } from "$lib/api.js";
@@ -28,6 +29,7 @@
   import { watchOnScreen } from "$lib/onscreen.js";
   import { startPolling } from "$lib/poll.js";
   import { modelLabel, modelUrl, pipelineModels } from "$lib/pipeline.js";
+  import { formatQuality, hasQualityStep } from "$lib/quality.js";
   import {
     describeApiError,
     describeLastError,
@@ -157,6 +159,16 @@
   );
   const heldBack = $derived(problems.length - PROBLEMS_SHOWN);
   let pipelineSteps = $state<string[]>([]);
+  // The campaign's predicted page quality, summed by the API over the
+  // volumes it read: null without a QualityPrediction step, or before any
+  // volume has published a score.
+  let quality = $state<CampaignQuality | null>(null);
+  // The column is there for the whole of a QP campaign, scored or not yet:
+  // a track that appeared with the first score would move every pill and
+  // icon on the card sideways under the reader.
+  const withQuality = $derived(
+    quality !== null || hasQualityStep(pipelineSteps),
+  );
   let pipelineYaml = $state("");
   // What the last read failed with, and when the next is: the sentence is
   // made of both, so it names the real next try ($lib/reasons).
@@ -488,6 +500,7 @@
       };
       pipelineSteps = detail.pipelineSteps;
       pipelineYaml = detail.pipelineYaml;
+      quality = detail.quality;
       detailFailure = null;
       readAt = new Date().toISOString();
       return true;
@@ -693,6 +706,18 @@
     return `uv.html#?manifest=${encodeURIComponent(manifest)}`;
   }
 
+  // One of the campaign's lowest-scored pages, opened at its own canvas in
+  // the viewer. Its volume is usually not a row loaded here, so the link is
+  // built from the published manifest the API sent (through the same
+  // httpUrlSchema gate); a page the manifest has no canvas for opens at the
+  // volume's first.
+  function lowHref(l: CampaignQuality["lowest"][number]): string {
+    return (
+      `uv.html#?manifest=${encodeURIComponent(l.iiifUrl)}` +
+      (l.canvas === null ? "" : `&cv=${l.canvas}`)
+    );
+  }
+
   // manifest carries manifestUrl so /log's RunSummaryCard has something to
   // render; live=1 for a volume still in flight, so /log re-fetches on the
   // wrapper's log-ship cadence instead of showing a static snapshot.
@@ -890,6 +915,11 @@
         )}{/if}</span
     >
     <span class="c-fraction">{figures(cell)}</span>
+    <!-- The campaign's mean page score goes on the pages row, the one it is
+         a figure of; the volumes row holds the track open. -->
+    {#if withQuality}<span class="c-quality"
+        >{label === "pages" ? formatQuality(quality?.mean) : ""}</span
+      >{/if}
     <span class="c-status"></span>
     <span class="c-log"></span>
     {@render lostLine(cell.failed, errors)}
@@ -943,6 +973,11 @@
       <span class="vfigures" class:bump={moved.has(v.id)}>{figures(cell)}</span>
     {/key}
   </span>
+  <!-- The volume's mean predicted page score, beside the figures it is a
+       score of. Empty until the volume has published one. -->
+  {#if withQuality}<span class="c-quality" role={cellRole}
+      >{formatQuality(v.progress?.quality?.mean)}</span
+    >{/if}
   <!-- The pill is fixed-width, so the icon after it lines up on every row. -->
   <span class="c-status" role={cellRole}>
     <span
@@ -1073,10 +1108,38 @@
        nothing (the product owner, 2026-09-16). A campaign of one volume
        drops the totals: that volume's own row is already the total, said
        twice over. -->
-      <div class="card-body">
+      <div class="card-body" class:with-quality={withQuality}>
         {#if showTotals}
           {@render totalsRow("volumes", volumeCell, 0)}
           {@render totalsRow("pages", pageCell, notice.errors)}
+        {/if}
+
+        <!-- The pages that scored lowest, as links into the viewer at that
+             page, and how much of the campaign the mean covers when it is
+             not all of it. Outside the totals: a campaign of one volume has
+             no totals rows, and its lowest pages are worth as much. Plain
+             figures, no colour and no cut-off: what counts as poor depends
+             on the material ($lib/quality). -->
+        {#if quality !== null && (quality.lowest.length > 0 || quality.volumes < coverage.of)}
+          <p class="quality-line">
+            {#if quality.lowest.length > 0}
+              lowest predicted quality:
+              {#each quality.lowest as l, i (l.volume + "/" + l.page)}
+                {i > 0 ? " · " : ""}<a
+                  href={lowHref(l)}
+                  aria-label="{l.volume} {l.page}, {formatQuality(l.quality)}"
+                  >{l.volume}/{l.page}</a
+                >
+                {formatQuality(l.quality)}
+              {/each}
+            {/if}
+            {#if quality.volumes < coverage.of}
+              <span class="quiet"
+                >{quality.lowest.length > 0 ? " · " : ""}scored in {quality.volumes}
+                of {coverage.of} volumes</span
+              >
+            {/if}
+          </p>
         {/if}
 
         <!-- Only when something is wrong, and never the numbers above. The
@@ -1128,6 +1191,7 @@
             <span role="columnheader">manifest</span>
             <span role="columnheader">progress</span>
             <span role="columnheader">pages</span>
+            {#if withQuality}<span role="columnheader">quality</span>{/if}
             <span role="columnheader">status</span>
             <span role="columnheader">log</span>
           </div>
@@ -1154,6 +1218,7 @@
               <span class="c-links"><span class="slot vicon"></span></span>
               <span class="c-bar"></span>
               <span class="c-fraction">&nbsp;</span>
+              {#if withQuality}<span class="c-quality">&nbsp;</span>{/if}
               <span class="c-status"
                 ><span class="status"
                   ><span class="status-word">&nbsp;</span></span
@@ -1256,6 +1321,8 @@
     --bar: 6rem;
     /* "637 / 638" in tabular figures, with room to spare. */
     --fraction: 5rem;
+    /* "0.81": a predicted page score, always two decimals. */
+    --quality: 3rem;
     --pill: 5.8rem;
     background: var(--card);
     border: 1px solid var(--border);
@@ -1703,6 +1770,31 @@
     padding: 0.12rem 0;
   }
 
+  /* A campaign with a QualityPrediction step: a seventh track, fixed like
+     the others, for the predicted page score beside the figures it scores.
+     On the whole card body at once, so the totals and every volume row keep
+     sharing one set of columns. */
+  .card-body.with-quality .row {
+    grid-template-columns:
+      minmax(6rem, 1fr) var(--icon) var(--bar) var(--fraction)
+      var(--quality) var(--pill) var(--icon);
+  }
+
+  .c-quality {
+    font-variant-numeric: tabular-nums;
+    color: var(--foreground);
+    white-space: nowrap;
+  }
+
+  /* The lowest pages: a line of links, wrapping rather than clipping, like
+     zone 3. */
+  .quality-line {
+    margin: 0.2rem 0;
+    font-size: 0.74rem;
+    color: var(--muted-foreground);
+    overflow-wrap: anywhere;
+  }
+
   /* A hairline between volumes, so a long list reads as rows. */
   .row.volume {
     border-top: 1px solid var(--border);
@@ -2114,6 +2206,36 @@
       column-gap: 0.5rem;
       row-gap: 0.2rem;
       padding: 0.35rem 0;
+    }
+
+    /* No seventh track here. Line 2's six fixed tracks and their gaps
+       already take all but a few pixels of a 390px card, and a track for
+       the score beside the fraction ran the row past the card's edge. The
+       score goes on line 1 instead, at its far end, above the run log: a
+       column of its own down the card all the same, and line 2 is what it
+       is on every other card. The run log's track widens to the score's
+       own width (four tabular figures, narrower than the full-width
+       slot), a few pixels at most. */
+    .card-body.with-quality {
+      --quality: 1.8rem;
+    }
+
+    .card-body.with-quality .row {
+      grid-template-columns:
+        0 var(--icon) minmax(2.5rem, var(--bar)) var(--fraction)
+        var(--pill) max(var(--icon), var(--quality));
+      grid-template-areas:
+        "label label label     label    label  quality"
+        ".     links bar       fraction status log"
+        ".     .     lost      lost     lost   ."
+        "note  note  note      note     note   note";
+    }
+
+    /* Beside the id's first line, however many lines the id wraps to. */
+    .c-quality {
+      grid-area: quality;
+      align-self: start;
+      justify-self: end;
     }
 
     .c-label {
