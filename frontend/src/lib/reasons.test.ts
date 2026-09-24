@@ -330,16 +330,21 @@ describe("describeReason for a volume with no retries left", () => {
 
 describe("describeApiError", () => {
   test("a non-2xx, with the last list still on screen", () => {
-    expect(describeApiError(new ApiUnreachable("HTTP 503"), true)).toBe(
+    const at = new Date("2026-09-24T09:42:00Z");
+    expect(
+      describeApiError(new ApiUnreachable("HTTP 503"), true, at, "UTC"),
+    ).toBe(
       "Can't reach the campaign service right now (HTTP 503). Showing the " +
-        "list we last received. Retrying every 60 seconds.",
+        "list we last received. Next try at 09:42.",
     );
   });
 
   test("a non-2xx with nothing on screen yet", () => {
+    // The poll backs off, so "every minute" stopped being true after the
+    // first miss: the sentence names the next try, or none it cannot know.
     expect(describeApiError(new ApiUnreachable("HTTP 500"), false)).toBe(
-      "Can't reach the campaign service right now (HTTP 500). Retrying " +
-        "every 60 seconds.",
+      "Can't reach the campaign service right now (HTTP 500). It will try " +
+        "again on its own.",
     );
   });
 
@@ -349,7 +354,8 @@ describe("describeApiError", () => {
       false,
     );
     expect(sentence).toBe(
-      "Can't reach the campaign service right now. Retrying every 60 seconds.",
+      "Can't reach the campaign service right now. It will try again on its " +
+        "own.",
     );
   });
 

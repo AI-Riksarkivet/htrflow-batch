@@ -43,14 +43,15 @@ bunx vite preview  # serve dist/ on :4173
 
 All of it lives in [`src/lib/config.ts`](src/lib/config.ts).
 
-| Setting                | Runtime (deploy)                              | Build time          | Default                                    |
-| ---------------------- | --------------------------------------------- | ------------------- | ------------------------------------------ |
-| read API base          | `window.API_BASE`, served in `/config.js`     | `VITE_API_BASE`     | `/api/v1`                                  |
-| results base           | `window.RESULTS_BASE`, served in `/config.js` | `VITE_RESULTS_BASE` | _(empty — see below)_                      |
-| campaign list re-fetch | —                                             | `VITE_RELOAD_MS`    | `60000`                                    |
-| live-log re-fetch      | —                                             | `VITE_LIVE_MS`      | `15000` (the wrapper's `LOG_SHIP_SECONDS`) |
-| live-log give-up       | —                                             | —                   | `LIVE_MAX_FAILURES = 20` attempts          |
-| poll backoff ceiling   | —                                             | —                   | `MAX_POLL_MS = 300000`                     |
+| Setting                | Runtime (deploy)                              | Build time          | Default                                     |
+| ---------------------- | --------------------------------------------- | ------------------- | ------------------------------------------- |
+| read API base          | `window.API_BASE`, served in `/config.js`     | `VITE_API_BASE`     | `/api/v1`                                   |
+| results base           | `window.RESULTS_BASE`, served in `/config.js` | `VITE_RESULTS_BASE` | _(empty — see below)_                       |
+| campaign list re-fetch | —                                             | `VITE_RELOAD_MS`    | `60000`                                     |
+| folded card re-fetch   | —                                             | —                   | `FOLDED_MS = 2 × RELOAD_MS`, on screen only |
+| live-log re-fetch      | —                                             | `VITE_LIVE_MS`      | `15000` (the wrapper's `LOG_SHIP_SECONDS`)  |
+| live-log give-up       | —                                             | —                   | `LIVE_MAX_FAILURES = 20` attempts           |
+| poll backoff ceiling   | —                                             | —                   | `MAX_POLL_MS = 300000`                      |
 
 `/config.js` is **served by the read API**, not read out of a file: the same
 process that answers `/api/v1` writes it from its own environment
@@ -167,12 +168,25 @@ order, so ten cards scan like ten rows of one table. Folded, a card is zone
    fold toggle (`namespace/name` only when the list spans namespaces: the
    page decides it once and passes `showNamespace` to every card; keys,
    storage and API paths are always `namespace/name`), the phase chip (a pulsing dot while running), the
-   warm-up chip while the warm-up has not succeeded, the "job removed" chip,
-   and at the right end `created → finished` as two `<time>` elements
+   warm-up chip while the warm-up has not succeeded, the "job removed" chip
+   (the phase chip comes last of the three: it is the one whose word can
+   change when the detail lands, and last it pushes nothing along), then on
+   a folded card the pages done — `411 / 1914 pages · 3 failed`, "failed"
+   only when there are some, `— pages` when none are known; every figure
+   marked `≥` while the API's sums do not yet cover every volume (it sums
+   at most a hundred volumes' progress per read), with the coverage for a
+   screen reader and in the title; `· as of HH:MM` once reads have failed
+   since — and at the right end
+   `created → finished` as two `<time>` elements
    (`datetime` and `title` carry the exact timestamp; "created"/"finished"
    are there for screen readers, since the arrow is decoration). A run that
    finished the same day shows only the clock for its end. Only a `Running`
-   campaign gets the open-ended `→ …`.
+   campaign gets the open-ended `→ …`. The line is a grid of three tracks
+   (the words, the page count, the times); the count's and the times' are
+   held at a fixed minimum width from the first paint, filled from the
+   right, so nothing on the line moves when the count arrives. At ≤520px
+   the chips take a line of their own under the name, then the times, then
+   the count on a line held a line high.
    **partially succeeded** (every volume finished, some pages lost) and
    **partially failed** share the amber chip; the outline is split amber on
    the left and green (`--success`) or red (`--destructive`) on the right,
@@ -195,8 +209,16 @@ order, so ten cards scan like ten rows of one table. Folded, a card is zone
    - A row that lost something carries a second line under its bar
      (`1 failed`, `3 failed · 2 errors`); a clean row is one line.
      `errors` counts ERROR-and-worse only.
-   - A campaign of one volume drops both totals rows, unless there is no
-     volume row yet to carry them.
+   - A campaign of one volume drops both totals rows, unless its detail
+     came back with no volume row to carry them.
+   - Before the first read lands, the card draws the rows its list row
+     promises: one placeholder row per volume up to a screenful (20;
+     `aria-hidden`, the first saying "loading volumes…", the table
+     `aria-busy`), a second line on as many as are active or failed and a
+     note line on the failed ones, the models line's place, and "load more"
+     (disabled, no count yet) when there are more volumes than a page. The
+     detail then fills rows in rather than adding them. None after a failed
+     read.
    - Every row with a known total has a bar in the colour of what it
      measures: running blue (with a sheen only while work happens), green
      done, amber done with pages missing, red failed. `pending`/`unknown`
@@ -248,13 +270,46 @@ so only while the phase is not `Succeeded`. A failed warm-up's
 `localStorage` (`htrflow.card.<namespace>/<name>`, every access wrapped).
 `fetchJob` pages by `offset`/`limit` (200); "load more" adds a page, and a
 poll re-fetches every open page (capped at the API's 1000). A folded card
-reads nothing, except a `Succeeded` one, which reads its detail once for the
-one thing its header needs that `JobSummary` lacks: `pagesFailed`, which
-makes it "partially succeeded". An open card that can still change is
-polled; a finished, `Unknown` or reaped one is read once, when its card
-first intersects the viewport (`IntersectionObserver`) or is opened, and
-again on a phase change. `fetchJobs` asks for
+reads its detail for the one thing its header needs that `JobSummary`
+lacks: the page sums (and `pagesFailed`, which makes a `Succeeded` campaign
+"partially succeeded"). A folded card reads only while on screen
+(`$lib/onscreen`: one `IntersectionObserver` for every card, a 200px
+margin); an open one whether or not. Open, it reads every `RELOAD_MS`;
+folded, every `FOLDED_MS` (twice that). A finished, `Unknown` or reaped
+campaign stops once a read has landed with whole page sums, and reads again
+on a phase change. The next read is a period after the last one of the same
+state, however the card got there (`startPolling`'s `first`), so a card
+coming back on screen or opened a moment after a read does not read again —
+the folded read is the table's first page, so a card opens to it at once. A
+folded card that leaves the screen lets a read in flight land
+(`stop(true)`). Every card's reads go through one gate (`$lib/poll`'s
+`gate`): four in flight, the rest in turn, what a reader asked for (opening
+a card, "load more") ahead of the background reads, and a card that goes
+away gives up its place. A failed read says when the next try is, from the
+poller's own backoff (`onWait`). `fetchJobs` asks for
 `?reaped=20`; "show older campaigns" asks for 20 more.
+
+**Order.** The first answer is sorted by `byAttention` (`src/lib/order.ts`):
+running, then in trouble, then finished newest first, then not started. A
+poll keeps that order (`keepOrder`): every card stays where it is with its
+new row, and a new campaign goes in front of the first card already shown
+that the sort would put after it. A campaign that falls into trouble is
+placed afresh the same way at once: that is the news the order is for. Any
+other drift (a queued campaign starting, a running one finishing) leaves
+the card where it is and puts "The campaigns' order has changed · re-sort"
+in the dock; the reader re-sorts when they choose. A card that moves glides
+there (`animate:flip`, none under reduced motion). The answer after the
+reader comes back to the tab is sorted afresh — the flag is set on the
+return, so an answer landing while the tab is hidden cannot use it up.
+"Loading…" shows only once the first answer is 400 ms late, and there is no
+empty state or banner before an answer.
+
+**The dock.** Over a list, the failed-poll banner ("Next try at HH:MM"),
+the unreadable-rows banner (put away with its × until the count changes)
+and the re-sort offer sit in a dock fixed to the foot of the window, so
+nothing arriving there pushes a card; the page keeps as much room under its
+last card as the dock is tall (`bind:clientHeight` into `--dock`). With no
+list yet, a banner sits where the list would be.
 
 **Motion and accessibility.** Only what runs moves: the pulsing dot, the
 bar sheen, and a one-second fade behind a progress line whose `done`
@@ -266,7 +321,10 @@ card is open (it names the element holding zones 2 to 4). AA contrast in both th
 
 **Header.** Logo and title left; the deployed release from
 `GET /api/v1/version` (`htrflow-batch <version>`, `web` in the tooltip,
-read once, absent if it fails), the GitHub mark and the theme toggle right.
+read once, empty if it fails — its slot is held from the first paint, wide
+enough for a pre-release tag, so the answer landing moves nothing; on the
+narrowest phone it is cut short with the whole name in its title), the
+GitHub mark and the theme toggle right.
 
 ## Layout
 
@@ -289,3 +347,40 @@ Tests sit next to their subject (`*.test.ts`); component tests use
 @testing-library/svelte + user-event on jsdom, route tests mock `fetch` and
 fake timers. Property-based tests (fast-check) are `*.property.test.ts`: a
 failure prints its seed, and `FC_SEED=<seed> bun run test` replays it.
+
+## Layout stability
+
+The campaign list arrives in stages — the list, then each card's own
+detail, then a poll a minute later — and nothing on screen may move when a
+later stage lands. `scripts/measure-shifts.mjs` measures that in a real
+browser: it serves a built `dist/` beside a fake read API made from the
+contract fixture (`src/lib/fixtures/api-contract.json`, fourteen campaigns
+in every phase, each detail agreeing with its list row), holds each answer back by a varied delay so the details
+land in a random order, records every layout shift with the element that
+moved (the Layout Instability API), and saves a filmstrip. The second list
+answer starts a queued campaign and adds a new one, which is when a list can
+re-sort under its reader. It exits non-zero when the CLS (the worst session
+window, as browsers report it) is over `--budget` (default 0.02).
+
+```bash
+bun add --no-save playwright-core     # the driver; not a project dependency
+bunx playwright-core install chromium # once per machine
+VITE_RELOAD_MS=4000 bun run build     # a poll that lands inside the run
+node scripts/measure-shifts.mjs --out /tmp/shifts            # folded cards
+node scripts/measure-shifts.mjs --out /tmp/shifts --open 3   # three left open
+node scripts/measure-shifts.mjs --out /tmp/shifts --width 390
+node scripts/measure-shifts.mjs --out /tmp/shifts --scroll 300 # reader scrolled down
+node scripts/measure-shifts.mjs --out /tmp/shifts --fail       # the poll is an outage
+```
+
+What it found, and what holds each still: the version widening the header
+(a phone's header wrapped under the list) — a held slot; a chip's word
+changing when the detail landed — the phase chip last, the page count's
+track held; a poll re-sorting the list — `keepOrder`; a banner arriving
+over the list — it floats; an open card growing by every row when its
+detail landed — placeholder rows from the list row's counts. What is left
+is news: a new campaign appearing in view, or a chip that changed because
+the campaign did.
+
+CI runs no browser, so the causes this found are pinned by structural tests
+in `src/routes/page.test.ts` and `src/lib/components/CampaignCard.test.ts`.

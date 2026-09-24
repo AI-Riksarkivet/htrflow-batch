@@ -1,7 +1,12 @@
-import { fireEvent, render, screen } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { clockTime } from "$lib/api.js";
 import { RELOAD_MS } from "$lib/config.js";
+import { cssOf, cssRules } from "$lib/fixtures/css.js";
 import CampaignsPage from "./+page.svelte";
+import pageSource from "./+page.svelte?raw";
+
+const pageRules = cssRules(pageSource);
 
 const job = {
   namespace: "htr-test",
@@ -166,9 +171,11 @@ describe("/ campaign page", () => {
 
     await vi.advanceTimersByTimeAsync(RELOAD_MS);
     expect(listCalls).toBe(2);
+    // Backed off: the next try is two periods away, at a time on the clock.
+    const next = clockTime(new Date(Date.now() + 2 * RELOAD_MS).toISOString());
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Can't reach the campaign service right now (HTTP 503). Showing the " +
-        "list we last received. Retrying every 60 seconds.",
+        `list we last received. Next try at ${next}.`,
     );
     expect(screen.getByText("kyrk")).toBeInTheDocument();
   });
@@ -354,5 +361,318 @@ describe("/ campaign list order", () => {
       "older",
       "queued",
     ]);
+  });
+});
+
+// The list arrives in stages -- the list, the version, each card's detail,
+// a poll a minute later -- and nothing a reader is looking at may move when
+// a later stage lands (the repo owner: "things pop all over"). Measured in a
+// browser by scripts/measure-shifts.mjs; these pin each cause it found.
+describe("/ nothing moves as the page loads", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  // Unanswered, the version took no room; answered, it widened the header's
+  // right half, which on a phone wrapped under the title and pushed the
+  // whole list down a line (CLS 0.28 at 390px).
+  test("the version holds its place in the header before it is read", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        url.toString().endsWith("/version")
+          ? new Promise<Response>(() => {})
+          : Promise.resolve(jsonResponse([job])),
+      ) as unknown as typeof fetch,
+    );
+    const { container } = render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+    const slot = container.querySelector(".header-right .version");
+    expect(slot).not.toBeNull();
+    expect(slot).toHaveTextContent("");
+    // Wide enough for a pre-release tag: "htrflow-batch v0.12.0-rc.1", and
+    // the contract fixture's "htrflow-batch v0.0.0-contract" (review of
+    // this change: 10rem was not).
+    // On the narrowest phone it gives way rather than push the toggle onto
+    // a line of its own, cut short with the whole name in its title.
+    const version = cssOf(pageRules, ".version");
+    const width = /^min\((\d+)ch, 100vw - [\d.]+rem\)$/.exec(
+      version.get("min-width") ?? "",
+    );
+    expect(Number(width?.[1])).toBeGreaterThanOrEqual(
+      "htrflow-batch v0.0.0-contract".length,
+    );
+    expect(version.get("max-width")).toMatch(/^calc\(100vw - [\d.]+rem\)$/);
+    expect(version.get("text-overflow")).toBe("ellipsis");
+    // Grows away from the icons beside it, never into them.
+    expect(cssOf(pageRules, ".version").get("text-align")).toBe("right");
+    expect(cssOf(pageRules, ".header-right").get("margin-left")).toBe("auto");
+  });
+
+  // Before the first answer there is nothing to say yet: no empty state, no
+  // banner, and a "Loading…" that waits a moment before it shows, so a
+  // quick answer replaces nothing a reader saw (it flashed for a few
+  // hundred milliseconds on every load).
+  test("before the first answer: no empty state, no banner, a loading line that waits", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})) as unknown as typeof fetch,
+    );
+    const { container } = render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.queryByText("No campaigns.")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    const loading = container.querySelector(".loading");
+    expect(loading).toHaveTextContent("Loading…");
+    expect(container.querySelector("main")).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    const css = cssOf(pageRules, ".loading");
+    expect(css.get("animation")).toMatch(
+      /\b\d+ms\b.*\bboth\b|\bboth\b.*\b\d+ms\b/,
+    );
+  });
+
+  // The order is the first answer's; a poll updates each card where it is.
+  // Re-sorting every answer moved a campaign that had just started from the
+  // bottom of the list to the top, and every card in between down one.
+  describe("the order a reader has", () => {
+    // Clean: the shared `job` carries a failed volume, and one that ends in
+    // trouble is placed afresh (the test after these).
+    const clean = {
+      ...job,
+      counts: { total: 3, active: 1, done: 2, failed: 0 },
+    };
+    const started = { ...clean, name: "started", phase: "Queued" };
+    const finishing = { ...clean, name: "finishing" };
+
+    function answers(...lists: unknown[][]): typeof fetch {
+      let n = 0;
+      return vi.fn(async (url: string) => {
+        if (url.toString().endsWith("/version"))
+          return jsonResponse({ version: "v", web: "w" });
+        if (url.toString().includes("/jobs/")) return jsonResponse(detail);
+        return jsonResponse(lists[Math.min(n++, lists.length - 1)]);
+      }) as unknown as typeof fetch;
+    }
+
+    const names = (container: HTMLElement) =>
+      [...container.querySelectorAll(".camp-name")].map((el) => el.textContent);
+
+    function setHidden(hidden: boolean): void {
+      Object.defineProperty(document, "hidden", {
+        configurable: true,
+        get: () => hidden,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+    }
+
+    afterEach(() => setHidden(false));
+
+    test("a poll moves no card, whatever changed in it", async () => {
+      const later = [
+        { ...started, phase: "Running" },
+        {
+          ...finishing,
+          phase: "Succeeded",
+          finishedAt: "2026-09-08T10:00:00Z",
+        },
+      ];
+      vi.stubGlobal("fetch", answers([started, finishing], later));
+      const { container } = render(CampaignsPage);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(names(container)).toEqual(["finishing", "started"]);
+      await vi.advanceTimersByTimeAsync(RELOAD_MS);
+      expect(names(container)).toEqual(["finishing", "started"]);
+      // The card itself says what changed.
+      const cards = container.querySelectorAll("section.campaign");
+      expect(cards[1]).toHaveTextContent("Running");
+    });
+
+    test("back from the background, the list is sorted afresh", async () => {
+      const later = [
+        { ...started, phase: "Running" },
+        {
+          ...finishing,
+          phase: "Succeeded",
+          finishedAt: "2026-09-08T10:00:00Z",
+        },
+      ];
+      vi.stubGlobal("fetch", answers([started, finishing], later));
+      const { container } = render(CampaignsPage);
+      await vi.advanceTimersByTimeAsync(0);
+      setHidden(true);
+      await vi.advanceTimersByTimeAsync(RELOAD_MS);
+      setHidden(false);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(names(container)).toEqual(["started", "finishing"]);
+    });
+
+    test("a campaign that falls into trouble moves up at once", async () => {
+      const done = {
+        ...clean,
+        name: "done",
+        phase: "Succeeded",
+        finishedAt: "2026-09-08T10:00:00Z",
+      };
+      const later = [done, { ...started, phase: "Failed" }];
+      vi.stubGlobal("fetch", answers([done, started], later));
+      const { container } = render(CampaignsPage);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(names(container)).toEqual(["done", "started"]);
+      await vi.advanceTimersByTimeAsync(RELOAD_MS);
+      expect(names(container)).toEqual(["started", "done"]);
+      expect(screen.queryByRole("button", { name: /re-sort/ })).toBeNull();
+    });
+
+    // The move is news, and it glides: a card that jumped a screenful took
+    // every card it passed with it in one frame (the shift script: 0.039 for
+    // one campaign failing). Nothing glides for a reader who asked for
+    // stillness.
+    test("a card that moves glides there, unless motion is reduced", () => {
+      expect(pageSource).toMatch(
+        /\{#each jobs as job[^}]*\}\s*<div animate:flip=\{\{ duration: still \? 0 : \d+ \}\}>/,
+      );
+      expect(pageSource).toContain("(prefers-reduced-motion: reduce)");
+    });
+
+    // A campaign that started while the reader watched stays where they had
+    // it; the dock says the order has changed and offers the sort, and the
+    // reader decides when the list moves (review of this change).
+    test("a drifted order is offered a re-sort, and a click sorts it", async () => {
+      const later = [
+        { ...started, phase: "Running" },
+        {
+          ...finishing,
+          phase: "Succeeded",
+          finishedAt: "2026-09-08T10:00:00Z",
+        },
+      ];
+      vi.stubGlobal("fetch", answers([started, finishing], later));
+      const { container } = render(CampaignsPage);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(screen.queryByRole("button", { name: /re-sort/ })).toBeNull();
+      await vi.advanceTimersByTimeAsync(RELOAD_MS);
+      expect(names(container)).toEqual(["finishing", "started"]);
+      const resort = screen.getByRole("button", { name: /re-sort/ });
+      expect(resort.closest(".dock")).not.toBeNull();
+      await fireEvent.click(resort);
+      expect(names(container)).toEqual(["started", "finishing"]);
+      expect(screen.queryByRole("button", { name: /re-sort/ })).toBeNull();
+    });
+
+    // A poll in flight when the tab hid, answered while it was hidden, used
+    // the one re-sort up on a list nobody was looking at; back on the tab,
+    // the reader got the kept order (review of this change).
+    test("an answer that lands while hidden does not use up the re-sort", async () => {
+      const later = [
+        { ...started, phase: "Running" },
+        {
+          ...finishing,
+          phase: "Succeeded",
+          finishedAt: "2026-09-08T10:00:00Z",
+        },
+      ];
+      let release!: () => void;
+      let n = 0;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+          if (url.toString().endsWith("/version"))
+            return jsonResponse({ version: "v", web: "w" });
+          if (url.toString().includes("/jobs/")) return jsonResponse(detail);
+          n += 1;
+          if (n === 1) return jsonResponse([started, finishing]);
+          if (n === 2)
+            return new Promise<Response>(
+              // Nothing has changed yet when it answers.
+              (resolve) =>
+                (release = () => resolve(jsonResponse([started, finishing]))),
+            );
+          return jsonResponse(later);
+        }) as unknown as typeof fetch,
+      );
+      const { container } = render(CampaignsPage);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(names(container)).toEqual(["finishing", "started"]);
+      await vi.advanceTimersByTimeAsync(RELOAD_MS); // poll 2 is in flight
+      setHidden(true);
+      release();
+      await vi.advanceTimersByTimeAsync(0); // it lands while hidden
+      setHidden(false);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(names(container)).toEqual(["started", "finishing"]);
+    });
+  });
+
+  // A banner that appeared over a list already on screen pushed every card
+  // down by its own height. Over a list, it floats at the foot of the
+  // window; with no list yet, there is nothing to push, and it stays in the
+  // page where the list would be.
+  test("a banner over a list moves no card; with no list it sits in the page", async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.toString().endsWith("/version"))
+          return jsonResponse({ version: "v", web: "w" });
+        if (url.toString().includes("/jobs/")) return jsonResponse(detail);
+        return ++calls === 1 ? jsonResponse([job]) : jsonResponse("gone", 503);
+      }) as unknown as typeof fetch,
+    );
+    const { container } = render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(RELOAD_MS);
+    expect(screen.getByRole("alert").closest(".dock")).not.toBeNull();
+    expect(cssOf(pageRules, ".dock").get("position")).toBe("fixed");
+    // The page keeps room under its last card for whatever the dock holds,
+    // as tall as it actually is (a phone's banner wraps to four lines).
+    expect(cssOf(pageRules, "main").get("padding-bottom")).toContain(
+      "var(--dock",
+    );
+    expect(
+      (container.querySelector("main") as HTMLElement).style.getPropertyValue(
+        "--dock",
+      ),
+    ).toMatch(/px$/);
+    cleanup();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse("gone", 503)) as unknown as typeof fetch,
+    );
+    render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByRole("alert").closest(".dock")).toBeNull();
+  });
+
+  // The unreadable-rows banner stays as long as the rows do, which can be
+  // for good; over the list it covered the foot of the window. It can be
+  // put away until the count changes (review of this change).
+  test("the unreadable-rows banner can be put away until the count changes", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const bad = (name: string) => ({ ...job, name, phase: "Bogus" });
+    let rows: unknown[] = [job, bad("x"), bad("y")];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.toString().endsWith("/version"))
+          return jsonResponse({ version: "v", web: "w" });
+        if (url.toString().includes("/jobs/")) return jsonResponse(detail);
+        return jsonResponse(rows);
+      }) as unknown as typeof fetch,
+    );
+    render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+    await fireEvent.click(screen.getByRole("button", { name: /put away/ }));
+    expect(screen.queryByRole("alert")).toBeNull();
+    await vi.advanceTimersByTimeAsync(RELOAD_MS);
+    expect(screen.queryByRole("alert")).toBeNull();
+    rows = [...rows, bad("z")];
+    await vi.advanceTimersByTimeAsync(RELOAD_MS);
+    expect(screen.getByRole("alert")).toHaveTextContent("3 campaigns");
+    vi.restoreAllMocks();
   });
 });

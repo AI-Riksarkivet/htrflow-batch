@@ -150,9 +150,12 @@ it is opened:
 
 1. **Identity and state.** The campaign's name (click to fold or unfold;
    `namespace/name` only when the list spans more than one namespace),
-   its phase, the warm-up chip while the warm-up has not succeeded, a
-   "job removed" chip for a reaped campaign, and when it was created and
-   finished.
+   the warm-up chip while the warm-up has not succeeded, a "job removed"
+   chip for a reaped campaign, its phase, when it was created and
+   finished, and on a folded card the pages done so far
+   (`411 / 1914 pages · 3 failed`, each figure marked `≥` while the sums
+   do not yet cover every volume). Every part of the line has its place
+   from the first paint, so nothing on it moves as the rest arrives.
 2. **The body.** The totals (`volumes`, `pages`) with progress bars, then
    the loaded page of the campaign's volumes, with "load more" for the rest.
 3. **Problems**, only when there is one: why the warm-up failed, each
@@ -178,11 +181,22 @@ since no pod can start without it; its reason is in the chip's title.
 
 **Paging and polling.** The list re-fetches every 60 s. An open card fetches
 its own detail, re-fetching every open page on each poll. A folded card
-fetches nothing, except a succeeded campaign's, which is read once for
-whether it lost pages. A finished, unknown or reaped campaign is read once,
-when its card is first on screen or opened, and not polled again. A failed poll puts a banner over the last list, and
-backs off. Older reaped campaigns wait behind "show older campaigns", 20 at
+reads the same detail for its page count, and only while it is on screen:
+every two minutes for a campaign still going. A finished, unknown or reaped
+campaign is read until its page sums cover every volume, and not polled
+again. At most four cards read at a time; the rest wait their turn, behind
+a card the reader has just opened. A failed poll puts a banner at the foot
+of the window, over the last list, saying when the next try is, and backs
+off. Older reaped campaigns wait behind "show older campaigns", 20 at
 a time.
+
+**Order.** The list opens sorted by what wants a person: running, then in
+trouble, then finished (newest first), then not started. A poll keeps that
+order, so no card moves under a reader, with two exceptions that are news:
+a campaign that falls into trouble, and a new one, take their place in the
+order at once, gliding there. Any other change leaves the card where it is,
+and the foot of the window offers to re-sort. The list is also sorted afresh
+when the reader comes back to the tab.
 
 The page and component internals are in the
 [frontend README](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/frontend/README.md).
