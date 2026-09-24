@@ -1024,7 +1024,7 @@ def test_a_url_a_browser_cannot_open_is_refused(tmp_path, url, why):
         "https://192.0.2.10/m",
         "https://iiif_host-1.example.org/m",
         "https://xn--rksarkivet-z5a.se/m",
-        "https://lbiiif.riksarkivet.se/arkis!R0001203/manifest",
+        "https://images.example.org/archives!R0001203/manifest",
         "https://example.org/full/2500,/0/default.jpg",
         # what browsers take and the read API's browser_http_url does too
         "https://example.org./m",

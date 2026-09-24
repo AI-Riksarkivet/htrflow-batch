@@ -225,7 +225,7 @@ def _service_id(service: object) -> str | None:
 
 
 def _sized(sid: str, canvas: dict, width: int) -> str:
-    # lbiiif rejects "!w,h" (501), "w," is supported; Level1 servers reject
+    # Some IIIF servers reject "!w,h" (501) but take "w,"; Level1 servers reject
     # upscaling (400), so a canvas narrower than the cap must ask for max.
     cw = _int_or_none(canvas.get("width"))
     size = "max" if cw and cw <= width else f"{width},"

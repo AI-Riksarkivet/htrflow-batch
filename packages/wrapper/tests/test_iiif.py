@@ -135,7 +135,7 @@ def _canvas_with_service(width, height):
 
 def test_narrow_canvas_requests_max_not_upscale():
     """A canvas narrower than the width cap must request full/max — level1
-    IIIF servers (lbiiif) reject upscaling with 400."""
+    IIIF servers reject upscaling with 400."""
     m = {"items": [_canvas_with_service(1281, 3743)]}
     pages = pages_from_manifest(m, width=2500)
     assert pages[0].image_url == "https://img/iiif/page-1/full/max/0/default.jpg"
