@@ -490,11 +490,12 @@ def test_a_debug_container_is_held_to_the_image_rules(
 ):
     """`kubectl debug` attaches an ephemeral container running an image of
     the debugger's choosing to a pod on the GPU node, in the target's
-    namespaces. The Pod rules walk `ephemeralContainers`; a rule on kind
-    Pod also sees the `pods/ephemeralcontainers` subresource request that
-    adds one, which Kyverno includes by itself (its conformance test
-    validate/clusterpolicy/standard/debug/with-pod). The CLI sends no
-    subresource request, so this puts the resulting Pod through."""
+    namespaces. The Pod rules walk `ephemeralContainers`. The request that
+    adds one is on the `pods/ephemeralcontainers` subresource, which a rule
+    on kind Pod alone does not see -- a busybox debug container got past on
+    the dev cluster -- so the rules name `Pod/ephemeralcontainers` too
+    (test_chart_render checks that). The CLI sends no subresource request,
+    so this puts the resulting Pod through the rule's image check."""
     policy = render_policy(tmp_path, template)
     debugged = pod(None)
     debugged["spec"]["ephemeralContainers"] = [{"name": "debug", "image": image}]

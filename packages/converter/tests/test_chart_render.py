@@ -1426,3 +1426,27 @@ def test_a_tag_is_taken_only_with_the_poc_switch():
             "security.allowTagImages=true",
         )
     )
+
+
+def test_every_pod_image_rule_matches_the_debug_subresource(prod: list[dict]):
+    """`kubectl debug` adds its container through the `pods/ephemeralcontainers`
+    subresource, and a rule matching only kind Pod never sees that request:
+    on the dev cluster a busybox debug container was admitted onto a campaign
+    pod past every image rule. Admission tests cannot catch this -- the
+    Kyverno CLI sends no subresource request -- so every rule that holds a
+    Pod's images must name the subresource kind itself."""
+    image_rules = [
+        (policy["metadata"]["name"], r)
+        for policy in prod
+        if policy.get("kind") == "ClusterPolicy"
+        for r in policy["spec"]["rules"]
+        if any(
+            "Pod" in res.get("resources", {}).get("kinds", [])
+            for res in r["match"].get("any", [])
+        )
+        and ("verifyImages" in r or "image" in str(r.get("validate", "")))
+    ]
+    assert len(image_rules) == 3, [n for n, _ in image_rules]
+    for name, r in image_rules:
+        kinds = [k for res in r["match"]["any"] for k in res["resources"]["kinds"]]
+        assert "Pod/ephemeralcontainers" in kinds, (name, r["name"], kinds)
