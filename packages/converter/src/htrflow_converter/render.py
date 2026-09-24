@@ -17,7 +17,9 @@ from .models import (
     Campaign,
     ConverterConfig,
     Pipeline,
+    Size,
     Volume,
+    memory_bytes,
     parse_source_line,
 )
 
@@ -56,6 +58,9 @@ _SHA_ANNOTATION = "htrflow.riksarkivet.se/pipeline-sha256"
 #: image -- changes the template and the apply replaces the warm-up Job.
 _RECIPE_ANNOTATION = "htrflow.riksarkivet.se/recipe-sha256"
 _DIGEST_ANNOTATION = "htrflow.riksarkivet.se/image-digest"
+#: The pipeline's ``size:`` (B105), on its ConfigMap: part of the recipe the
+#: id names, and what a reader of ``rendered/`` sees ran. Absent for none.
+_SIZE_ANNOTATION = "htrflow.riksarkivet.se/size"
 
 
 def label_value(text: str) -> str:
@@ -148,6 +153,8 @@ def _pipeline_configmap(p: Pipeline, cfg: ConverterConfig) -> dict:
     _set(cm, "metadata.namespace", cfg.namespace)
     cm["metadata"]["labels"][_PIPELINE_LABEL] = label_value(p.id)
     cm["metadata"]["annotations"][_SHA_ANNOTATION] = p.sha256
+    if p.size is not None:
+        cm["metadata"]["annotations"][_SIZE_ANNOTATION] = p.size
     cm["data"]["pipeline.yaml"] = p.pipeline_yaml()
     return cm
 
@@ -212,6 +219,9 @@ def recipe(objects: list[dict]) -> dict[str, object]:
     mapping differently would otherwise report every untouched pipeline in
     the repo as changed.
 
+    The size (B105) is part of it: a campaign pod's resources and flavor
+    are the pipeline's to say, so they change only under a new id.
+
     Deliberately not the whole rendered file, either. A converter release or
     a converter.yaml setting moves the warm-up's pod template too (the GPU
     RuntimeClass, the Hub token's env var) without changing the recipe by a
@@ -225,6 +235,9 @@ def recipe(objects: list[dict]) -> dict[str, object]:
     return {
         "image": containers[0].get("image", ""),
         "steps": parsed.get("steps") if isinstance(parsed, dict) else None,
+        "size": ((cm.get("metadata") or {}).get("annotations") or {}).get(
+            _SIZE_ANNOTATION
+        ),
     }
 
 
@@ -381,7 +394,29 @@ def _campaign_job(
     )
 
     _scheduling(job, cfg)
+    if p.size is not None:
+        _size(job, cfg.sizes[p.size], cfg)
     return job
+
+
+def _size(job: dict, size: Size, cfg: ConverterConfig) -> None:
+    """A named size on the campaign pod (B105): the wrapper's requests and
+    limits, alike; its in-memory ``/work``, and the page lookahead that
+    lives in it at half of it (the rest holds outputs, HOME and TMPDIR --
+    audit 0923 E-14); and the flavor's node labels as the node selector,
+    which is how a Job keeps Kueue off every other flavor. A pipeline with
+    no size keeps the skeleton's numbers, and the wrapper's own default
+    lookahead is half the skeleton's ``/work`` (a wrapper test holds it)."""
+    pod = job["spec"]["template"]["spec"]
+    wrapper = pod["containers"][0]
+    wrapper["resources"] = {"requests": size.resources(), "limits": size.resources()}
+    wrapper["env"].append(
+        {"name": "LOOKAHEAD_BYTES", "value": str(memory_bytes(size.workdir) // 2)}
+    )
+    _set(job, "spec.template.spec.volumes[3].emptyDir.sizeLimit", size.workdir)
+    for flavor in cfg.flavors:
+        if flavor.name == size.flavor:
+            pod["nodeSelector"] = {**pod.get("nodeSelector", {}), **flavor.node_labels}
 
 
 #: What is left of a DNS label once the WIDEST part suffix and the widest pod

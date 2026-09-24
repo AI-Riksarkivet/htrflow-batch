@@ -384,7 +384,8 @@ def _parse_pipeline(
     recorded = (
         recorded_recipe(record / "pipelines" / f"{path.stem}.yaml") if record else {}
     )
-    if recorded and recorded == {"image": doc.get("image"), "steps": doc.get("steps")}:
+    as_written = {k: doc.get(k) for k in ("image", "steps", "size")}
+    if recorded and recorded == as_written:
         try:
             p = Pipeline.model_validate(data, context={**context, "as_recorded": True})
         except _PydanticValidationError:
@@ -426,6 +427,14 @@ def load(
             pipelines[p.id] = p
         else:
             broken.add(path.stem)
+
+    for p in pipelines.values() if template is not None else ():
+        if p.size is not None and p.size not in cfg.sizes:
+            problems.append(
+                f'pipelines/{p.id}.yaml: size "{p.size}" is not one of '
+                f"converter.yaml's sizes ({', '.join(cfg.sizes) or 'none'}) — "
+                "name one of them, or leave size out for the default"
+            )
 
     campaigns: list[Campaign] = []
     files: dict[str, str] = {}  # campaign name -> the file it came from
