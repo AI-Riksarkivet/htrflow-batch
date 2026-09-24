@@ -1319,7 +1319,23 @@ check web       "$(count packages/web/src -name '*.py')" 2583
 # model's revision. Test fixtures (src/lib/fixtures: the generated contract
 # JSON and the dropped-key helper the contract tests share) are test support,
 # like *.test.ts, and are not counted.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5176
+# 5176 -> 5470: the campaign list stops moving as it loads ("things pop all
+# over", the repo owner), measured in a browser by
+# frontend/scripts/measure-shifts.mjs, and a folded card's header carries
+# its page count. CampaignCard +170: the header line becomes a grid of
+# three tracks with held places for the count and the times, the phase
+# chip last and a phone layout that no longer wraps on a chip's word
+# (markup re-indented, plus ~55 lines of CSS); the count itself, its
+# coverage/as-of title and the folded read policy (on screen only, half the
+# open pace, a read that still stands not repeated); and the placeholder
+# rows, lines and "load more" an open card draws from its list row before
+# the detail lands. The page +69: the version's held slot, the order kept
+# across polls and sorted afresh after the tab was hidden, the banner that
+# floats over a list, the loading line that waits. poll.ts +53: `gate`,
+# four card reads in flight, handing a place on in order and giving it up
+# on abort. order.ts +30: `keepOrder`. config.ts +6: FOLDED_MS. Most of it
+# is the comments saying which measured shift each part removes.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5470
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
