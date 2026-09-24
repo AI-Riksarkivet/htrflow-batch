@@ -112,8 +112,8 @@ def test_run_manifest_without_an_image_digest_or_a_wall_clock(cfg):
 ALTO = '<alto><Layout><Page WIDTH="2500" HEIGHT="3538"/></Layout></alto>'
 
 
-def _cfg(tmp_path):
-    (tmp_path / "pipeline.yaml").write_text(PIPELINE)
+def _cfg(tmp_path, pipeline=PIPELINE):
+    (tmp_path / "pipeline.yaml").write_text(pipeline)
     return Config.from_env(
         {
             "VOLUME_REF": "SE-RA-1234",
@@ -295,3 +295,74 @@ def test_an_unscored_page_among_scored_ones_has_no_score_key(cfg, monkeypatch):
     )
     assert "quality" not in body["results"]["0002"]
     assert body["quality"]["scored"] == 1 and body["pages"] == 2
+
+
+class _ScoredStore:
+    """A store that already holds real scores for both pages -- as
+    ``store.page_quality`` would look after ``alto_dims`` parsed this run's
+    own uploaded ALTO (quality.py). Both pages already have dims too, so
+    ``publish.run`` takes the ``iiif.json``-writing branch."""
+
+    def __init__(self):
+        self.puts = {}
+        self.page_dims = {"0001": (2500, 3538), "0002": (2500, 3538)}
+        self.page_quality = {"0001": 0.9, "0002": 0.5}
+
+    def put_json(self, key, obj):
+        self.puts[key] = obj
+
+    def put_text(self, key, text, content_type):
+        self.puts[key] = text
+
+
+def test_iiif_json_and_manifest_json_share_the_one_quality_block(tmp_path):
+    """publish.run must compute the volume's quality block exactly once and
+    hand the SAME block to both the per-canvas iiif.json metadata and
+    manifest.json's `quality` -- not build it twice, which could silently
+    diverge if the two computations ever disagreed."""
+    cfg = _cfg(tmp_path, pipeline=QP_PIPELINE)
+    store = _ScoredStore()
+
+    publish.run(
+        cfg,
+        store,
+        {"label": {"none": ["vol"]}, "items": []},
+        "https://iiif.example/mock-vol/manifest.json",
+        _pages(),
+        StreamStats(
+            results={
+                "0001": PageOutcome(status="ok", seconds=1.0),
+                "0002": PageOutcome(status="ok", seconds=1.0),
+            }
+        ),
+        {"0001", "0002"},
+        100.0,
+        4096,
+    )
+
+    manifest_quality = store.puts["manifest.json"]["quality"]
+    assert manifest_quality["mean"] == 0.7
+    assert manifest_quality["min"] == 0.5
+    assert manifest_quality["scored"] == 2
+
+    iiif = store.puts["iiif.json"]
+    assert iiif["metadata"] == [
+        {
+            "label": {"en": ["Predicted quality"]},
+            "value": {
+                "none": [
+                    f"mean {manifest_quality['mean']:.2f}, "
+                    f"lowest {manifest_quality['min']:.2f}, "
+                    f"over {manifest_quality['scored']} pages"
+                ]
+            },
+        }
+    ]
+    # Both scored pages carry a per-canvas entry too -- same numbers, same
+    # source block.
+    assert iiif["items"][0]["metadata"] == [
+        {"label": {"en": ["Predicted quality"]}, "value": {"none": ["0.90"]}}
+    ]
+    assert iiif["items"][1]["metadata"] == [
+        {"label": {"en": ["Predicted quality"]}, "value": {"none": ["0.50"]}}
+    ]

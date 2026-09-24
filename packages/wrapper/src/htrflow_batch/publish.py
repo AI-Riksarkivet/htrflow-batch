@@ -95,6 +95,17 @@ def _htrflow_version() -> str:
         return "unknown"
 
 
+class _Unset:
+    """Sentinel type for ``run_manifest``'s ``summary`` parameter: tells a
+    caller-supplied ``None`` (there is no quality block) apart from no
+    argument at all (compute it here). A plain ``None`` default cannot carry
+    that distinction, since ``None`` is also the correct value for "no
+    scores"."""
+
+
+_UNSET = _Unset()
+
+
 def run_manifest(
     cfg: Config,
     pages: list[PageRef],
@@ -105,15 +116,17 @@ def run_manifest(
     bytes_fetched: int,
     quality: Mapping[str, float] | None = None,
     canvases: Sequence[str] = (),
-    summary: dict | None = None,
+    summary: dict | None | _Unset = _UNSET,
 ) -> dict:
     """The manifest.json body: what the volume is, what produced it, what came
     out, and what a resume or the Phase 2 gate reads back (docs: s3-layout).
     ``quality`` is a page's predicted score off its ALTO (quality.py); with
     none at all, the top-level ``quality`` key is absent, same as before this
     step existed. ``summary`` lets a caller that already computed the block
-    (``run``, ahead of ``iiif.json``) pass it in rather than have it built
-    twice; a caller with none (the contract script) gets it computed here."""
+    (``run``, ahead of ``iiif.json``) pass it in -- including an explicit
+    ``None``, meaning "no quality block" -- rather than have it built twice;
+    a caller that omits the argument (the contract script) gets it computed
+    here."""
     ok_pages = [n for n, r in stats.results.items() if r.status == "ok"]
     failed_pages = [n for n, r in stats.results.items() if r.status == "failed"]
     scores = quality or {}
@@ -154,7 +167,9 @@ def run_manifest(
         f"/{cfg.volume_prefix}/iiif.json",
     }
     block = (
-        summary if summary is not None else qp.summary(scores, pipeline_text, canvases)
+        qp.summary(scores, pipeline_text, canvases)
+        if isinstance(summary, _Unset)
+        else summary
     )
     if block is not None:
         body["quality"] = block
