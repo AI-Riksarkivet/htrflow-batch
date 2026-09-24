@@ -1,0 +1,89 @@
+# Weekly version updates for every pin a registry can answer for, one grouped
+# pull request per ecosystem (majors on their own), each through the full CI.
+# Security updates are enabled in the repository settings and are not
+# grouped. What stays manual, and why, is docs/development/ci.md's
+# "Dependency pins" table: the htrflow base (.docker/htrflow-base/ is
+# htrflow's pyproject.toml at HTRFLOW_REF plus the overlay, locked as a unit
+# by `make lock-htrflow-base`, and the build refuses a pyproject.toml that is
+# not exactly that), the transformers requirement files, the release digest
+# pins, the dagger engine and the CRD schemas.
+#
+# A new release waits a week before it is proposed (cooldown), so a
+# compromised or yanked release has time to be caught upstream first.
+version: 2
+
+updates:
+  # SHA-pinned `uses:`: Dependabot moves the SHA and the version comment.
+  # "/" reads .github/workflows; the composite actions each have a directory.
+  - package-ecosystem: github-actions
+    directories: ["/", "/.github/actions/*"]
+    schedule: {interval: weekly, day: monday}
+    cooldown: {default-days: 7}
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    commit-message: {prefix: "chore(deps)"}
+    groups:
+      github-actions:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  # The workspace lock (uv.lock at the root, all three packages).
+  - package-ecosystem: uv
+    directory: /
+    schedule: {interval: weekly, day: monday}
+    cooldown: {default-days: 7}
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    commit-message: {prefix: "chore(deps)"}
+    groups:
+      python:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  # The campaign browser, from frontend/bun.lock.
+  - package-ecosystem: bun
+    directory: /frontend
+    schedule: {interval: weekly, day: monday}
+    cooldown: {default-days: 7}
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    commit-message: {prefix: "chore(deps)"}
+    groups:
+      frontend:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  # FROM lines in .docker/*.dockerfile, tag plus digest. A new major of a
+  # base image, and a new CUDA release line (the drivers the wrapper runs on
+  # decide that), are deliberate changes rather than a weekly bump.
+  - package-ecosystem: docker
+    directory: /.docker
+    schedule: {interval: weekly, day: monday}
+    cooldown: {default-days: 7}
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    commit-message: {prefix: "chore(deps)"}
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
+      - dependency-name: nvidia/cuda
+        update-types: [version-update:semver-minor]
+    groups:
+      base-images:
+        patterns: ["*"]
+
+  # The dagger module. Its SDK modules move with the engine version
+  # (dagger.json and .github/actions/setup-dagger), by hand.
+  - package-ecosystem: gomod
+    directory: /.dagger
+    schedule: {interval: weekly, day: monday}
+    cooldown: {default-days: 7}
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    commit-message: {prefix: "chore(deps)"}
+    ignore:
+      - dependency-name: github.com/dagger/*
+    groups:
+      dagger-module:
+        patterns: ["*"]
+        update-types: [minor, patch]

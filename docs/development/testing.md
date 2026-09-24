@@ -16,7 +16,11 @@
    shipping, warm-up classification. Converter: parse, append-only, render
    against golden fixtures, the 10 000-volume split, the chart-agreement
    test. Read API: `projection.py`'s pure functions and the routes. Frontend:
-   schemas, derivation, the ALTO parser and components on jsdom.
+   schemas, derivation, the ALTO parser and components on jsdom, plus
+   property-based tests (fast-check, `*.property.test.ts`) for the URL
+   guards, the run-log parser and the failure sentences: each run draws a
+   fresh seed and prints it with a counterexample, and `FC_SEED=<seed>`
+   replays that run.
 2. **Container smoke** — the batch image against a real two-page manifest
    with a RustFS target; assert PAGE and ALTO files and `manifest.json` land.
 3. **Cluster acceptance** —
