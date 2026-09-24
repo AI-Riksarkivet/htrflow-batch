@@ -253,4 +253,19 @@ describe("gate", () => {
     await Promise.resolve();
     expect(task).not.toHaveBeenCalled();
   });
+
+  // An aborted fetch is over as far as anyone waiting is concerned, even
+  // when whatever was asked never answers.
+  test("aborted while running, a task gives its place up at once", async () => {
+    const through = gate(1);
+    const controller = new AbortController();
+    void through(() => new Promise<never>(() => {}), controller.signal).catch(
+      () => {},
+    );
+    const next = vi.fn(async () => true);
+    const waiting = through(next);
+    controller.abort();
+    await expect(waiting).resolves.toBe(true);
+    expect(next).toHaveBeenCalledTimes(1);
+  });
 });

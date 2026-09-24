@@ -98,7 +98,8 @@ export function startPolling(
  * asked. Every folded card on screen reads its own detail, and a page of
  * fifty campaigns asked the API for fifty at the same instant; the cards
  * share one of these. A task whose `signal` aborts while it waits never
- * runs, and its promise rejects the way an aborted fetch does.
+ * runs, and its promise rejects the way an aborted fetch does; one that
+ * aborts while it runs gives its place up at once.
  */
 export function gate(max: number) {
   let running = 0;
@@ -124,12 +125,23 @@ export function gate(max: number) {
         waiting.push(turn);
         signal?.addEventListener("abort", leave, { once: true });
       });
-    try {
-      return await task();
-    } finally {
+    // Given up once: when the task ends, or when its signal aborts -- an
+    // aborted read is over for whoever waits, whenever it would have
+    // answered.
+    let held = true;
+    const release = () => {
+      if (!held) return;
+      held = false;
+      signal?.removeEventListener("abort", release);
       const turn = waiting.shift();
       if (turn === undefined) running -= 1;
       else turn();
+    };
+    signal?.addEventListener("abort", release, { once: true });
+    try {
+      return await task();
+    } finally {
+      release();
     }
   };
 }
