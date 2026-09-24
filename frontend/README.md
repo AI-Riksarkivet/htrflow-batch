@@ -5,9 +5,9 @@ SvelteKit 2 + Svelte 5 static SPA over the read API (`packages/web`,
 
 - `/` — every campaign (one row per Indexed Job) as a card: pipeline chip,
   warm-up chip, phase, counts, and its volume table (id, state, links),
-  fetched and paged separately from the list. Cards start folded and show a
-  one-line latest strip while they are. An "API unreachable" banner on top
-  of the last good list when a poll fails.
+  fetched and paged separately from the list. Cards start folded, showing
+  only their header line. An "API unreachable" banner on top of the last
+  good list when a poll fails.
 - `/log?log=<url>&manifest=<url>[&live=1]` — the run viewer: the wrapper's
   run log grouped by stage, plus a summary card (counts, median / p95 / max,
   slowest pages, failed pages, a per-page grid) from `manifest.json`. With
@@ -118,7 +118,9 @@ check: every response is computed live.
 {
   "pipelineSteps": ["Segmentation", "TextRecognition"], // the chip's tooltip
   "pipelineYaml": "steps:\n  - step: Segmentation\n…", // the chip's toggle
-  "latest": {/* the VolumeView a folded card shows, or null */},
+  "latest": {
+    /* the newest active, else done, VolumeView, or null; not drawn */
+  },
   "failures": [
     /* up to 50 newest failed VolumeView rows, with a reason or without */
   ],
@@ -158,7 +160,8 @@ row) is what feeds `/log`'s `RunSummaryCard`.
 ## The campaign card
 
 `CampaignCard.svelte`. Every card has the same four zones in the same
-order, so ten cards scan like ten rows of one table.
+order, so ten cards scan like ten rows of one table. Folded, a card is zone
+1 alone: zones 2 to 4 render only while it is open.
 
 1. **Identity and state**, one line: the left accent bar, the name as the
    fold toggle (`namespace/name` only when the list spans namespaces: the
@@ -177,8 +180,8 @@ order, so ten cards scan like ten rows of one table.
    because the dot already means "running"; the words, tooltip and
    screen-reader sentence stay the same, so colour is never the only cue.
 2. **The body: one grid.** Totals (`volumes`, `pages`), the problems line,
-   then the volumes: `latest` while folded, the loaded page as an ARIA table
-   (headers present but not drawn) when open. Every row uses the same five
+   then the loaded page of volumes as an ARIA table (headers present but not
+   drawn). Every row uses the same five
    tracks, declared once as custom properties on the card:
 
    | track                   | holds                                                                           |
@@ -202,7 +205,7 @@ order, so ten cards scan like ten rows of one table.
      failed pages". `describeProgress` adds the stage and "updated N s ago"
      only while the volume can still change.
    - A volume's failure sentence and page error sit on a second line under
-     its own row, wrapping; on the folded row the sentence sits with the id.
+     its own row, wrapping.
    - At ≤520px the tracks fold onto two lines (id and failure first, then
      icons, bar, fraction, pill); words wrap, and the bar may shrink
      between a floor and its full width.
@@ -213,7 +216,7 @@ order, so ten cards scan like ten rows of one table.
    (with a log link from `lastError.logUrl`). Warning colour, wrapping.
    Past three sentences the rest wait behind "N more" (`aria-expanded`,
    `aria-controls`), and are not rendered, so no hidden link takes focus.
-   With the card open it drops failures already visible as rows.
+   It drops failures already visible as rows.
    `describeLastError` names the failing page once, even when the wrapper's
    message already names it.
 4. **Provenance**, the footer: the pipeline chip (a button once the detail
@@ -224,8 +227,8 @@ order, so ten cards scan like ten rows of one table.
    never the processor's), rendering `<repo> @<short rev>` or
    `<repo> unpinned`, linked to `https://huggingface.co/<id>/tree/<rev>`.
 
-**Links.** One snippet builds every volume row and the folded strip, so a
-missing link leaves a gap instead of shifting its neighbours. The id opens
+**Links.** One snippet builds every volume row's links, so a missing link
+leaves a gap instead of shifting its neighbours. The id opens
 `uv.html#?manifest=<url>`: `iiifUrl` once the volume is `done` or
 `progress.viewerPublished`, `sourceUrl` before that, plain text with a title
 when there is neither. Beside it, fixed slots for the source-manifest icon
@@ -241,10 +244,13 @@ so only while the phase is not `Succeeded`. A failed warm-up's
 **Folding, paging, polling.** Cards start folded and remember the choice in
 `localStorage` (`htrflow.card.<namespace>/<name>`, every access wrapped).
 `fetchJob` pages by `offset`/`limit` (200); "load more" adds a page, and a
-poll re-fetches every open page (capped at the API's 1000). Only a campaign
-that can still change is polled; a finished, `Unknown` or reaped one is read
-once, when its card first intersects the viewport (`IntersectionObserver`)
-or is opened, and again on a phase change. `fetchJobs` asks for
+poll re-fetches every open page (capped at the API's 1000). A folded card
+reads nothing, except a `Succeeded` one, which reads its detail once for the
+one thing its header needs that `JobSummary` lacks: `pagesFailed`, which
+makes it "partially succeeded". An open card that can still change is
+polled; a finished, `Unknown` or reaped one is read once, when its card
+first intersects the viewport (`IntersectionObserver`) or is opened, and
+again on a phase change. `fetchJobs` asks for
 `?reaped=20`; "show older campaigns" asks for 20 more.
 
 **Motion and accessibility.** Only what runs moves: the pulsing dot, the
@@ -252,7 +258,7 @@ bar sheen, and a one-second fade behind a progress line whose `done`
 changed. Bars ease to their fraction over 600 ms. Under
 `prefers-reduced-motion: reduce` there is no pulse, sheen or fade. The
 campaign header is a disclosure button with `aria-controls` only while the
-table is rendered. AA contrast in both themes, no horizontal overflow at
+card is open (it names the element holding zones 2 to 4). AA contrast in both themes, no horizontal overflow at
 390px.
 
 **Header.** Logo and title left; the deployed release from

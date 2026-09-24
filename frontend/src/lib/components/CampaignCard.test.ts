@@ -137,9 +137,8 @@ const volumeFailed = {
 };
 
 // Every detail response carries these; a fixture without them would only
-// exercise the Zod failure path. `latest` is what the folded strip shows —
-// the API computes it over every volume, so null here means "nothing has
-// started", not "nothing is loaded".
+// exercise the Zod failure path. `latest` is the API's newest active or done
+// volume; the card no longer draws it (a folded card is its header line).
 const detailBase = {
   pipelineSteps: [],
   pipelineYaml: "",
@@ -160,9 +159,21 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-/** Cards are folded by default; most tests want the volume table open. */
+/**
+ * Cards are folded by default, and a folded card is its header line only;
+ * most tests want it open. Opening is what starts a running card's reads, so
+ * the first one is let land.
+ */
 async function expand(): Promise<void> {
+  const toggle = screen.getByRole("button", { name: /kyrk$/ });
+  if (toggle.getAttribute("aria-expanded") === "true") return;
+  await toggleCard();
+}
+
+/** Folds an open card, or opens a folded one. */
+async function toggleCard(): Promise<void> {
   await fireEvent.click(screen.getByRole("button", { name: /kyrk$/ }));
+  if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(0);
 }
 
 /**
@@ -173,10 +184,15 @@ async function expand(): Promise<void> {
  */
 let storage: Map<string, string>;
 
-function stubStorage(): Map<string, string> {
+function stubStorage(everyCardOpen = false): Map<string, string> {
   const map = new Map<string, string>();
+  // `everyCardOpen`: a reader who left every card open. A folded card is its
+  // header line and nothing else, so the describes about what a card shows
+  // below that line start with it open.
+  const left = (k: string) =>
+    everyCardOpen && k.startsWith("htrflow.card.") ? "open" : null;
   vi.stubGlobal("localStorage", {
-    getItem: (k: string) => map.get(k) ?? null,
+    getItem: (k: string) => map.get(k) ?? left(k),
     setItem: (k: string, v: string) => void map.set(k, v),
   });
   return map;
@@ -321,14 +337,12 @@ describe("CampaignCard", () => {
     );
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
-    // The campaign's own pages cell is visible folded — that is the question
-    // the card is asked most often.
-    const numbers = within(
-      container.querySelector(".card-body") as HTMLElement,
-    );
-    expect(numbers.getByText("pages")).toBeInTheDocument();
-    expect(numbers.getByText(/137 \/ 638/)).toBeInTheDocument();
     await expand();
+    // The campaign's own pages total, first under the header.
+    const pagesTotal = [...container.querySelectorAll(".row.totals")].find(
+      (r) => r.textContent?.startsWith("pages"),
+    );
+    expect(pagesTotal).toHaveTextContent("137 / 638");
 
     // The row says the same numbers in the same shape, and what the numbers
     // cannot say beside them.
@@ -585,6 +599,7 @@ describe("CampaignCard", () => {
     );
     render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
+    await expand();
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent(
       "This campaign is gone: its campaign file has been removed from the " +
@@ -600,6 +615,7 @@ describe("CampaignCard", () => {
     );
     render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
+    await expand();
     // A sentence, not the transport detail: no bare "HTTP 503" line.
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent(
@@ -608,7 +624,7 @@ describe("CampaignCard", () => {
     expect(alert).toHaveTextContent("Retrying every 60 seconds.");
   });
 
-  test("folded by default; the toggle opens and closes without refetching", async () => {
+  test("folded by default; the toggle opens and closes it, reading once", async () => {
     const detail = { ...detail0, failures: [], volumes: [volumeDone] };
     const fetchMock = vi.fn(async () => jsonResponse(detail));
     vi.stubGlobal("fetch", fetchMock);
@@ -627,7 +643,8 @@ describe("CampaignCard", () => {
     ).not.toBeNull();
     await fireEvent.click(toggle);
     expect(screen.queryByRole("table")).toBeNull();
-    expect(fetchMock).toHaveBeenCalledTimes(1); // still just the initial load
+    // One read: the one opening it started. Folded, it asks nothing more.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   test("the fold state is remembered per campaign", async () => {
@@ -665,69 +682,6 @@ describe("CampaignCard", () => {
     expect(screen.getByRole("table")).toBeInTheDocument();
   });
 
-  test("while folded, the API's latest volume keeps its links in reach", async () => {
-    // Deliberately NOT among `volumes`: the strip comes from the API's
-    // `latest`, computed over every volume, not from the page the card
-    // happens to have loaded — which for a big campaign never holds the
-    // index in flight.
-    const active = {
-      ...volumeDone,
-      index: 260,
-      id: "vol260",
-      state: "active",
-      sourceUrl: "https://iiif.example.org/vol260/manifest",
-    };
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        jsonResponse({
-          ...detail0,
-          latest: active,
-          failures: [],
-          volumes: [volumeDone],
-        }),
-      ),
-    );
-    render(CampaignCard, { job });
-    await vi.advanceTimersByTimeAsync(0);
-
-    expect(screen.queryByRole("table")).toBeNull(); // still folded
-    expect(screen.getByText("vol260")).toBeInTheDocument();
-    expect(screen.queryByText("vol0")).toBeNull(); // not the loaded row
-    expect(screen.getByRole("link", { name: "vol260" })).toHaveAttribute(
-      "href",
-      "uv.html#?manifest=" +
-        encodeURIComponent("https://iiif.example.org/vol260/manifest"),
-    );
-    expect(
-      screen.getByRole("link", { name: "manifest for vol260" }),
-    ).toHaveAttribute("href", "https://iiif.example.org/vol260/manifest");
-    expect(
-      screen.getByRole("link", { name: "run log for vol260" }),
-    ).toHaveAttribute(
-      "href",
-      expect.stringContaining(encodeURIComponent(active.logUrl)),
-    );
-  });
-
-  test("no latest volume: the folded card shows no strip", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        jsonResponse({
-          ...detail0,
-          latest: null,
-          failures: [],
-          volumes: [volumeDone],
-        }),
-      ),
-    );
-    const { container } = render(CampaignCard, { job });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(container.querySelector(".row.latest")).toBeNull();
-    expect(screen.queryByRole("link", { name: /^run log for/ })).toBeNull();
-  });
-
   test("zone 3 names every failed volume and why", async () => {
     const secondFailure = {
       ...volumeFailed,
@@ -750,6 +704,7 @@ describe("CampaignCard", () => {
     );
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
+    await expand();
 
     // Zone 3: each failure as `id: sentence`. Sentences, not the
     // wrapper's fields — no reader ever sees a stage name, a `permanent`
@@ -791,17 +746,15 @@ describe("CampaignCard", () => {
     );
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
-    // Folded, the failure is on the problems line.
-    expect(container.querySelector(".problems-text")).toHaveTextContent(
-      "vol1: The pod was stopped by the cluster (a node drain or a pause), " +
-        "and the volume has used all its retries — put it in a new campaign " +
-        "to run it again.",
-    );
     await expand();
     const [failedNote, retryingNote] = [
       ...container.querySelectorAll(".row-note"),
     ];
-    expect(failedNote).toHaveTextContent("has used all its retries");
+    expect(failedNote).toHaveTextContent(
+      "The pod was stopped by the cluster (a node drain or a pause), " +
+        "and the volume has used all its retries — put it in a new campaign " +
+        "to run it again.",
+    );
     expect(failedNote).not.toHaveTextContent("will be retried");
     expect(retryingNote).toHaveTextContent(
       "The pod was stopped by the cluster (a node drain or a pause); the " +
@@ -829,6 +782,7 @@ describe("CampaignCard", () => {
     );
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
+    await expand();
     const line = () => container.querySelector(".problems-text") as HTMLElement;
     const ids = () =>
       [...line().querySelectorAll("a")].map((a) => a.textContent);
@@ -857,7 +811,7 @@ describe("CampaignCard", () => {
   test("no sentence on the card is clipped to one line (3080)", () => {
     // A line of sentences, or one that holds links, must wrap rather than
     // cut -- in every rule that styles it, at any width.
-    for (const cls of ["problems-text", "row-note-text", "vreason"]) {
+    for (const cls of ["problems-text", "row-note-text"]) {
       const decls = declsOn(cls);
       expect(decls, cls).toContainEqual(["overflow-wrap", "anywhere"]);
       for (const [property, value] of decls) {
@@ -889,6 +843,7 @@ describe("CampaignCard", () => {
     );
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
+    await expand();
 
     const line = container.querySelector(".problems-text") as HTMLElement;
     const links = [...line.querySelectorAll("a")];
@@ -914,6 +869,7 @@ describe("CampaignCard", () => {
     );
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
+    await expand();
     const line = container.querySelector(".problems-text") as HTMLElement;
     expect(line).not.toHaveAttribute("aria-hidden");
     expect(container.querySelector(".problems .sr-only")).toBeNull();
@@ -932,14 +888,10 @@ describe("CampaignCard", () => {
     );
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
-    const line = () => container.querySelector(".problems-text") as HTMLElement;
-    // Folded: the table is out of sight, so every failure belongs on the line.
-    expect(line()).toHaveTextContent("vol1:");
-    expect(line()).toHaveTextContent("vol7:");
-
     await expand();
-    // Open: vol1 is a row below, with its reason; only vol7 (not on the
-    // loaded page) is still worth saying up here.
+    const line = () => container.querySelector(".problems-text") as HTMLElement;
+    // vol1 is a row below, with its reason; only vol7 (not on the loaded
+    // page) is still worth saying up here.
     expect(line()).not.toHaveTextContent("vol1:");
     expect(line()).toHaveTextContent("vol7:");
   });
@@ -977,6 +929,7 @@ describe("CampaignCard", () => {
     );
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
+    await expand();
 
     const line = container.querySelector(".problems-text") as HTMLElement;
     expect(line).toHaveTextContent(
@@ -1000,6 +953,7 @@ describe("CampaignCard", () => {
     );
     render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
+    await expand();
 
     const chip = screen.getByRole("button", { name: "demo-v1" });
     expect(chip).toHaveAttribute("title", "Segmentation → TextRecognition");
@@ -1035,6 +989,7 @@ describe("CampaignCard", () => {
     );
     render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
+    await expand();
 
     const pinned = screen.getByRole("link", {
       name: "yolov9-regions-1 @6fb01d2",
@@ -1071,6 +1026,7 @@ describe("CampaignCard", () => {
     );
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
+    await expand();
     // The footer always names the pipeline; the models half is what a
     // pipeline with none leaves out.
     expect(container.querySelector(".models")).toBeNull();
@@ -1102,6 +1058,7 @@ describe("CampaignCard", () => {
     );
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
+    await expand();
 
     // Zone 1's right end: the two ends of the run, still machine-readable.
     const when = container.querySelector(".when") as HTMLElement;
@@ -1310,6 +1267,7 @@ describe("CampaignCard", () => {
     );
     render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
+    await expand();
     expect(screen.queryByRole("button", { name: "demo-v1" })).toBeNull();
     expect(screen.getByText("demo-v1")).toBeInTheDocument();
   });
@@ -1393,9 +1351,10 @@ describe("CampaignCard", () => {
       const chip = screen.getByText("warm-up failed");
       expect(chip).toHaveClass("failed");
       expect(chip).toHaveAttribute("title", sentence);
-      // Zone 3 carries the sentence itself, folded or open: a warm-up that
-      // failed is the reason nothing is happening, and the card should not
-      // make a reader open it to find that out (2026-09-16).
+      // Folded, the chip's title carries it; open, zone 3 carries the
+      // sentence itself: a warm-up that failed is the reason nothing is
+      // happening (2026-09-16).
+      await expand();
       const line = document.querySelector(".problems-text") as HTMLElement;
       expect(line).toHaveTextContent(`warm-up: ${sentence}`);
     });
@@ -1432,6 +1391,7 @@ describe("CampaignCard", () => {
     );
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
+    await expand();
 
     const ident = container.querySelector(".camp") as HTMLElement;
     expect(within(ident).getByText("Running")).toBeInTheDocument();
@@ -1458,7 +1418,7 @@ describe("CampaignCard", () => {
 describe("CampaignCard's failure notice", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    storage = stubStorage();
+    storage = stubStorage(true);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -1482,7 +1442,7 @@ describe("CampaignCard's failure notice", () => {
     render(CampaignCard, { job });
   }
 
-  test("the last page error shows folded, with a link to that volume's log", async () => {
+  test("the last page error is on the problems line, with a link to that volume's log", async () => {
     renderWith({ pagesFailed: 1, errors: 2, lastError });
     await vi.advanceTimersByTimeAsync(0);
 
@@ -1516,6 +1476,125 @@ describe("CampaignCard's failure notice", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(document.querySelector(".problems")).toBeNull();
   });
+});
+
+// Folding a card hides everything but its header line: the list is a list
+// of campaigns to scan, and what a folded card used to add under it -- the
+// totals, the problems line, the latest volume, the provenance -- made ten
+// folded cards a wall again (the repo owner).
+describe("a folded card is its header line", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    storage = stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const busy = {
+    ...detail0,
+    latest: { ...volumeDone, state: "active" },
+    failures: [volumeFailed],
+    volumes: [volumeDone, volumeFailed],
+    pipelineYaml: "steps: []\n",
+    pagesDone: 3,
+    pagesTotal: 9,
+    errors: 2,
+    lastError: {
+      page: "0044",
+      error: "worker died",
+      volume: "vol9",
+      logUrl: "https://pub/status/logs/demo-v1/vol9.txt",
+    },
+  };
+
+  test("folded: name, chips and times, and nothing under them", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(busy)),
+    );
+    const { container } = render(CampaignCard, {
+      job: { ...job, warmup: { phase: "running" } },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const card = container.querySelector("section.campaign") as HTMLElement;
+    expect(card.querySelector(".camp-name")).toHaveTextContent("kyrk");
+    expect(within(card).getByText("Running")).toBeInTheDocument();
+    expect(within(card).getByText("warm-up running")).toBeInTheDocument();
+    expect(card.querySelector(".when time")).not.toBeNull();
+    for (const zone of [".card-body", ".card-meta", ".row", ".problems"])
+      expect(card.querySelector(zone)).toBeNull();
+    expect(screen.queryByRole("link")).toBeNull();
+    const toggle = screen.getByRole("button", { name: /kyrk$/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).not.toHaveAttribute("aria-controls");
+  });
+
+  test("open: the totals, the problems, the volumes and the provenance", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(busy)),
+    );
+    const { container } = render(CampaignCard, { job });
+    await expand();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(container.querySelectorAll(".row.totals")).toHaveLength(2);
+    expect(container.querySelector(".problems")).not.toBeNull();
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(container.querySelector(".card-meta")).toHaveTextContent("demo-v1");
+    const toggle = screen.getByRole("button", { name: /kyrk$/ });
+    const controlled = document.getElementById(
+      toggle.getAttribute("aria-controls") ?? "",
+    );
+    expect(controlled).not.toBeNull();
+    expect(controlled?.contains(screen.getByRole("table"))).toBe(true);
+  });
+
+  test("folded, a running campaign asks for no detail; open, it polls; folded again, it stops", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(busy));
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 3);
+    expect(fetchMock).not.toHaveBeenCalled();
+    await expand();
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await toggleCard(); // folds it
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 3);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  test("folded, a succeeded campaign reads its detail once, for the pages it lost", async () => {
+    const done: JobSummary = { ...job, phase: "Succeeded" };
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ ...busy, ...done, pagesFailed: 3 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(CampaignCard, { job: done });
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 3);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const chip = container.querySelector(".chip.phase") as HTMLElement;
+    expect(chip).toHaveTextContent("partially succeeded");
+    expect(chip).toHaveAttribute(
+      "title",
+      "every volume finished, 3 pages failed",
+    );
+    expect(container.querySelector(".card-body")).toBeNull();
+  });
+
+  test.each(["Failed", "PartiallyFailed", "Unknown"] as const)(
+    "folded, a %s campaign's header needs nothing the list did not send",
+    async (phase) => {
+      const fetchMock = vi.fn(async () => jsonResponse(busy));
+      vi.stubGlobal("fetch", fetchMock);
+      render(CampaignCard, { job: { ...job, phase } });
+      await vi.advanceTimersByTimeAsync(RELOAD_MS * 3);
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 });
 
 // A campaign whose Job is past its ttlSecondsAfterFinished: the two
@@ -1576,7 +1655,7 @@ describe("a campaign whose Job has been removed", () => {
 describe("CampaignCard's running motion", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    storage = stubStorage();
+    storage = stubStorage(true);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -1758,7 +1837,7 @@ describe("CampaignCard's running motion", () => {
 describe("a progress bar cannot be talked out of its own scale", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    stubStorage();
+    stubStorage(true);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -1813,7 +1892,7 @@ describe("a progress bar cannot be talked out of its own scale", () => {
 describe("the viewer link is built the way every other link is", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    stubStorage();
+    stubStorage(true);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -1882,7 +1961,7 @@ describe("the viewer link is built the way every other link is", () => {
 describe("a reaped campaign's volumes are still openable", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    stubStorage();
+    stubStorage(true);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -1977,7 +2056,7 @@ describe("a reaped campaign's volumes are still openable", () => {
 describe("the numbers line is the same shape on every card", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    stubStorage();
+    stubStorage(true);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -2064,7 +2143,7 @@ describe("the numbers line is the same shape on every card", () => {
 describe("the problems line never names the same page twice", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    stubStorage();
+    stubStorage(true);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -2106,7 +2185,7 @@ describe("the problems line never names the same page twice", () => {
 describe("the figures beside a bar", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    stubStorage();
+    stubStorage(true);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -2214,7 +2293,7 @@ describe("the figures beside a bar", () => {
 describe("the volume status column", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    stubStorage();
+    stubStorage(true);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -2235,19 +2314,6 @@ describe("the volume status column", () => {
       viewerPublished: true,
       ...over,
     };
-  }
-
-  async function strip(v: unknown): Promise<HTMLElement> {
-    cleanup();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        jsonResponse({ ...detail0, failures: [], volumes: [v], latest: v }),
-      ),
-    );
-    const { container } = render(CampaignCard, { job });
-    await vi.advanceTimersByTimeAsync(0);
-    return container.querySelector(".latest") as HTMLElement;
   }
 
   async function cell(v: unknown): Promise<HTMLElement> {
@@ -2301,27 +2367,23 @@ describe("the volume status column", () => {
 
   test("the manifest keeps its slot even when the volume has none", async () => {
     const noSource = { ...volumeDone, sourceUrl: null, progress: progress() };
-    for (const el of [await strip(noSource), await cell(noSource)]) {
-      const row = el.closest("tr") ?? el;
-      expect(row.querySelectorAll(".slot")).toHaveLength(2);
-      expect(row.querySelectorAll(".vicon")).toHaveLength(1);
-    }
+    const row = await cell(noSource);
+    expect(row.querySelectorAll(".slot")).toHaveLength(2);
+    expect(row.querySelectorAll(".vicon")).toHaveLength(1);
   });
 
   // A volume that finished but lost pages is not a failure -- it published
   // -- and not a clean run either: amber, and the words say it too, so the
   // colour is not carrying it alone (WCAG 1.4.1).
   test.each([
-    ["the strip", 0, null],
-    ["the strip", 1, "done with 1 failed page"],
-    ["a volume row", 0, null],
-    ["a volume row", 1, "done with 1 failed page"],
-    ["a volume row", 4, "done with 4 failed pages"],
+    [0, null],
+    [1, "done with 1 failed page"],
+    [4, "done with 4 failed pages"],
   ] as const)(
-    "%s of a done volume that lost %i pages",
-    async (where, failed, said) => {
+    "a volume row of a done volume that lost %i pages",
+    async (failed, said) => {
       const v = { ...volumeDone, progress: progress({ failed }) };
-      const el = where === "the strip" ? await strip(v) : await cell(v);
+      const el = await cell(v);
       const word = el.querySelector(".status") as HTMLElement;
       expect(word).toHaveClass("done");
       expect(el.querySelector(".c-fraction")?.textContent?.trim()).toBe(
@@ -2344,42 +2406,26 @@ describe("the volume status column", () => {
   );
 
   test("an active volume: its fraction, its bar and what it is doing", async () => {
-    for (const el of [await strip(active), await cell(active)]) {
-      expect(el.querySelector(".status")).toHaveClass("active");
-      expect(el.querySelector(".c-fraction")).toHaveTextContent("137 / 638");
-      expect(el.querySelector('[role="progressbar"]')).not.toBeNull();
-      expect(el.querySelector(".vprogress")).toHaveTextContent(
-        "processing pages · updated 12 s ago",
-      );
-    }
+    const el = await cell(active);
+    expect(el.querySelector(".status")).toHaveClass("active");
+    expect(el.querySelector(".c-fraction")).toHaveTextContent("137 / 638");
+    expect(el.querySelector('[role="progressbar"]')).not.toBeNull();
+    expect(el.querySelector(".vprogress")).toHaveTextContent(
+      "processing pages · updated 12 s ago",
+    );
   });
 
   test("a volume with nothing read yet says so with an em dash", async () => {
-    for (const el of [await strip(unknown), await cell(unknown)]) {
-      expect(el.querySelector(".c-fraction")).toHaveTextContent("—");
-      expect(el.querySelector('[role="progressbar"]')).toBeNull();
-    }
+    const el = await cell(unknown);
+    expect(el.querySelector(".c-fraction")).toHaveTextContent("—");
+    expect(el.querySelector('[role="progressbar"]')).toBeNull();
   });
 
-  test("a failed volume: red word, and the reason on the strip", async () => {
-    const line = await strip(volumeFailed);
-    expect(line.querySelector(".status")).toHaveClass("failed");
-    const reason = line.querySelector(".vreason") as HTMLElement;
-    expect(reason).toHaveTextContent("Failed while loading the model");
-    // Wrapped, not clipped: the sentence is all there to read, on a phone
-    // and from a keyboard, so it needs no mouse-only copy (3080).
-    expect(reason).not.toHaveAttribute("title");
-    // The sentence sits with the id, where the words go; the fraction slot
-    // still holds the column open.
-    expect(line.querySelector(".c-label .vreason")).not.toBeNull();
-  });
-
-  test("...and in the open list it is a line under the row", async () => {
+  test("a failed volume: red word, and the reason a line under the row", async () => {
     // The id's track is capped at 16rem, which would clip a sentence to
     // nothing, so it spans the row underneath instead (2026-09-16).
     const row = await cell(volumeFailed);
     expect(row.querySelector(".status")).toHaveClass("failed");
-    expect(row.querySelector(".c-label .vreason")).toBeNull();
     expect(row.querySelector(".row-note")).toHaveTextContent(
       "Failed while loading the model",
     );
@@ -2399,7 +2445,7 @@ describe("the volume status column", () => {
 describe("a volume line is the same shape on every row and every card", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    stubStorage();
+    stubStorage(true);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -2426,13 +2472,11 @@ describe("a volume line is the same shape on every row and every card", () => {
     };
   }
 
-  async function card(volumes: unknown[], latest: unknown = null) {
+  async function card(volumes: unknown[]) {
     cleanup();
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        jsonResponse({ ...detail0, failures: [], volumes, latest }),
-      ),
+      vi.fn(async () => jsonResponse({ ...detail0, failures: [], volumes })),
     );
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
@@ -2440,7 +2484,6 @@ describe("a volume line is the same shape on every row and every card", () => {
   }
 
   test.each([
-    ["the strip", ".row.latest"],
     ["a volume row", ".row.volume"],
     ["a totals row", ".row.totals"],
   ] as const)(
@@ -2452,8 +2495,7 @@ describe("a volume line is the same shape on every row and every card", () => {
       // and pill cells, empty, to hold those columns open.
       const lost = vol("vol0");
       lost.progress.failed = 1;
-      const container = await card([lost], lost);
-      if (where === "a volume row") await expand();
+      const container = await card([lost]);
       const row = container.querySelector(selector) as HTMLElement;
       expect([...row.children].map((c) => c.className.split(" ")[0])).toEqual([
         "c-label",
@@ -2487,9 +2529,7 @@ describe("a volume line is the same shape on every row and every card", () => {
   });
 
   test("a finished volume says nothing about when it last spoke", async () => {
-    const container = await card([vol("vol0")], vol("vol0"));
-    expect(container.querySelector(".row.volume .vprogress")).toBeNull();
-    await expand();
+    const container = await card([vol("vol0")]);
     expect(container.querySelector(".row.volume .vprogress")).toBeNull();
     // The fraction is still there; it is only the clock that goes.
     expect(
@@ -2544,7 +2584,7 @@ describe("a volume line is the same shape on every row and every card", () => {
 describe("the volume line at a phone's width, and what it says it cannot do", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    stubStorage();
+    stubStorage(true);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -2715,7 +2755,9 @@ describe("what the phase chip calls a campaign", () => {
 describe("a finished campaign's card stops asking", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    stubStorage();
+    // Open cards: what a folded one reads is "a folded card is its header
+    // line".
+    stubStorage(true);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -2875,8 +2917,8 @@ describe("a finished card reads its detail only once someone can see it", () => 
     await vi.advanceTimersByTimeAsync(0);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     // Folding and opening it again is not news.
-    await expand();
-    await expand();
+    await toggleCard();
+    await toggleCard();
     await vi.advanceTimersByTimeAsync(RELOAD_MS * 3);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -2890,7 +2932,8 @@ describe("a finished card reads its detail only once someone can see it", () => 
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  test("a running campaign polls whether or not it is on screen", async () => {
+  test("an open running campaign polls whether or not it is on screen", async () => {
+    storage.set(`htrflow.card.${job.namespace}/${job.name}`, "open");
     const fetchMock = detailFor(job);
     vi.stubGlobal("fetch", fetchMock);
     render(CampaignCard, { job });
@@ -2935,7 +2978,7 @@ describe("the two partial states are told apart by colour", () => {
 describe("a campaign of one volume", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    stubStorage();
+    stubStorage(true);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -2983,18 +3026,9 @@ describe("a campaign of one volume", () => {
   }
 
   test("drops both totals: its own row is the total", async () => {
-    const container = await card(one, { volumes: [only], latest: only });
+    const container = await card(one, { volumes: [only] });
     expect(labels(container)).toEqual([]);
     // The numbers are still on the card, once.
-    expect(
-      container.querySelector(".row.latest .c-fraction"),
-    ).toHaveTextContent("3 / 3");
-  });
-
-  test("...open as well as folded", async () => {
-    const container = await card(one, { volumes: [only], latest: only });
-    await expand();
-    expect(labels(container)).toEqual([]);
     expect(
       container.querySelector(".row.volume .c-fraction"),
     ).toHaveTextContent("3 / 3");
@@ -3003,7 +3037,7 @@ describe("a campaign of one volume", () => {
   test("but keeps them while there is no row to carry them", async () => {
     // The detail has not landed: a card with no numbers at all would be
     // worse than a total of one.
-    const container = await card(one, { volumes: [], latest: null });
+    const container = await card(one, { volumes: [] });
     expect(labels(container)).toEqual(["volumes", "pages"]);
   });
 
@@ -3012,7 +3046,7 @@ describe("a campaign of one volume", () => {
       ...job,
       counts: { total: 3, active: 0, done: 3, failed: 0 },
     };
-    const container = await card(many, { volumes: [only], latest: only });
+    const container = await card(many, { volumes: [only] });
     expect(labels(container)).toEqual(["volumes", "pages"]);
   });
 });
@@ -3024,7 +3058,7 @@ describe("a campaign of one volume", () => {
 describe("the bar is the track that stretches, and every volume has one", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    stubStorage();
+    stubStorage(true);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -3047,13 +3081,11 @@ describe("the bar is the track that stretches, and every volume has one", () => 
     };
   }
 
-  async function card(volumes: unknown[], latest: unknown = null) {
+  async function card(volumes: unknown[]) {
     cleanup();
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        jsonResponse({ ...detail0, failures: [], volumes, latest }),
-      ),
+      vi.fn(async () => jsonResponse({ ...detail0, failures: [], volumes })),
     );
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
@@ -3076,7 +3108,7 @@ describe("the bar is the track that stretches, and every volume has one", () => 
       id: "R0001203-a-very-long-identifier-indeed",
       progress: progress(),
     };
-    const container = await card([long], long);
+    const container = await card([long]);
     const name = container.querySelector(".vid-name") as HTMLElement;
     expect(name).toHaveAttribute("title", expect.stringContaining(long.id));
     const clip = cssOf(".vid-name");
@@ -3094,7 +3126,7 @@ describe("the bar is the track that stretches, and every volume has one", () => 
     "a %s volume carries a bar in its own colour",
     async (state, failed, mode) => {
       const v = { ...volumeDone, state, progress: progress({ failed }) };
-      const container = await card([v], v);
+      const container = await card([v]);
       const fill = container.querySelector(
         ".row.volume .c-bar .fill",
       ) as HTMLElement;
@@ -3110,10 +3142,10 @@ describe("the bar is the track that stretches, and every volume has one", () => 
       state: "active",
       progress: progress({ stage: "stream", ageSeconds: 12 }),
     };
-    const container = await card([active], active);
+    const container = await card([active]);
     expect(container.querySelector(".row.volume .fill")).toHaveClass("running");
     const done = { ...volumeDone, progress: progress() };
-    const second = await card([done], done);
+    const second = await card([done]);
     expect(second.querySelector(".row.volume .fill")).not.toHaveClass(
       "running",
     );
@@ -3123,7 +3155,7 @@ describe("the bar is the track that stretches, and every volume has one", () => 
     "a %s volume leaves the bar track empty",
     async (state) => {
       const v = { ...volumeDone, state, progress: null };
-      const container = await card([v], v);
+      const container = await card([v]);
       const track = container.querySelector(
         ".row.volume .c-bar",
       ) as HTMLElement;
@@ -3148,14 +3180,13 @@ describe("the bar is the track that stretches, and every volume has one", () => 
           ...one,
           failures: [],
           volumes: [only],
-          latest: only,
         }),
       ),
     );
     const { container } = render(CampaignCard, { job: one });
     await vi.advanceTimersByTimeAsync(0);
     expect(container.querySelectorAll(".row.totals")).toHaveLength(0);
-    expect(container.querySelector(".row.latest .fill")).toHaveClass("done");
+    expect(container.querySelector(".row.volume .fill")).toHaveClass("done");
   });
 });
 
@@ -3166,7 +3197,7 @@ describe("the bar is the track that stretches, and every volume has one", () => 
 describe("where a page error is said", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    stubStorage();
+    stubStorage(true);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -3196,7 +3227,6 @@ describe("where a page error is said", () => {
   test("under the volume it happened in, when that volume is on screen", async () => {
     const container = await card({
       volumes: [volumeDone],
-      latest: volumeDone,
       lastError,
     });
     const note = container.querySelector(".row-note") as HTMLElement;
@@ -3210,20 +3240,14 @@ describe("where a page error is said", () => {
     expect(container.querySelector(".problems")).toBeNull();
   });
 
-  test("the note follows its own row, open as well as folded", async () => {
+  test("the note follows its own row, not the first one", async () => {
     const other = { ...volumeDone, index: 1, id: "vol1" };
     const container = await card({
       volumes: [other, volumeDone],
-      latest: other,
       lastError,
     });
-    // Folded on vol1: vol0 is not on screen, so the campaign line keeps it.
-    expect(container.querySelector(".row-note")).toBeNull();
-    expect(container.querySelector(".problems-text")).toHaveTextContent(
-      "page 0004: HTTP 400",
-    );
     await expand();
-    // Open: vol0 is a row, and its note sits under it.
+    // vol0 is the second row, and its note sits under it.
     const rows = [...container.querySelectorAll(".row.volume, .row-note")];
     const noteAt = rows.findIndex((r) => r.className.includes("row-note"));
     expect(noteAt).toBeGreaterThan(0);
@@ -3234,7 +3258,6 @@ describe("where a page error is said", () => {
   test("a volume that is nowhere on the card keeps its error in the campaign line", async () => {
     const container = await card({
       volumes: [{ ...volumeDone, index: 9, id: "vol9" }],
-      latest: null,
       lastError,
     });
     await expand();
@@ -3261,7 +3284,6 @@ describe("where a page error is said", () => {
           ...cold,
           failures: [volumeFailed],
           volumes: [volumeDone],
-          latest: volumeDone,
           pagesFailed: 1,
           lastError,
         }),
@@ -3285,7 +3307,7 @@ describe("where a page error is said", () => {
 describe("the bar survives a phone's width", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    stubStorage();
+    stubStorage(true);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -3335,7 +3357,6 @@ describe("the bar survives a phone's width", () => {
           ...detail0,
           failures: [],
           volumes: [v],
-          latest: v,
           pagesDone: 2,
           pagesTotal: 3,
         }),
@@ -3343,7 +3364,7 @@ describe("the bar survives a phone's width", () => {
     );
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
-    // Two totals rows and the folded volume row: three bars, one shape.
+    // Two totals rows and the volume row: three bars, one shape.
     expect(container.querySelectorAll(".row .c-bar .bar")).toHaveLength(3);
   });
 });

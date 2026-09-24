@@ -62,7 +62,7 @@ A `JobDetail` is the summary plus:
 |---|---|
 | `volumes` | One row per index, paged by `offset` and `limit` (default 200, at most 1000). |
 | `failures` | Up to 50 of the newest failed rows, with a reason or without. |
-| `latest` | The volume a folded card shows: the newest active one, else the newest done one, else `null`. |
+| `latest` | The newest active volume, else the newest done one, else `null`. |
 | `pipelineSteps`, `pipelineYaml` | The step names and the steps document, from the `htr-pipeline-<id>` ConfigMap. Empty when it is gone. |
 | `pagesDone`, `pagesTotal`, `pagesFailed`, `errors` | Page counts summed over every volume whose progress has been read. |
 | `lastError` | The most recent page failure among them, with its `volume` and that volume's `logUrl`. |
@@ -142,7 +142,8 @@ Their links and progress still come from the bucket.
 ## What a campaign card shows
 
 Every card has the same four zones, in the same order, so ten campaigns
-scan like a table:
+scan like a table. A folded card shows only the first; the rest appear when
+it is opened:
 
 1. **Identity and state.** The campaign's name (click to fold or unfold;
    `namespace/name` only when the list spans more than one namespace),
@@ -150,8 +151,7 @@ scan like a table:
    "job removed" chip for a reaped campaign, and when it was created and
    finished.
 2. **The body.** The totals (`volumes`, `pages`) with progress bars, then
-   the campaign's volumes. A folded card shows one volume, `latest`; an
-   open card shows the loaded page, with "load more" for the rest.
+   the loaded page of the campaign's volumes, with "load more" for the rest.
 3. **Problems**, only when there is one: why the warm-up failed, each
    failed volume as `id: sentence` linked to its run log, and the latest
    page error when its volume is not on screen. Past three sentences the
@@ -172,10 +172,11 @@ warm-up" (`missing`). A `failed` warm-up also colours the card as failed,
 since no pod can start without it; its reason is in the chip's title.
 `missing` colours the card only while the campaign has not succeeded.
 
-**Paging and polling.** The list re-fetches every 60 s. Each card fetches
-its own detail, re-fetching every open page on each poll. A finished,
-unknown or reaped campaign is read once, when its card is first on screen,
-and not polled again. A failed poll puts a banner over the last list, and
+**Paging and polling.** The list re-fetches every 60 s. An open card fetches
+its own detail, re-fetching every open page on each poll. A folded card
+fetches nothing, except a succeeded campaign's, which is read once for
+whether it lost pages. A finished, unknown or reaped campaign is read once,
+when its card is first on screen or opened, and not polled again. A failed poll puts a banner over the last list, and
 backs off. Older reaped campaigns wait behind "show older campaigns", 20 at
 a time.
 
