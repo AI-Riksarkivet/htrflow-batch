@@ -3653,3 +3653,143 @@ describe("the header line holds its shape while it fills in", () => {
     ]);
   });
 });
+
+// A card left open last time opens with the page, before its detail: it
+// was two totals rows and a footer line, and grew by every volume row, the
+// models line and a "load more" that then vanished when the detail landed,
+// pushing every card under it down (the shift script, three cards open).
+// What the list row already says -- how many volumes -- is drawn at once, a
+// row each, so the detail fills rows in rather than adding them.
+describe("an open card holds the detail's place before it lands", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stubStorage(true);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function held(body: Record<string, unknown>): () => Promise<void> {
+    let answer!: () => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            answer = () =>
+              resolve(jsonResponse({ ...detail0, failures: [], ...body }));
+          }),
+      ),
+    );
+    return async () => {
+      answer();
+      await vi.advanceTimersByTimeAsync(0);
+    };
+  }
+
+  const placeholders = (container: HTMLElement) =>
+    container.querySelectorAll(".row.volume.placeholder");
+
+  test("a row per volume the list names, hidden from a screen reader, then the real ones", async () => {
+    const land = held({
+      volumes: [
+        volumeDone,
+        volumeFailed,
+        { ...volumeDone, index: 2, id: "vol2" },
+      ],
+    });
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(placeholders(container)).toHaveLength(3);
+    for (const row of placeholders(container))
+      expect(row).toHaveAttribute("aria-hidden", "true");
+    // One active and one failed volume in the list row: two of the three
+    // rows will say their stage on a second line, and hold room for it.
+    expect(container.querySelectorAll(".placeholder .vprogress")).toHaveLength(
+      2,
+    );
+    // And the failed one why, under its row.
+    expect(container.querySelectorAll(".placeholder .row-note")).toHaveLength(
+      1,
+    );
+    expect(screen.getAllByRole("row")).toHaveLength(1); // the header only
+    await land();
+    expect(placeholders(container)).toHaveLength(0);
+    expect(screen.getAllByRole("row")).toHaveLength(4);
+  });
+
+  test("no more placeholders than the first page holds, and the load-more is there already", async () => {
+    const many: JobSummary = { ...job, counts: { ...job.counts, total: 250 } };
+    const land = held({
+      volumes: Array.from({ length: 200 }, (_, i) => ({
+        ...volumeDone,
+        index: i,
+        id: `vol${i}`,
+      })),
+    });
+    const { container } = render(CampaignCard, { job: many });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(placeholders(container)).toHaveLength(200);
+    const more = screen.getByRole("button", { name: /load more/ });
+    expect(more).toBeDisabled();
+    await land();
+    expect(screen.getByRole("button", { name: /load more/ })).toBeEnabled();
+  });
+
+  test("all on the first page: no load-more before or after", async () => {
+    const land = held({ volumes: [volumeDone, volumeFailed] });
+    render(CampaignCard, {
+      job: { ...job, counts: { ...job.counts, total: 2 } },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.queryByRole("button", { name: /load more/ })).toBeNull();
+    await land();
+    expect(screen.queryByRole("button", { name: /load more/ })).toBeNull();
+  });
+
+  test("a campaign of one volume has no totals before its row lands either", async () => {
+    const one: JobSummary = {
+      ...job,
+      phase: "Succeeded",
+      counts: { total: 1, active: 0, done: 1, failed: 0 },
+    };
+    const land = held({ ...one, volumes: [volumeDone] });
+    const { container } = render(CampaignCard, { job: one });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(container.querySelectorAll(".row.totals")).toHaveLength(0);
+    expect(placeholders(container)).toHaveLength(1);
+    await land();
+    expect(container.querySelectorAll(".row.totals")).toHaveLength(0);
+  });
+
+  test("the models line's place is held until the pipeline is read", async () => {
+    const land = held({
+      volumes: [],
+      pipelineYaml:
+        "steps:\n- step: Segmentation\n  settings:\n    model_settings:\n      model: org/seg\n",
+    });
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    const pending = container.querySelector(".card-meta .models-pending");
+    expect(pending).not.toBeNull();
+    expect(pending).toHaveAttribute("aria-hidden", "true");
+    await land();
+    expect(container.querySelector(".card-meta .models-pending")).toBeNull();
+    expect(container.querySelector(".card-meta .models")).toHaveTextContent(
+      "Models: seg unpinned",
+    );
+  });
+
+  test("a read that failed leaves no placeholders to wait for", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse("gone", 503)),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(placeholders(container)).toHaveLength(0);
+    expect(container.querySelector(".models-pending")).toBeNull();
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+  });
+});
