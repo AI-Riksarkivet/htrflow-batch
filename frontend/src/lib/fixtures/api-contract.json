@@ -28,6 +28,7 @@
               "page": "0044"
             },
             "lastPage": "0137",
+            "quality": null,
             "stage": "stream",
             "total": 638,
             "updatedAt": "2026-09-14T07:31:00+00:00",
@@ -67,6 +68,7 @@
             "page": "0044"
           },
           "lastPage": "0137",
+          "quality": null,
           "stage": "stream",
           "total": 638,
           "updatedAt": "2026-09-14T07:31:00+00:00",
@@ -91,6 +93,21 @@
         "Export"
       ],
       "pipelineYaml": "steps:\n- step: Segmentation\n- step: Export\n",
+      "quality": {
+        "lowest": [
+          {
+            "canvas": 1,
+            "iiifUrl": "https://results.example.org/htr-test/demo-v1/vol0/iiif.json",
+            "page": "0002",
+            "quality": 0.4,
+            "volume": "vol0"
+          }
+        ],
+        "mean": 0.8,
+        "min": 0.4,
+        "scored": 3,
+        "volumes": 1
+      },
       "resultsBase": "https://results.example.org/htr-test/demo-v1",
       "startedAt": "2026-09-14T07:01:00Z",
       "suspended": false,
@@ -112,6 +129,20 @@
               "page": "0044"
             },
             "lastPage": "0137",
+            "quality": {
+              "lowest": [
+                {
+                  "canvas": 1,
+                  "page": "0002",
+                  "quality": 0.4
+                }
+              ],
+              "mean": 0.8,
+              "min": 0.4,
+              "model": "org/qp",
+              "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "scored": 3
+            },
             "stage": "stream",
             "total": 638,
             "updatedAt": "2026-09-14T07:31:00+00:00",
@@ -137,6 +168,7 @@
               "page": "0044"
             },
             "lastPage": "0137",
+            "quality": null,
             "stage": "stream",
             "total": 638,
             "updatedAt": "2026-09-14T07:31:00+00:00",
@@ -162,6 +194,7 @@
               "page": "0044"
             },
             "lastPage": "0137",
+            "quality": null,
             "stage": "stream",
             "total": 638,
             "updatedAt": "2026-09-14T07:31:00+00:00",
@@ -208,6 +241,7 @@
               "page": "0044"
             },
             "lastPage": "0137",
+            "quality": null,
             "stage": "stream",
             "total": 638,
             "updatedAt": "2026-09-14T07:31:00+00:00",
@@ -247,6 +281,7 @@
             "page": "0044"
           },
           "lastPage": "0137",
+          "quality": null,
           "stage": "stream",
           "total": 638,
           "updatedAt": "2026-09-14T07:31:00+00:00",
@@ -271,6 +306,7 @@
         "Export"
       ],
       "pipelineYaml": "steps:\n- step: Segmentation\n- step: Export\n",
+      "quality": null,
       "resultsBase": "https://results.example.org/htr-test/demo-v0",
       "startedAt": "2026-09-01T08:00:00Z",
       "suspended": false,
@@ -292,6 +328,7 @@
               "page": "0044"
             },
             "lastPage": "0137",
+            "quality": null,
             "stage": "stream",
             "total": 638,
             "updatedAt": "2026-09-14T07:31:00+00:00",
@@ -317,6 +354,7 @@
               "page": "0044"
             },
             "lastPage": "0137",
+            "quality": null,
             "stage": "stream",
             "total": 638,
             "updatedAt": "2026-09-14T07:31:00+00:00",
@@ -342,6 +380,7 @@
               "page": "0044"
             },
             "lastPage": "0137",
+            "quality": null,
             "stage": "stream",
             "total": 638,
             "updatedAt": "2026-09-14T07:31:00+00:00",
@@ -388,6 +427,7 @@
               "page": "0044"
             },
             "lastPage": "0137",
+            "quality": null,
             "stage": "stream",
             "total": 638,
             "updatedAt": "2026-09-14T07:31:00+00:00",
@@ -427,6 +467,7 @@
         "Export"
       ],
       "pipelineYaml": "steps:\n- step: Segmentation\n- step: Export\n",
+      "quality": null,
       "resultsBase": "https://results.example.org/htr-test/demo-v2",
       "startedAt": "2026-09-01T08:00:00Z",
       "suspended": false,
@@ -448,6 +489,7 @@
               "page": "0044"
             },
             "lastPage": "0137",
+            "quality": null,
             "stage": "stream",
             "total": 638,
             "updatedAt": "2026-09-14T07:31:00+00:00",
@@ -473,6 +515,7 @@
               "page": "0044"
             },
             "lastPage": "0137",
+            "quality": null,
             "stage": "stream",
             "total": 638,
             "updatedAt": "2026-09-14T07:31:00+00:00",
@@ -498,6 +541,7 @@
               "page": "0044"
             },
             "lastPage": "0137",
+            "quality": null,
             "stage": "stream",
             "total": 638,
             "updatedAt": "2026-09-14T07:31:00+00:00",

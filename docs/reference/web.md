@@ -70,6 +70,7 @@ A `JobDetail` is the summary plus:
 | `pagesDone`, `pagesTotal`, `pagesFailed`, `errors` | Page counts summed over every volume whose progress has been read. |
 | `lastError` | The most recent page failure among them, with its `volume` and that volume's `logUrl`. |
 | `pagesCoverage` | `{counted, of}`: how many run volumes those sums cover. It reaches `of` over a few polls. |
+| `quality` | The campaign's predicted quality, summed over the same volumes, or `null` when none of them scored a page. See below. |
 
 Everything but `volumes` is computed over every volume, not only the
 requested page. A campaign of thousands shows its first 200 rows, and the
@@ -94,12 +95,31 @@ A pod that left no message reads its own reason (`Evicted`), else the
 container's (`OOMKilled (exit code 137)`).
 
 **`progress`** is `{done, total, failed, lastPage, stage, updatedAt,
-ageSeconds, lastError, errors, viewerPublished}`, read from the volume's
-`progress.json` (or, for an older run, its `manifest.json` counts). The
-fields are described in
+ageSeconds, lastError, errors, viewerPublished, quality}`, read from the
+volume's `progress.json` (or, for an older run, its `manifest.json` counts).
+The fields are described in
 [S3 Layout](s3-layout.md#progressjson-live-and-never-a-completion-marker).
 `ageSeconds` is computed by the API from its own clock, so a reader's clock
 skew never shows "0 s ago".
+
+**`progress.quality`** is `null` when the volume has not scored a page, else
+`{mean, min, scored, model, revision, lowest}` — the wrapper's own block
+(docs: [S3 Layout](s3-layout.md#manifestjson-completion-marker)), sanitised: a value outside
+what the wrapper could have written (a mean out of `[0, 1]`, a negative
+`scored`, a string where a number belongs) drops the whole block rather than
+show a wrong one, and `lowest` is capped at 5 entries, each
+`{page, quality, canvas}` (`canvas` is `null` when the wrapper's was not a
+valid index).
+
+**The detail's own `quality`** (next to `pagesDone`) is `null` when no read
+volume scored a page, else `{mean, min, scored, volumes, lowest}`: `mean` is
+every scored volume's mean weighted by its `scored` pages, `min` is the
+lowest of every volume's `min`, `scored` is the pages summed, and `volumes`
+is how many volumes contributed — the card says so when that is fewer than
+the campaign's total. `lowest` is the worst 5 pages across every volume that
+scored one, each `{volume, page, quality, canvas, iiifUrl}` — `iiifUrl` is
+that volume's own, so the page links straight to the viewer without looking
+the volume up.
 
 - A `pending` volume is never read. A bucket that does not answer gives
   `null`, never a 500.

@@ -159,12 +159,29 @@ WRAPPER_PROGRESS = {
     "updated_at": "2026-09-14T07:31:00+00:00",
 }
 
+#: vol0's own quality block (the wrapper's shape, docs: reference/s3-layout)
+#: -- one scored volume is enough for the schema to see a populated block
+#: rather than only the null every other volume answers with.
+WRAPPER_QUALITY = {
+    "target": "bow_f1",
+    "model": "org/qp",
+    "revision": "a" * 40,
+    "mean": 0.8,
+    "min": 0.4,
+    "scored": 3,
+    "lowest": [{"page": "0002", "quality": 0.4, "canvas": 1}],
+}
+
 #: The API's clock when it read that file: 12 s after it was written.
 #: Frozen, so the fixture's ageSeconds is the same on every run.
 NOW = 1789371072.0  # 2026-09-14T07:31:12+00:00
 
 
-def _bucket(_request: httpx.Request) -> httpx.Response:
+def _bucket(request: httpx.Request) -> httpx.Response:
+    if request.url.path.startswith("/htr-results/htr-test/demo-v1/vol0/"):
+        return httpx.Response(
+            200, json={**WRAPPER_PROGRESS, "quality": WRAPPER_QUALITY}
+        )
     return httpx.Response(200, json=WRAPPER_PROGRESS)
 
 
