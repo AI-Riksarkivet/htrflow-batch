@@ -94,6 +94,7 @@ own publish writes both again at the end.
 | `max_image_width`, `bytes_fetched`, `wall_seconds`, `gpu_stall_seconds`, `pages_per_second` | run metrics |
 | `viewer_url` | the public `iiif.json` URL |
 | `quality` | the volume's predicted-quality summary, present only with at least one scored page |
+| `image_cache` | `{"bucket", "hits", "misses", "stored"}`, present only when the run had an image cache bucket configured (see "Image cache bucket" below) |
 
 `quality`'s fields:
 
@@ -104,6 +105,26 @@ own publish writes both again at the end.
 | `mean`, `min` | across every scored page |
 | `scored` | how many pages carry a score — at most `pages`, since not every page need have one |
 | `lowest` | the volume's worst-scoring pages, each `{"page", "quality", "canvas"}` — `canvas` is that page's index into `iiif.json`'s items, so the lowest page links straight to its place in the viewer, or `null` when the page is not in `iiif.json` (a page whose ALTO has no WIDTH/HEIGHT) |
+
+## Image cache bucket
+
+An optional, separate bucket (`IMAGE_CACHE_BUCKET`): when set, each page's
+source image is looked for there before it is downloaded, and stored there
+after a download, so a volume run again — under any pipeline or campaign —
+needs nothing from the IIIF server. Its key carries no `S3_PREFIX`, no
+pipeline id and no image width:
+
+```
+<volume>/<volume>_<page:05d>.jpg
+```
+
+`<page>` is the page's index in the source manifest (1-based), zero-padded
+to five digits — a volume with any page past 99999 is never cached. The
+cache is never a correctness dependency: a miss, a cache error or a bad
+cached object always falls back to the ordinary download, and nothing it
+does can fail a page. This bucket is **private** — it is never covered by
+the results bucket's public-read policy and never linked from the viewer or
+the read API.
 
 ## `progress.json` (live, and never a completion marker)
 
