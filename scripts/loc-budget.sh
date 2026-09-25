@@ -361,7 +361,18 @@ fail=0
 # publish.py +5: `image_cache` on run/run_manifest, present in manifest.json
 # only when the cache ran. Most of it is the two lines of docstring on each
 # saying why a hit is not a download and why the count still has to add up.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 4661
+# 4661 -> 4732 (image cache, final review): imagecache.py +65 -- source_identity
+# (the page's URL with its IIIF size put to max, digested without credentials)
+# written as object metadata on a PUT and compared on a GET, so a changed or
+# reused source is a miss rather than the old image; for_volume refusing the
+# public-read results bucket in one sentence; get split into a never-raising
+# wrapper and _lookup, and a catch-all on put, each logged once. fetch.py +2:
+# _SIZED also reads `/full/max/`, and _unscaled still has no fallback for it.
+# store.py +3: the results client's pool sized for the download threads plus
+# the uploader. main.py +1: the results bucket passed to for_volume. Most of
+# it is the docstrings saying why the object must name its source and why
+# nothing here may raise into a page.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 4732
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
@@ -788,7 +799,7 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 4661
 # a feature group the image cannot run, comes before text recognition or is
 # there twice -- each with its one-line reason, and the comment saying why a
 # pickled model comes only from a pinned repo.
-# 5025 -> 5060 (image cache, Task 3): models.py +26 -- ImageCacheSettings and
+# 5025 -> 5060 (image cache, Task 3): models.py +28 -- ImageCacheSettings and
 # its bucket-name check (frozen, extra="forbid", the S3 bucket-name regex and
 # its sentence), and the `image_cache` field on ConverterConfig with the
 # comment saying absent is off. render.py +7: appended after `dynamic_env`,
