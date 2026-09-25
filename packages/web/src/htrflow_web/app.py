@@ -347,7 +347,7 @@ class NoCluster:
         )
 
     list_jobs = list_warmups = get_job = get_configmap = list_pods = _no_cluster
-    list_configmaps = apply_configmap = _no_cluster
+    list_configmaps = list_pipelines = apply_configmap = _no_cluster
 
 
 def create_app(
@@ -508,6 +508,26 @@ def create_app(
                 records[ns, stem] = cm
         return records, statuses
 
+    def _scoring_pipelines() -> set[tuple[str, str]]:
+        """Each pipeline that scores page quality, by (namespace, pipeline
+        id): one list call per namespace for the whole page, rather than a
+        get per campaign row."""
+        return {
+            (
+                (cm.get("metadata") or {}).get("namespace", ""),
+                projection.pipeline_of(cm),
+            )
+            for cm in reader.list_pipelines()
+            if projection.quality_prediction(cm)
+        }
+
+    def _scores(obj: dict, scoring: set[tuple[str, str]]) -> bool:
+        """Whether a campaign's Job or record names a pipeline in
+        ``scoring``, in its own namespace."""
+        namespace = (obj.get("metadata") or {}).get("namespace", "")
+        pipeline = projection.pipeline_of(obj)
+        return bool(pipeline) and (namespace, pipeline) in scoring
+
     @app.api_route("/api/v1/jobs", methods=GET_HEAD)
     def list_jobs(
         response: Response,
@@ -522,10 +542,14 @@ def create_app(
             reverse=True,
         )
         warmup_jobs = reader.list_warmups()
+        scoring = _scoring_pipelines()
         reasons: dict[tuple[str, str], dict | None] = {}
         rows = [
             projection.summarize(
-                job, reader.cfg, _warmup_status(job, warmup_jobs, reasons)
+                job,
+                reader.cfg,
+                _warmup_status(job, warmup_jobs, reasons),
+                _scores(job, scoring),
             )
             for job in jobs
         ]
@@ -545,7 +569,9 @@ def create_app(
             status = statuses.get(key)
             if key in live or status is None:
                 continue
-            gone = projection.record_summary(record, status, reader.cfg, {})
+            gone = projection.record_summary(
+                record, status, reader.cfg, {}, _scores(record, scoring)
+            )
             if gone is not None:
                 gone_rows.append((gone, record))
         # Newest ending first: a long campaign created weeks ago and reaped

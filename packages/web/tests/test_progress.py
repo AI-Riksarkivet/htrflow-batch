@@ -15,7 +15,12 @@ import httpx
 import pytest
 
 from htrflow_web import progress as progress_mod
-from htrflow_web.progress import ProgressReader
+from htrflow_web.progress import (
+    ProgressReader,
+    _from_manifest,
+    _from_progress,
+    _quality,
+)
 
 BASE = "https://results.example.org/htr-test/demo-v1"
 
@@ -81,6 +86,7 @@ def test_a_running_volume_reads_progress_json():
         "lastError": {"page": "0044", "error": "the worker thread died"},
         "errors": 3,
         "viewerPublished": True,
+        "quality": None,
     }
     assert asked == [f"{BASE}/vol0/progress.json"]
 
@@ -108,6 +114,7 @@ def test_a_volume_finished_by_an_older_wrapper_falls_back_to_the_manifest():
         "lastError": None,
         "errors": 0,
         "viewerPublished": True,
+        "quality": None,
     }
     assert asked[-1].endswith("manifest.json")
 
@@ -464,3 +471,93 @@ def test_two_requests_evicting_at_once_do_not_trip_over_each_other(monkeypatch):
     r._cache.thread.join()
     assert errors == []
     assert len(r._cache) == 2
+
+
+# --- the wrapper's quality block, sanitised (Task 6) -----------------------
+
+GOOD = {
+    "target": "bow_f1",
+    "model": "org/qp",
+    "revision": "a" * 40,
+    "mean": 0.8,
+    "min": 0.4,
+    "scored": 3,
+    "lowest": [{"page": "0002", "quality": 0.4, "canvas": 1}],
+}
+
+
+def test_a_quality_block_passes_through():
+    assert _quality(GOOD) == {
+        "mean": 0.8,
+        "min": 0.4,
+        "scored": 3,
+        "model": "org/qp",
+        "revision": "a" * 40,
+        "lowest": [{"page": "0002", "quality": 0.4, "canvas": 1}],
+    }
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        None,
+        "0.8",
+        [],
+        {},
+        {**GOOD, "mean": 7},
+        {**GOOD, "mean": True},
+        {**GOOD, "scored": -1},
+        {**GOOD, "min": float("nan")},
+        {**GOOD, "scored": 10**400},
+        {**GOOD, "scored": progress_mod.MAX_SCORED + 1},
+    ],
+)
+def test_a_malformed_quality_block_is_none(bad):
+    assert _quality(bad) is None
+
+
+def test_lowest_is_clipped_and_bad_entries_dropped():
+    many = [{"page": f"{i:04d}", "quality": 0.1, "canvas": i} for i in range(10_000)]
+    block = _quality({**GOOD, "lowest": [{"page": 3}, *many]})
+    assert len(block["lowest"]) == 5
+    assert block["lowest"][0]["page"] == "0000"
+
+
+def test_more_pages_scored_than_the_volume_has_is_no_quality():
+    """``scored`` counts pages of this volume: more than it has is not a
+    block of ours, and would outweigh every other volume in the campaign's
+    mean. Exactly as many is fine."""
+    doc = {"pages_total": 2, "pages_done": 2, "quality": GOOD}
+    assert _from_progress(doc, 0.0)["quality"] is None
+    assert _from_progress({**doc, "pages_total": 3}, 0.0)["quality"] is not None
+    manifest = {"pages": 2, "results": {"0001": {"status": "ok"}}, "quality": GOOD}
+    assert _from_manifest(manifest, 0.0)["quality"] is None
+    assert _from_manifest({**manifest, "pages": 3}, 0.0)["quality"] is not None
+
+
+def test_a_page_named_twice_in_lowest_is_kept_once():
+    """The frontend keys its list by page: a duplicate would throw there.
+    The first entry, the lowest the wrapper ranked, is the one kept, and
+    the duplicate does not take one of the five places."""
+    dup = [
+        {"page": "0002", "quality": 0.4, "canvas": 1},
+        {"page": "0002", "quality": 0.5, "canvas": 1},
+        *({"page": f"{i:04d}", "quality": 0.6, "canvas": i} for i in range(3, 8)),
+    ]
+    block = _quality({**GOOD, "lowest": dup})
+    assert [e["page"] for e in block["lowest"]] == [
+        "0002",
+        "0003",
+        "0004",
+        "0005",
+        "0006",
+    ]
+    assert block["lowest"][0]["quality"] == 0.4
+
+
+def test_progress_and_manifest_both_carry_it():
+    doc = {"pages_total": 3, "pages_done": 3, "quality": GOOD}
+    assert _from_progress(doc, 0.0)["quality"]["mean"] == 0.8
+    assert _from_progress({"pages_total": 3}, 0.0)["quality"] is None
+    manifest = {"pages": 3, "results": {"0001": {"status": "ok"}}, "quality": GOOD}
+    assert _from_manifest(manifest, 0.0)["quality"]["scored"] == 3

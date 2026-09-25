@@ -336,7 +336,17 @@ fail=0
 # that had only its number -- the info.json cap, five upload and three
 # rebuild failures in a row, the S3 client's timeouts and retries. Comments
 # that state WHY, which this budget is not meant to squeeze.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 4212
+# 4212 -> 4409 (quality prediction): htrflow's QualityPrediction step writes a
+# page score as ALTO Page/@PC. quality.py (+88) is the one place that knows its
+# shape -- parse PC, name the QP model, build the volume block. publish +72:
+# a resumed page's score is read back with its size, per-page and volume
+# quality in manifest.json, and one block built once for iiif.json and
+# manifest.json (the Published result and the unset-summary sentinel that keep
+# them from disagreeing). viewer +19: canvas and manifest metadata. store,
+# progress, main +18: the score kept off the upload parse, and the final
+# progress.json carrying the block. Most of it is the comment saying why the
+# score comes from the file and never fails a page.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 4409
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
@@ -758,7 +768,12 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 4212
 # fails. models.py +39: every two flavors differ on a key both name (Kueue
 # compares only the keys a flavor names), default_size and size_of, the
 # workdir floor and the memory margin with their sentences.
-check converter "$(count packages/converter/src -name '*.py')" 4915
+# 4915 -> 5025 (quality prediction): models.py refuses a QualityPrediction
+# step that is not a Hub repo pinned to a commit with plain file names, names
+# a feature group the image cannot run, comes before text recognition or is
+# there twice -- each with its one-line reason, and the comment saying why a
+# pickled model comes only from a pinned repo.
+check converter "$(count packages/converter/src -name '*.py')" 5025
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
@@ -1024,7 +1039,15 @@ check converter "$(count packages/converter/src -name '*.py')" 4915
 # connect-src and strict document policies decided from the file served
 # (F-6, F-9), the browser URL rule (F-7), the cache lock (F-8), identity
 # encoding for progress reads (S-10) and html.parser for the viewer's hashes.
-check web       "$(count packages/web/src -name '*.py')" 2583
+# 2583 -> 2797 (quality prediction): progress.py (+72) sanitises a volume's
+# quality block off the public bucket -- bounds, a page cap, lowest clipped and
+# de-duplicated -- since a hostile file must be dropped, never a 500.
+# projection +90: the campaign mean weighted by scored pages and its lowest
+# pages, and whether a pipeline scores quality, with a size cap and a parse
+# that cannot raise because it runs on every list request. app + kube +52: the
+# list reads the label-selected pipeline ConfigMaps, one call per namespace,
+# so a scoring campaign's column is there from the first paint.
+check web       "$(count packages/web/src -name '*.py')" 2797
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
@@ -1390,7 +1413,14 @@ check web       "$(count packages/web/src -name '*.py')" 2583
 # +12: a card falling into trouble placed afresh, `outOfOrder`. reasons.ts
 # +12: the retry sentence from the next try's time. test-setup.ts +9: the
 # ResizeObserver stand-in jsdom lacks (test support, counted by path).
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5724
+# 5724 -> 5984 (quality prediction): api.ts +56, the volume and campaign
+# quality schemas, each caught to null so a bad block never refuses a
+# campaign. CampaignCard +141: the quality track at both widths, the campaign
+# mean, the lowest-pages line held from first paint, and why each is laid out
+# so nothing moves when the detail lands. PagesTable +34 and quality.ts +23:
+# the sortable column and its formatting. run.ts +6: a bad score is dropped,
+# not a blank run viewer.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5984
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

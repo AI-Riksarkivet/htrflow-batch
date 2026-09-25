@@ -264,6 +264,7 @@ describe("the campaign and progress lines", () => {
             lastError: null,
             errors: 0,
             viewerPublished: false,
+            quality: null,
           };
           const said = describeProgress(progress, state);
           const moving = state === "active" || state === "unknown";

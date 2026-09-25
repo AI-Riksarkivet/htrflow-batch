@@ -2,13 +2,17 @@
   // The full per-page table, rendered a slice at a time: a 480-row table is
   // nobody's first question, but it stays available for a hunt.
   import type { PageStat } from "$lib/run.js";
+  import { formatQuality, sortByQuality } from "$lib/quality.js";
 
   let { pages, pageSize = 100 }: { pages: PageStat[]; pageSize?: number } =
     $props();
 
   let offset = $state(0);
+  let byQuality = $state(false);
+  const scored = $derived(pages.some((p) => p.quality !== undefined));
+  const ordered = $derived(byQuality ? sortByQuality(pages) : pages);
   const last = $derived(Math.min(offset + pageSize, pages.length));
-  const slice = $derived(pages.slice(offset, last));
+  const slice = $derived(ordered.slice(offset, last));
 
   let downloadError = $state<string | null>(null);
 
@@ -65,12 +69,30 @@
 
 <div class="table-scroll">
   <table class="pages">
-    <caption class="sr-only">Per-page results: id, status, seconds</caption>
+    <caption class="sr-only"
+      >Per-page results: id, status, seconds{scored ? ", quality" : ""}</caption
+    >
     <thead>
       <tr>
         <th scope="col">page</th>
         <th scope="col">status</th>
         <th scope="col" class="num">seconds</th>
+        {#if scored}
+          <th
+            scope="col"
+            class="num"
+            aria-sort={byQuality ? "ascending" : "none"}
+          >
+            <button
+              type="button"
+              class="sort"
+              onclick={() => {
+                byQuality = !byQuality;
+                offset = 0;
+              }}>quality{byQuality ? " ▲" : ""}</button
+            >
+          </th>
+        {/if}
         <th scope="col">error</th>
         <th scope="col">alto</th>
       </tr>
@@ -95,6 +117,7 @@
             <span class="chip {r.status}">{r.status}</span>
           </td>
           <td class="num">{r.seconds.toFixed(1)}</td>
+          {#if scored}<td class="num">{formatQuality(r.quality)}</td>{/if}
           <td class="err">{r.error ?? ""}</td>
           <td class="alto">
             {#if alto !== undefined}
@@ -164,6 +187,17 @@
   table.pages td.num {
     text-align: right;
     font-variant-numeric: tabular-nums;
+  }
+
+  .sort {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    text-transform: inherit;
+    letter-spacing: inherit;
   }
 
   table.pages td {

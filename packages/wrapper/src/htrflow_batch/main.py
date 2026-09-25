@@ -330,11 +330,12 @@ def _main(
             )
         uploaded = _verify(store, pages, stats, state, cfg.last_attempt)
         state.stage = "publish"
-        wrote_iiif = publish.run(
+        published = publish.run(
             cfg, store, source, source_url, pages, stats, uploaded, t_start, nbytes
         )
-        if wrote_iiif:
+        if published.wrote_iiif:
             tracker.viewer_published = True
+        tracker.quality = published.quality
         # After manifest.json, which stays the last thing written and the sole
         # completion marker: this only tells a reader the run is over.
         state.stage = "done"

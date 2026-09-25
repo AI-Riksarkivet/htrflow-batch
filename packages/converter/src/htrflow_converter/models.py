@@ -669,6 +669,109 @@ def _flat_text(steps: list) -> str | None:
     )
 
 
+#: htrflow's QualityPrediction step (htrflow_qp, to be merged into htrflow):
+#: an XGBoost model scores the page from features of the tree htrflow built.
+#: Its model is a joblib pickle -- loading it runs code -- so it comes from a
+#: Hub repo at a commit, like every other model here, never from a path.
+_QP_STEP = "qualityprediction"
+_HUB_REPO_RE = re.compile(r"^[A-Za-z0-9][\w.-]*/[\w.-]+\Z")
+_COMMIT_RE = re.compile(r"^[0-9a-f]{40}\Z")
+#: The groups quality_prediction.inference reads off htrflow's tree
+#: (JSON_FEATURE_GROUPS) -- all this image can compute.
+_QP_GROUPS = ("segmentation", "layout", "htr_confidence", "text")
+#: The rest of the package's PageFeatureExtractor.FEATURE_GROUPS: they need
+#: the page image, a DiT model or a language model this image does not run.
+_QP_GROUPS_NOT_RUN = frozenset(
+    {
+        "image",
+        "dit",
+        "regionization",
+        "ngram",
+        "lm",
+        "lexicon",
+        "interaction",
+        "metadata",
+    }
+)
+_TEXT_RECOGNITION = "textrecognition"
+
+
+def _plain_file(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and value not in ("", ".", "..")
+        and "/" not in value
+        and "\\" not in value
+    )
+
+
+def _quality_step_problem(steps: list) -> str | None:
+    """The sentence refusing a QualityPrediction step this system cannot run
+    as written; ``None`` when there is none or it is fine."""
+    names = [
+        str(s.get("step", "")).lower() if isinstance(s, dict) else "" for s in steps
+    ]
+    at = [i for i, n in enumerate(names) if n == _QP_STEP]
+    if not at:
+        return None
+    if len(at) > 1:
+        return (
+            f"has {len(at)} QualityPrediction steps (steps "
+            f"{', '.join(str(i + 1) for i in at)}) — a page gets one predicted "
+            "quality; keep one QualityPrediction step"
+        )
+    i = at[0]
+    if _TEXT_RECOGNITION not in names[:i]:
+        return (
+            f"runs QualityPrediction (step {i + 1}) before any text is read — "
+            "it scores the transcription, so put it after the TextRecognition step"
+        )
+    settings = steps[i].get("settings")
+    ms = settings.get("model_settings") if isinstance(settings, dict) else None
+    ms = ms if isinstance(ms, dict) else {}
+    where = f"QualityPrediction (step {i + 1})"
+    if not isinstance(ms.get("model"), str) or not _HUB_REPO_RE.match(ms["model"]):
+        return (
+            f"{where}: model_settings.model must be a Hugging Face Hub repo id "
+            f"(<org>/<repo>), got {shown(ms.get('model'))} — the model is a "
+            "pickle, so it is loaded from a pinned Hub commit, never a path"
+        )
+    if not isinstance(ms.get("revision"), str) or not _COMMIT_RE.match(ms["revision"]):
+        return (
+            f"{where}: model_settings.revision must be the 40-hex commit of "
+            f"{ms['model']}, got {shown(ms.get('revision'))}"
+        )
+    for key in ("model_file", "bin_config_file"):
+        if not _plain_file(ms.get(key)):
+            return (
+                f"{where}: model_settings.{key} must be a plain file name in "
+                f"{ms['model']}, got {shown(ms.get(key))}"
+            )
+    groups = settings.get("feature_groups") if isinstance(settings, dict) else None
+    if groups is not None:
+        if (
+            not isinstance(groups, list)
+            or not groups
+            or not all(isinstance(g, str) for g in groups)
+        ):
+            return f"{where}: feature_groups must be a non-empty list of group names"
+        not_run = [g for g in groups if g in _QP_GROUPS_NOT_RUN]
+        unknown = [
+            g for g in groups if g not in _QP_GROUPS and g not in _QP_GROUPS_NOT_RUN
+        ]
+        if unknown:
+            return (
+                f"{where}: unknown feature group {', '.join(map(str, unknown))} — "
+                f"use {', '.join(_QP_GROUPS)}"
+            )
+        if not_run:
+            return (
+                f"{where}: this image cannot run feature group "
+                f"{', '.join(not_run)} — it computes {', '.join(_QP_GROUPS)} only"
+            )
+    return None
+
+
 class Pipeline(BaseModel):
     #: Unknown keys rejected: a stale `model_revision:` (removed B63 Task 22
     #: fix round 2 -- nothing read it) gets the same one-line sentence as any
@@ -783,6 +886,13 @@ class Pipeline(BaseModel):
     def _check_text_reaches_export(cls, v: list[dict], info: ValidationInfo) -> list:
         # audit 0923: a flat pipeline published every page empty and Succeeded.
         if not _as_recorded(info) and (why := _flat_text(v)):
+            raise ValueError(why)
+        return v
+
+    @field_validator("steps")
+    @classmethod
+    def _check_quality_step(cls, v: list[dict], info: ValidationInfo) -> list:
+        if not _as_recorded(info) and (why := _quality_step_problem(v)):
             raise ValueError(why)
         return v
 

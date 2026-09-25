@@ -180,6 +180,24 @@ The campaign browser is the platform's front door, at the web front's root:
 - **log** opens the run viewer at `/log`. It follows a running volume's log
   live, and shows the per-page summary once the volume finishes.
 
+### Predicted page quality
+
+A campaign whose pipeline has a
+[`QualityPrediction` step](../reference/campaign-yaml.md#predicted-page-quality)
+scores each page from 0 to 1. Its card shows the scores; a campaign without
+the step shows none of this.
+
+- A **quality** column gives each volume's mean page score, and the pages
+  row gives the campaign's mean, weighted by the pages scored.
+- A **lowest predicted quality** line names the lowest-scoring pages across
+  the campaign, each a link that opens the viewer at that page. When only
+  some volumes have scores yet, the line says how many it covers.
+- The scores carry no colour and no threshold: what counts as poor depends
+  on the material.
+
+The scores come from each volume's
+[`manifest.json` and `progress.json`](../reference/s3-layout.md#manifestjson-completion-marker).
+
 The browser must reach both the web front and the results base URL. See
 [Exposing the web front](viewing.md#exposing-the-web-front).
 

@@ -184,7 +184,10 @@ def _selects(selector: str, labels: dict) -> bool:
     an object carrying ``labels`` -- the subset of the grammar this adapter
     sends, evaluated the way the API server does."""
     for term in selector.split(","):
-        if "!=" in term:
+        if term.startswith("!"):
+            if term[1:] in labels:
+                return False
+        elif "!=" in term:
             key, value = term.split("!=", 1)
             if labels.get(key) == value:
                 return False
@@ -296,15 +299,45 @@ def test_the_status_record_is_listed_with_its_data(reader: Reader):
     assert all(c["accept"] != PARTIAL_METADATA for c in statuses)
 
 
+def test_the_pipelines_are_listed_whole_one_call_per_namespace(reader: Reader):
+    """The list route reads each pipeline's YAML (does it score page
+    quality?), so these come with their `data`: one short YAML each."""
+    reader.answer["GET"] = {"items": [{"metadata": {"name": "htr-pipeline-a"}}]}
+    assert len(reader.list_pipelines()) == 2
+    assert [c["path"] for c in reader.calls] == [
+        "/api/v1/namespaces/htr-a/configmaps",
+        "/api/v1/namespaces/htr-b/configmaps",
+    ]
+    assert all(c["accept"] != PARTIAL_METADATA for c in reader.calls)
+
+
+def test_the_pipeline_list_selects_the_pipelines_and_nothing_else(reader: Reader):
+    """The campaign record carries the pipeline label too, and its `data` is
+    the campaign's whole volume list: the selector has to keep it out, and
+    the status ConfigMap beside it."""
+    reader.answer["GET"] = {"items": []}
+    reader.list_pipelines()
+    (selector,) = {c["query"]["labelSelector"] for c in reader.calls}
+    record = _converter_labels("configmap.yaml")
+    status = {**record, "htrflow.riksarkivet.se/kind": "status"}
+    pipeline = _converter_labels("pipeline-configmap.yaml")
+    assert [_selects(selector, x) for x in (record, status, pipeline)] == [
+        False,
+        False,
+        True,
+    ]
+
+
 @pytest.mark.parametrize(
     "read",
     [
         lambda r: r.list_jobs(),
         lambda r: r.list_warmups(),
         lambda r: r.list_configmaps(),
+        lambda r: r.list_pipelines(),
         lambda r: r.list_pods("htr-a", "kyrk"),
     ],
-    ids=["jobs", "warmups", "configmaps", "pods"],
+    ids=["jobs", "warmups", "configmaps", "pipelines", "pods"],
 )
 def test_a_list_with_null_items_is_empty(reader: Reader, read):
     """The API server answers an empty list with ``"items": null`` -- the
