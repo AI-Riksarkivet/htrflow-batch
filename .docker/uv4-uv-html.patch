@@ -10,6 +10,11 @@ commit; `git apply` skips this preamble. What each file changes:
   them to viewport coords; and render ALTO line text (and search-hit text)
   as text, never as HTML, so a line reading <img src=x onerror=...> is
   shown, not run on the web front's origin (2026-09-17 audit, 3059).
+- TextRightPanel.ts (also): draw each line's outline, its ALTO
+  TextLine/Shape/Polygon, as an svg polygon inside the line's overlay div
+  (built as DOM nodes from points parsed as finite numbers); a line with
+  no usable Polygon keeps its bounding box. The div, and so the hit area,
+  stays the bounding box.
 - TextRightPanel.ts (also): show the page's predicted quality, ALTO
   Page/@PC as htrflow's QualityPrediction writes it, under the header --
   read off the same ALTO as the lines, set as text.
@@ -18,10 +23,12 @@ commit; `git apply` skips this preamble. What each file changes:
   as untrusted as its ALTO.
 - OpenSeadragonCenterPanel.ts: re-add the current canvas's line overlays
   after clearOverlays(), in viewport coords.
-- styles.less: outline the line overlays.
+- styles.less: outline the line overlays; a line with a polygon carries
+  its outline and fill (the current-line highlight too) on the polygon, in
+  a stroke that stays thin at any zoom.
 
 diff --git a/src/content-handlers/iiif/modules/uv-openseadragoncenterpanel-module/css/styles.less b/src/content-handlers/iiif/modules/uv-openseadragoncenterpanel-module/css/styles.less
-index b2622a8..1a960e8 100644
+index b2622a8..45b417d 100644
 --- a/src/content-handlers/iiif/modules/uv-openseadragoncenterpanel-module/css/styles.less
 +++ b/src/content-handlers/iiif/modules/uv-openseadragoncenterpanel-module/css/styles.less
 @@ -233,6 +233,8 @@
@@ -33,11 +40,103 @@ index b2622a8..1a960e8 100644
          &.current {
            @col: rgb(120, 251, 185);
            background-color: saturate(@col, 100%);
+@@ -242,6 +244,44 @@
+           background-color: saturate(@col, 80%);
+         }
+         z-index: 10;
++
++        // A line with an ALTO polygon: its outline and fill (the .current
++        // and hover colours too) move from the div's border and background
++        // onto the polygon. The div stays the hit area, so the svg takes
++        // no pointer events and clicks land on the div, as before.
++        &.hasPolygon {
++          border: 0;
++          &,
++          &.current,
++          &:hover {
++            background-color: transparent;
++          }
++          svg {
++            position: absolute;
++            left: 0;
++            top: 0;
++            width: 100%;
++            height: 100%;
++            display: block;
++            overflow: visible;
++            pointer-events: none;
++          }
++          polygon {
++            fill: transparent;
++            stroke: rgba(120, 251, 185, 0.7);
++            stroke-width: 2px;
++            stroke-linejoin: round;
++            vector-effect: non-scaling-stroke;
++          }
++          &.current polygon {
++            @col: rgb(120, 251, 185);
++            fill: saturate(@col, 100%);
++          }
++          &:hover polygon {
++            @col: lighten(rgb(120, 251, 185), 20%);
++            fill: saturate(@col, 80%);
++          }
++        }
+       }
+ 
+       .annotationPin {
 diff --git a/src/content-handlers/iiif/modules/uv-textrightpanel-module/TextRightPanel.ts b/src/content-handlers/iiif/modules/uv-textrightpanel-module/TextRightPanel.ts
-index e9d30db..c372ff7 100644
+index e9d30db..89dbeed 100644
 --- a/src/content-handlers/iiif/modules/uv-textrightpanel-module/TextRightPanel.ts
 +++ b/src/content-handlers/iiif/modules/uv-textrightpanel-module/TextRightPanel.ts
-@@ -253,25 +253,32 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
+@@ -11,6 +11,46 @@ import { Shell } from "../uv-shared-module/Shell";
+ import { AnnotationRect } from "@iiif/manifold";
+ import { OpenSeadragonExtensionEvents } from "../../extensions/uv-openseadragon-extension/Events";
+ 
++const SVG_NS = "http://www.w3.org/2000/svg";
++const PLAIN_NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
++
++function childNamed(parent: Element, name: string): Element | null {
++  const kids = parent.children;
++  for (let i = 0; i < kids.length; i++) {
++    if (kids[i].localName === name) {
++      return kids[i];
++    }
++  }
++  return null;
++}
++
++// A TextLine's outline, TextLine/Shape/Polygon@POINTS as htrflow writes it
++// ("x1,y1 x2,y2 ...", or ALTO's plain "x1 y1 x2 y2 ..."): absolute page
++// pixels, the space HPOS/VPOS are in. Returns the flat coordinate list, or
++// null when the line has none or it is no usable polygon -- an odd count,
++// fewer than three points, or any token that is not a plain finite number.
++function parseAltoPolygon(textLine: Element): number[] | null {
++  const shape = childNamed(textLine, "Shape");
++  const polygon = shape ? childNamed(shape, "Polygon") : null;
++  const raw = polygon ? polygon.getAttribute("POINTS") : null;
++  if (!raw) {
++    return null;
++  }
++  const tokens = raw.trim().split(/[\s,]+/);
++  if (tokens.length % 2 !== 0 || tokens.length < 6) {
++    return null;
++  }
++  const coords: number[] = [];
++  for (let i = 0; i < tokens.length; i++) {
++    const n = PLAIN_NUMBER.test(tokens[i]) ? Number(tokens[i]) : NaN;
++    if (!Number.isFinite(n)) {
++      return null;
++    }
++    coords.push(n);
++  }
++  return coords;
++}
++
+ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
+   $transcribedText: JQuery;
+   $spinner: JQuery;
+@@ -253,25 +293,32 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
  
                const p = getIntersectionPercentage(rect, lineRect);
                if (p > 50) {
@@ -87,7 +186,7 @@ index e9d30db..c372ff7 100644
                }
              }
            );
-@@ -352,15 +359,34 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
+@@ -352,15 +399,34 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
        const altoDoc = new DOMParser().parseFromString(data, "application/xml");
        const textLines = altoDoc.querySelectorAll("TextLine");
  
@@ -126,7 +225,7 @@ index e9d30db..c372ff7 100644
          x =
            x +
            this.offsetX +
-@@ -368,15 +394,16 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
+@@ -368,15 +434,16 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
          const text = t.join(" ");
          this.clipboardText += text + " ";
  
@@ -147,7 +246,7 @@ index e9d30db..c372ff7 100644
  
          if (!this.extension.isMobile()) {
            const div = $(
-@@ -384,9 +411,7 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
+@@ -384,9 +451,7 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
                canvasIndex +
                "-" +
                i +
@@ -158,7 +257,7 @@ index e9d30db..c372ff7 100644
                x +
                '" data-y="' +
                y +
-@@ -395,7 +420,7 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
+@@ -395,7 +460,7 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
                '" data-height="' +
                height +
                '" tabindex="0"></div>'
@@ -167,9 +266,46 @@ index e9d30db..c372ff7 100644
            $(div).on("keydown", (e: any) => {
              if (e.keyCode === 13) {
                $(e.target).trigger("click");
-@@ -416,10 +441,13 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
+@@ -415,11 +480,50 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
+             this.setCurrentLineAnnotation(e.target, true);
              this.setCurrentLineAnnotationRect(e.target);
            });
++          // The line's outline, when its ALTO has a usable Polygon: an svg
++          // inside this same overlay div, in the box's own (scaled) pixel
++          // space, so click, hover, keyboard focus, .current and search-hit
++          // highlighting on the div work as before. Known limitation: the
++          // hit area stays the div, the line's bounding box, not the
++          // polygon. Built as nodes from parsed numbers only; with no
++          // usable Polygon there is no svg and the line keeps its box.
++          const outline = parseAltoPolygon(e);
++          const left = Number(e.getAttribute("HPOS"));
++          const top = Number(e.getAttribute("VPOS"));
++          if (
++            outline &&
++            Number.isFinite(left) &&
++            Number.isFinite(top) &&
++            width > 0 &&
++            height > 0
++          ) {
++            const points: string[] = [];
++            for (let k = 0; k < outline.length; k += 2) {
++              points.push(
++                (outline[k] - left) * scaleX +
++                  "," +
++                  (outline[k + 1] - top) * scaleY
++              );
++            }
++            const svg = document.createElementNS(SVG_NS, "svg");
++            svg.setAttribute("viewBox", "0 0 " + width + " " + height);
++            svg.setAttribute("preserveAspectRatio", "none");
++            svg.setAttribute("aria-hidden", "true");
++            svg.setAttribute("focusable", "false");
++            const shape = document.createElementNS(SVG_NS, "polygon");
++            shape.setAttribute("points", points.join(" "));
++            svg.appendChild(shape);
++            div[0].appendChild(svg);
++            div.addClass("hasPolygon");
++          }
            // Add overlay to OpenSeadragon canvas
 -          const osRect = new OpenSeadragon.Rect(x, y, width, height);
 -          (<OpenSeadragonExtension>(
@@ -185,7 +321,7 @@ index e9d30db..c372ff7 100644
  
            line.on("keydown", (e: any) => {
              if (e.keyCode === 13) {
-@@ -449,7 +477,20 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
+@@ -449,7 +553,20 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
        }
        if (header) {
          this.$transcribedText.append(
