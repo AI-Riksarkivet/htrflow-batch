@@ -490,6 +490,7 @@ def _stream(
         todo,
         max_bytes=cfg.fetch_max_bytes,
         max_pixels=cfg.max_image_pixels,
+        results_bucket=cfg.s3_bucket,
     )
     stream = PageStream(
         todo,

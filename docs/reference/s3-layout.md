@@ -126,9 +126,12 @@ source image it holds, as the user metadata `source`: a digest of the page's
 image URL with its IIIF size and credentials removed. An object that records
 another source, or none, is a miss, and the download overwrites it. The cache is never a
 correctness dependency: a miss, a cache error or a bad cached object always
-falls back to the ordinary download, and nothing it does can fail a page. This bucket is **private** — it is never covered by
-the results bucket's public-read policy and never linked from the viewer or
-the read API.
+falls back to the ordinary download, and nothing it does can fail a page.
+
+This bucket is a separate, **private** bucket. It is never the results
+bucket, which is public-read: a wrapper whose `IMAGE_CACHE_BUCKET` names the
+results bucket turns the cache off and logs why. It is never covered by a
+public-read policy and never linked from the viewer or the read API.
 
 ## `progress.json` (live, and never a completion marker)
 
