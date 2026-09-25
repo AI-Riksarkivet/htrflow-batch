@@ -101,6 +101,9 @@ class ResultStore:
             connect_timeout=10,
             read_timeout=60,
             retries={"max_attempts": 3, "mode": "standard"},
+            # The image cache shares this client with every download thread
+            # and the uploader: past botocore's 10, urllib3 warns in the log.
+            max_pool_connections=max(10, cfg.download_concurrency + 4),
         )
         # Run-log uploads are best-effort and periodic: a dead S3 must not
         # pin a shipping thread (or the final upload at exit) for the default
