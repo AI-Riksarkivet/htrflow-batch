@@ -7,7 +7,7 @@ contract — the Job it runs in, where its volume comes from, its environment,
 its exit codes and what it leaves behind. The narrative is in
 [How it Works → The Wrapper](../how-it-works/wrapper.md); the failure
 semantics in [Failure Handling](../how-it-works/failure-handling.md). To run
-the wrapper without a cluster, see [Try it](../getting-started/try-it.md).
+the wrapper without a cluster, see [Quickstart](../getting-started/try-it.md).
 
 ## The Job contract
 
@@ -176,7 +176,7 @@ required vars and a credentials source; the knobs worth touching are
 the real volume with `MAX_PAGES=0`), `MAX_IMAGE_WIDTH`, `RESUME`,
 `MANIFEST_MAX_BYTES`/`FETCH_MAX_BYTES` and `LOG_SHIP_SECONDS`. The compose
 stack does exactly this without a cluster — see
-[Try it](../getting-started/try-it.md#without-a-cluster-docker-compose).
+[Quickstart](../getting-started/try-it.md).
 
 **Workdir bound.** `LOOKAHEAD_BYTES` bounds the images in `WORKDIR_PATH`
 to half the Job's memory-backed `emptyDir`: the default 1 GiB is half the

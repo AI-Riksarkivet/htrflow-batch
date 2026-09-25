@@ -1,53 +1,48 @@
 # htrflow-batch
 
+Run an [htrflow](https://github.com/AI-Riksarkivet/htrflow) pipeline on whole
+archive volumes across a Kubernetes cluster of GPU nodes. Results stream to
+an S3 bucket page by page and open in a IIIF viewer; what to transcribe is a
+file in a git repository.
+
+**[Quickstart: see it work in five minutes](getting-started/try-it.md)**, with
+nothing but Docker.
+
 !!! warning "Not for use yet"
     This project is under active development and is not ready for others to
     run: interfaces, chart values and the campaigns format still change
     without notice. This notice goes when there is a release to stand behind.
 
-Batch handwritten-text recognition for whole archive volumes on Kubernetes,
-built around [htrflow](https://github.com/AI-Riksarkivet/htrflow), unmodified. Results stream to an S3 bucket page by page and open in a IIIF viewer;
-what to transcribe is declared in a campaigns git repository.
+![One campaign, from a file in git to results in the viewer: git, delivery, the cluster, storage and the outside world](assets/diagrams/overview.svg)
 
 ## What it does
 
-- **Runs htrflow unmodified.** The wrapper image builds htrflow from its own
-  source at a pinned commit, on the CUDA runtime image, and drives it as a
-  library page by page, so a long volume costs the same memory as a short
-  one.
-- **Kueue owns queueing and GPU quota.** There is no custom scheduler.
-- **Git is the desired state; Kubernetes and S3 are the observed state.** A
-  campaign is a YAML file. A pure converter renders it into one Kubernetes
-  Indexed Job (one index per volume) plus a warm-up Job that caches the
-  pipeline's models. Kubernetes and Kueue own scheduling and retries, and a
-  status API with a campaign browser shows progress live; the one thing it
-  writes is each campaign's status ConfigMap, the record that outlives the
-  Job. There is no CRD, no controller and no database.
-- **Kyverno decides what may run.** Chart-shipped policies admit only
-  digest-pinned images from allowed registries and, optionally, only
+- **Runs htrflow unmodified**, as a library, page by page, so a long volume
+  costs the same memory as a short one.
+- **A campaign is a YAML file in git.** A converter renders it into one
+  Kubernetes Indexed Job, one index per volume, plus a warm-up Job that
+  caches the models. No CRD, no controller, no database.
+- **Kueue owns queueing and GPU quota; Kyverno decides what may run**: only
+  digest-pinned images from allowed registries, and optionally only
   revision-pinned models.
-- **Every page is traceable.** Each ALTO file records the models, image and
-  htrflow-batch build that produced it, and a volume is done only when every
-  page is accounted for.
-- **It measures itself.** Every volume's `manifest.json` records how long
-  the GPU sat waiting for page fetches (`gpu_stall_seconds`) against wall
-  time. Those numbers decide whether a cache layer in front of the IIIF
-  source is worth building ([Roadmap](roadmap/index.md)).
-
-## How it fits together
-
-![One campaign, from a file in git to results in the viewer: git, delivery, the cluster, storage and the outside world](assets/diagrams/overview.svg)
+- **Every page is traceable.** Each ALTO file names the models, image and
+  htrflow-batch build that produced it, and a volume is done only when
+  every page is accounted for.
+- **It measures itself.** Every volume records how long the GPU waited for
+  page fetches, the number that decides whether a cache in front of the
+  IIIF source is worth building ([Roadmap](roadmap/index.md)).
 
 ## Where to start
 
-| You are | Read in this order |
+| You want to | Read |
 |---|---|
-| **An operator** running the platform | [Try it](getting-started/try-it.md) → [Prerequisites](getting-started/index.md) → [Deploy](getting-started/deploy.md) → [Troubleshooting](getting-started/troubleshooting.md) |
-| **An author** of campaigns | [Run a campaign](getting-started/campaigns.md) → [Campaign & Pipeline YAML](reference/campaign-yaml.md) → [View results](getting-started/viewing.md) |
-| **A developer** changing the code | [Development](development/index.md) → [How it Works](how-it-works/architecture.md) |
+| See it work | [Quickstart](getting-started/try-it.md) |
+| Run it on your cluster | [Deploy](getting-started/deploy.md) → [Run a campaign](getting-started/campaigns.md) → [Troubleshooting](getting-started/troubleshooting.md) |
+| Write campaigns | [Run a campaign](getting-started/campaigns.md) → [Campaign & Pipeline YAML](reference/campaign-yaml.md) → [View results](getting-started/viewing.md) |
+| Change the code | [Development](development/index.md) → [How it Works](how-it-works/architecture.md) |
 
-The [Reference](reference/index.md) holds the exact contracts, and the
-[Roadmap](roadmap/index.md) what is open and what could come next.
+The [Reference](reference/index.md) holds the exact contracts. The
+[Presentations](presentations.md) walk through all of it in pictures.
 
 ## Licence
 
