@@ -96,8 +96,10 @@ With it on, the fetch looks in the cache before the width-capped GET:
 - **A hit is checked like a download**: a known raster signature,
   `FETCH_MAX_BYTES` and `MAX_IMAGE_PIXELS`. A hit that passes is the page's
   image, and the IIIF server is not asked for it.
-- **A miss takes the width-capped GET above.** A miss is no object, or a
-  cached object that fails the checks. Once the download succeeds, the image
+- **A miss takes the width-capped GET above.** A miss is no object, a
+  cached object that fails the checks, or one that records another source
+  image. The object's metadata names the source it was stored from, so a
+  page whose source changed never gets the old image. Once the download succeeds, the image
   is stored under the same key, so a bad object is overwritten.
 - **The cache never fails a page.** A GET error falls back to the download,
   and a store that fails is logged while the page stays ok. A missing or

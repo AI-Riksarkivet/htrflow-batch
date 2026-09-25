@@ -10,7 +10,7 @@ from moto import mock_aws
 
 from htrflow_batch.fetch import FetchResult, fetch_page
 from htrflow_batch.iiif import PageRef
-from htrflow_batch.imagecache import ImageCache
+from htrflow_batch.imagecache import ImageCache, source_identity
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 12  # JPEG SOI + APP0 marker
 
@@ -344,6 +344,26 @@ def test_a_400_that_is_not_a_size_fails_the_page_at_once(tmp_path):
     assert len(calls) == 1
 
 
+def test_a_400_on_a_full_max_request_has_no_fallback(tmp_path):
+    """``/full/max/`` is already the unscaled request: there is nothing
+    smaller to substitute, so no info.json is asked for."""
+    calls = []
+
+    def handler(req):
+        calls.append(str(req.url))
+        return httpx.Response(400)
+
+    page = PageRef(
+        index=1,
+        name="0001",
+        image_url="https://img/iiif/full/max/0/default.jpg",
+        canvas={},
+    )
+    r = fetch_page(page, tmp_path, _client(handler), 3, 0.0)
+    assert r.error == "HTTP 400" and not r.transient
+    assert calls == ["https://img/iiif/full/max/0/default.jpg"]
+
+
 def test_a_400_after_the_fallback_does_not_loop(tmp_path):
     """Once the URL is unscaled the substitution is a no-op, so the second
     400 is final like any other."""
@@ -666,7 +686,12 @@ def test_a_cache_hit_never_calls_the_iiif_server(tmp_path, page):
     with mock_aws():
         c = boto3.client("s3", region_name="us-east-1")
         c.create_bucket(Bucket="images-batch")
-        c.put_object(Bucket="images-batch", Key=_cache(c).key(page), Body=JPEG)
+        c.put_object(
+            Bucket="images-batch",
+            Key=_cache(c).key(page),
+            Body=JPEG,
+            Metadata={"source": source_identity(page.image_url)},
+        )
         result = fetch_page(page, tmp_path, _client(handler), cache=_cache(c))
     assert result.error is None and result.from_cache and calls == []
     assert result.size == len(JPEG)

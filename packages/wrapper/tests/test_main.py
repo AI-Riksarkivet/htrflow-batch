@@ -150,6 +150,47 @@ def test_a_volume_run_twice_with_the_cache_fetches_nothing_the_second_time(
     }
 
 
+def test_a_resumed_page_whose_source_changed_gets_the_new_image_not_the_cached(
+    env, cfg, s3, monkeypatch, sample_manifest
+):
+    """Resume sends a page with a new source back to be fetched; the cache
+    holds the old source's image under the same key, and must not answer."""
+    s3.create_bucket(Bucket="images-batch")
+    cached = {**env, "IMAGE_CACHE_BUCKET": "images-batch"}
+
+    def handler(req):
+        if req.url.path.endswith("manifest.json"):
+            return httpx.Response(200, json=sample_manifest)
+        return httpx.Response(200, content=b"\xff\xd8\xff\xe0" + req.url.path.encode())
+
+    monkeypatch.setattr(
+        main_mod,
+        "_http_client",
+        lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    seen: dict[str, bytes] = {}
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            seen[path.stem] = path.read_bytes()
+            return inner(path)
+
+        return process
+
+    assert main(cached, process_page_factory=factory) == EXIT_OK
+    assert b"/mock-vol/" in seen["0001"]
+    _move_source(sample_manifest, "NEW")
+    seen.clear()
+    assert main(cached, process_page_factory=factory) == EXIT_OK
+    assert sorted(seen) == ["0001", "0002", "0003"]
+    assert all(b"/NEW/" in body for body in seen.values())
+    # and the cache now holds the new source's image for the next run
+    obj = s3.get_object(Bucket="images-batch", Key="SE-RA-1234/SE-RA-1234_00001.jpg")
+    assert b"/NEW/" in obj["Body"].read()
+
+
 def test_without_the_cache_the_manifest_has_no_image_cache_key(env, cfg, s3):
     assert main(env, process_page_factory=fake_factory) == EXIT_OK
     body = json.loads(

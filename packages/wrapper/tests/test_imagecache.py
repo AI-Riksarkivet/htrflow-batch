@@ -4,8 +4,8 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from htrflow_batch.iiif import PageRef
-from htrflow_batch.imagecache import MAX_PAGE, ImageCache
+from htrflow_batch.iiif import PageRef, source_digest
+from htrflow_batch.imagecache import MAX_PAGE, ImageCache, source_identity
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
 BUCKET = "images-batch"
@@ -23,6 +23,16 @@ def client():
         c = boto3.client("s3", region_name="us-east-1")
         c.create_bucket(Bucket=BUCKET)
         yield c
+
+
+def _stored(client, page: PageRef, body: bytes, source: str | None = None) -> None:
+    """An object in the cache as a PUT from this page's own source leaves it."""
+    client.put_object(
+        Bucket=BUCKET,
+        Key=f"R0001203/R0001203_{page.index:05d}.jpg",
+        Body=body,
+        Metadata={"source": source or source_identity(page.image_url)},
+    )
 
 
 def _cache(client, **kw) -> ImageCache:
@@ -56,7 +66,7 @@ def test_a_miss_then_a_store_then_a_hit(client, tmp_path):
     "junk", [b"<html>login</html>", b"", b"\xff\xd8"], ids=["html", "empty", "short"]
 )
 def test_a_cached_object_that_is_not_an_image_is_a_miss(client, tmp_path, caplog, junk):
-    client.put_object(Bucket=BUCKET, Key="R0001203/R0001203_00002.jpg", Body=junk)
+    _stored(client, _page(2), junk)
     path = tmp_path / "0002.jpg"
     with caplog.at_level(logging.WARNING):
         assert _cache(client).get(_page(2), path) is False
@@ -65,7 +75,7 @@ def test_a_cached_object_that_is_not_an_image_is_a_miss(client, tmp_path, caplog
 
 
 def test_a_cached_object_over_the_byte_cap_is_a_miss(client, tmp_path):
-    client.put_object(Bucket=BUCKET, Key="R0001203/R0001203_00003.jpg", Body=JPEG * 100)
+    _stored(client, _page(3), JPEG * 100)
     path = tmp_path / "0003.jpg"
     assert _cache(client, max_bytes=100).get(_page(3), path) is False
     assert not path.exists()
@@ -124,3 +134,71 @@ def test_for_volume_builds_one_otherwise(client):
         client, BUCKET, "R1", [_page(1)], max_bytes=1, max_pixels=0
     )
     assert isinstance(got, ImageCache)
+
+
+# -- the object records its source (a resume's changed page, a reused ref) ----
+
+SIZED = "https://iiif.example/img/p1/full/{},/0/default.jpg"
+
+
+def _at(url: str, i: int = 1) -> PageRef:
+    return PageRef(index=i, name=f"{i:04d}", image_url=url, canvas={})
+
+
+def test_a_put_records_the_pages_source_in_the_objects_metadata(client, tmp_path):
+    path = tmp_path / "p.jpg"
+    path.write_bytes(JPEG)
+    _cache(client).put(_at(SIZED.format(2500)), path)
+    head = client.head_object(Bucket=BUCKET, Key="R0001203/R0001203_00001.jpg")
+    assert head["Metadata"] == {"source": source_identity(SIZED.format(2500))}
+
+
+def test_the_identity_ignores_the_iiif_size_and_the_credentials():
+    base = "https://iiif.example/img/p1/full/{}/0/default.jpg"
+    same = {
+        source_identity(base.format("2500,")),
+        source_identity(base.format("1200,")),
+        source_identity(base.format("max")),
+        source_identity(base.format("2500,") + "?X-Amz-Signature=abc"),
+    }
+    assert len(same) == 1
+    assert same != {source_identity(base.format("2500,").replace("p1", "p2"))}
+    # a URL that is not a sized IIIF request is its own identity
+    assert source_identity("https://h/a.jpg") == source_digest("https://h/a.jpg")
+
+
+def test_the_same_source_is_a_hit(client, tmp_path):
+    _stored(client, _at(SIZED.format(2500)), JPEG)
+    assert _cache(client).get(_at(SIZED.format(2500)), tmp_path / "p.jpg") is True
+
+
+def test_the_same_source_at_another_width_is_a_hit(client, tmp_path):
+    _stored(client, _at(SIZED.format(2500)), JPEG)
+    assert _cache(client).get(_at(SIZED.format(1200)), tmp_path / "p.jpg") is True
+
+
+def test_another_source_is_a_miss_said_once_and_the_put_overwrites_it(
+    client, tmp_path, caplog
+):
+    old, new = SIZED.format(2500), SIZED.format(2500).replace("p1", "NEW")
+    _stored(client, _at(old, 1), JPEG)
+    _stored(client, _at(old, 2), JPEG)
+    cache, path = _cache(client), tmp_path / "p.jpg"
+    with caplog.at_level(logging.WARNING):
+        assert cache.get(_at(new, 1), path) is False
+        assert cache.get(_at(new, 2), path) is False
+    assert not path.exists()
+    assert sum("another source" in r.getMessage() for r in caplog.records) == 1
+    assert cache.report()["misses"] == 2
+    path.write_bytes(JPEG + b"\x02")
+    cache.put(_at(new, 1), path)
+    obj = client.get_object(Bucket=BUCKET, Key="R0001203/R0001203_00001.jpg")
+    assert obj["Metadata"] == {"source": source_identity(new)}
+    assert obj["Body"].read() == JPEG + b"\x02"
+
+
+def test_an_object_without_a_recorded_source_is_a_miss(client, tmp_path):
+    client.put_object(Bucket=BUCKET, Key="R0001203/R0001203_00001.jpg", Body=JPEG)
+    path = tmp_path / "p.jpg"
+    assert _cache(client).get(_page(1), path) is False
+    assert not path.exists()
