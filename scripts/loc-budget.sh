@@ -788,7 +788,13 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 4661
 # a feature group the image cannot run, comes before text recognition or is
 # there twice -- each with its one-line reason, and the comment saying why a
 # pickled model comes only from a pinned repo.
-check converter "$(count packages/converter/src -name '*.py')" 5025
+# 5025 -> 5060 (image cache, Task 3): models.py +26 -- ImageCacheSettings and
+# its bucket-name check (frozen, extra="forbid", the S3 bucket-name regex and
+# its sentence), and the `image_cache` field on ConverterConfig with the
+# comment saying absent is off. render.py +7: appended after `dynamic_env`,
+# not a skeleton entry, so a converter.yaml without the block renders
+# byte-for-byte what it always did.
+check converter "$(count packages/converter/src -name '*.py')" 5060
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

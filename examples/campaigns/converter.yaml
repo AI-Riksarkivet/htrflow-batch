@@ -60,3 +60,9 @@ public_results_base: "http://localhost:30900/htr-results"
 #   small: { flavor: small-gpu, gpu: 1, cpu: 4, memory: 16Gi }
 #   large: { flavor: large-gpu, gpu: 1, cpu: 8, memory: 32Gi, workdir: 4Gi }
 # default_size: small
+
+# Cache source page images in this S3 bucket, on the same S3 store as the
+# results: a volume run again needs nothing from the IIIF server. Private;
+# create the bucket first (docs: getting-started/deploy.md).
+# image_cache:
+#   bucket: images-batch

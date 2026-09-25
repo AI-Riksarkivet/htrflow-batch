@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from htrflow_converter import models, parse
-from htrflow_converter.models import Campaign, Pipeline, Volume
+from htrflow_converter.models import Campaign, ConverterConfig, Pipeline, Volume
 
 GOOD = Path(__file__).parent / "fixtures" / "good"
 #: A converter.yaml with what a repo whose campaigns write bare reference
@@ -530,3 +530,43 @@ def test_quality_prediction_settings_move_the_recipe():
     a = _pipeline(_SEG, _LINES, _HTR, _qp())
     b = _pipeline(_SEG, _LINES, _HTR, _qp(revision="f" * 40))
     assert a.recipe_sha256 != b.recipe_sha256
+
+
+BASE = {"namespace": "htr-test", "public_results_base": "https://results.example.org"}
+
+
+@pytest.mark.parametrize("bucket", ["images-batch", "img.cache-01", "abc"])
+def test_a_valid_image_cache_bucket_is_kept(bucket):
+    cfg = ConverterConfig.model_validate({**BASE, "image_cache": {"bucket": bucket}})
+    assert cfg.image_cache.bucket == bucket
+
+
+@pytest.mark.parametrize(
+    "bucket",
+    [
+        "",
+        "ab",
+        "Images",
+        "-images",
+        "images-",
+        "im..ages",
+        "im_ages",
+        "a" * 64,
+        "images/batch",
+    ],
+)
+def test_an_invalid_image_cache_bucket_is_refused_in_one_sentence(bucket):
+    with pytest.raises(ValidationError) as exc_info:
+        ConverterConfig.model_validate({**BASE, "image_cache": {"bucket": bucket}})
+    assert "S3 bucket name" in str(exc_info.value)
+
+
+def test_an_unknown_image_cache_key_is_refused():
+    with pytest.raises(ValidationError):
+        ConverterConfig.model_validate(
+            {**BASE, "image_cache": {"bucket": "abc", "ttl": 3}}
+        )
+
+
+def test_no_image_cache_by_default():
+    assert ConverterConfig.model_validate(BASE).image_cache is None
