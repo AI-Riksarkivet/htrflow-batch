@@ -676,16 +676,16 @@ def _flat_text(steps: list) -> str | None:
 _QP_STEP = "qualityprediction"
 _HUB_REPO_RE = re.compile(r"^[A-Za-z0-9][\w.-]*/[\w.-]+\Z")
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}\Z")
-#: The groups quality_prediction.inference reads off htrflow's tree
-#: (JSON_FEATURE_GROUPS) -- all this image can compute.
-_QP_GROUPS = ("segmentation", "layout", "htr_confidence", "text")
+#: The groups quality_prediction.inference reads off htrflow's tree alone
+#: (JSON_FEATURE_GROUPS) -- no image, model or resource needed, so this
+#: image can compute all of them, regionization included.
+_QP_GROUPS = ("segmentation", "layout", "htr_confidence", "text", "regionization")
 #: The rest of the package's PageFeatureExtractor.FEATURE_GROUPS: they need
 #: the page image, a DiT model or a language model this image does not run.
 _QP_GROUPS_NOT_RUN = frozenset(
     {
         "image",
         "dit",
-        "regionization",
         "ngram",
         "lm",
         "lexicon",
