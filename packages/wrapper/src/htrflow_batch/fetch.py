@@ -235,10 +235,12 @@ def _check_pixels(path: Path, max_pixels: int) -> None:
         )
 
 
-#: A sized IIIF Image API request, as ``iiif._sized`` writes it; ``base`` may
+#: A IIIF Image API request as ``iiif._sized`` writes it: ``/full/<w>,/``, or
+#: ``/full/max/`` (no ``width``) for a canvas within the cap. ``base`` may
 #: itself carry a query (IIPImage's ``?IIIF=``), ``query`` is one after it.
 _SIZED = re.compile(
-    r"^(?P<base>.+)/full/(?P<width>\d+),/(?P<rest>[^/?#]+/[^/?#]+)(?P<query>[?#].*)?$"
+    r"^(?P<base>.+)/full/(?:(?P<width>\d+),|max)/"
+    r"(?P<rest>[^/?#]+/[^/?#]+)(?P<query>[?#].*)?$"
 )
 
 #: Cap on an info.json body: a few KB in practice, so 1 MiB is room for any
@@ -254,7 +256,7 @@ def _unscaled(url: str, client: httpx.Client, deadline: float) -> str | None:
     masters in the lookahead outgrow the workdir. The image's info.json says
     what it has (``_size_within``); ``max`` is the last resort."""
     m = _SIZED.match(url)
-    if m is None:
+    if m is None or m["width"] is None:  # not sized; ``max`` has no smaller
         return None
     base, query = m["base"], m["query"] or ""
     info = _image_info(client, f"{base}/info.json{query}", deadline)

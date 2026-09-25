@@ -6,6 +6,12 @@ a download, so a volume run again -- under any pipeline or campaign -- needs
 nothing from the IIIF server. The key carries no width: the image is kept as
 the run that stored it fetched it.
 
+The key does not say which source image it holds, so the object does: a PUT
+records the page's ``source_identity`` as object metadata, and a GET whose
+object records another source -- or none -- is a miss. Resume sends a page
+whose source changed back to be fetched, and a volume id can be reused for
+another volume; either way the old image must not answer for the new one.
+
 The cache accelerates and is never a correctness dependency. Every call here
 is best-effort: a miss, a cache error or a bad cached object sends the page
 to the download it would have had anyway, and nothing in this module raises
@@ -21,8 +27,8 @@ from pathlib import Path
 
 from botocore.exceptions import BotoCoreError, ClientError
 
-from .fetch import _check_pixels, _Reject, looks_like_image
-from .iiif import PageRef
+from .fetch import _SIZED, _check_pixels, _Reject, looks_like_image
+from .iiif import PageRef, source_digest
 
 log = logging.getLogger("htrflow_batch")
 
@@ -33,6 +39,17 @@ MAX_PAGE = 99_999
 _NOT_FOUND = frozenset({"NoSuchKey", "404", "NotFound"})
 
 _CHUNK = 1 << 20
+
+
+def source_identity(url: str) -> str:
+    """Which source image a page's URL names, whatever width it asks for:
+    ``source_digest`` (credentials stripped) of the URL with its IIIF size
+    put to ``max``. A cached image is reused at any width (the key has none),
+    so the width must not make it another source."""
+    m = _SIZED.match(url)
+    if m is not None:
+        url = f"{m['base']}/full/max/{m['rest']}{m['query'] or ''}"
+    return source_digest(url)
 
 
 class ImageCache:
@@ -124,6 +141,16 @@ class ImageCache:
             self._unreadable(e)
             self._count("misses")
             return False
+        if obj.get("Metadata", {}).get("source") != source_identity(page.image_url):
+            obj["Body"].close()
+            self._once(
+                "source",
+                "image cache object %s holds another source image (or does not "
+                "say which); refetching, and the download replaces it",
+                key,
+            )
+            self._count("misses")
+            return False
         try:
             self._save(obj["Body"], path, key)
         except (_Reject, BotoCoreError, ClientError, OSError) as e:
@@ -161,6 +188,7 @@ class ImageCache:
                     Key=self.key(page),
                     Body=f,
                     ContentType="image/jpeg",
+                    Metadata={"source": source_identity(page.image_url)},
                 )
         except (BotoCoreError, ClientError, OSError) as e:
             if _is_bucket_error(e):

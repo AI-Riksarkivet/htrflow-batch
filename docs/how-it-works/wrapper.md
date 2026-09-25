@@ -254,9 +254,14 @@ Per page, inside the downloader pool
 - **Hit.** The object is checked exactly like a download (raster signature,
   `FETCH_MAX_BYTES`, `MAX_IMAGE_PIXELS`) and then used. The IIIF server is
   not contacted.
-- **Miss.** No object, or one that fails the checks. The page is downloaded
-  as it would be without a cache, then stored under its key, overwriting a
-  bad object.
+- **Miss.** No object, one that fails the checks, or one made from another
+  source image. The page is downloaded as it would be without a cache, then
+  stored under its key, overwriting the old object.
+- **The object records its source.** A store writes the page's source
+  identity (its image URL without the IIIF size or credentials, hashed) into
+  the object's metadata. A page whose source changed, which resume sends
+  back to be fetched, or a volume id reused for another volume, never gets
+  the old image.
 
 The cache speeds a run up, and the run never depends on it:
 
