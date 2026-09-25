@@ -346,7 +346,14 @@ fail=0
 # progress, main +18: the score kept off the upload parse, and the final
 # progress.json carrying the block. Most of it is the comment saying why the
 # score comes from the file and never fails a page.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 4409
+# 4409 -> 4604 (2026-09-25, image cache Task 1): imagecache.py (+192) is the
+# whole module -- ImageCache keyed {ref}/{ref}_{page:05d}.jpg, for_volume's
+# five-digit guard, a hit checked exactly like a download (looks_like_image,
+# the byte cap, _check_pixels), and the once-per-run bucket/GET/PUT warnings
+# a dozen download threads share a lock over. config.py +3: image_cache_bucket,
+# off by default. Half of the module is the docstrings saying the cache is
+# never a correctness dependency and nothing in it may raise into a page.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 4604
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
