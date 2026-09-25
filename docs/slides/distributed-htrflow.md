@@ -826,8 +826,6 @@ loading and the pages stand out.
 
 # The viewer
 
-![w:760](assets/part-1-viewer.png)
-
 **Riksarkivet's Universal Viewer 4:** the page with every transcribed line outlined, and the text beside it — even while the volume is still running. It ships with the platform's Helm chart, so there is no separate viewer to install.
 
 <!--
