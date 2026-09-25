@@ -102,16 +102,40 @@ With the cache off, neither is written.
   the bucket-setup hook creates that bucket, with no public policy.
 - The compose stack's `compose_init.py` does the same when an image-cache bucket is configured.
 
-**Docs.**
+**Docs, README and diagrams.** These ship in the same change as the code. The feature is not done until the
+pages and pictures show it.
 
-- Reference:
+- **Diagrams.** Update them in their generator, `docs/slides/diagrams/build_docs.py`, and regenerate the SVGs
+  in `docs/assets/diagrams/`. Never hand-edit an SVG. Each diagram whose image fetch changes shows the cache
+  bucket as an optional stop between the pod and the IIIF server, marked optional:
+  - `overview.svg` (README and home page);
+  - `architecture.svg`;
+  - `htrflow-in-a-pod.svg`;
+  - `page-flow.svg`;
+  - `seq-campaign.svg`;
+  - `seq-signals-index.svg`.
+
+  The same pass brings those diagrams up to date with the quality-prediction work already on `main`: the
+  page score in the ALTO, and `quality` in `manifest.json` and `iiif.json`, where the diagram names those
+  files. Check each regenerated SVG by rendering it to an image and looking at it.
+- **README.** Say in the overview that source images can be cached in S3. Link the Deploy section.
+- **Reference:**
   - `image_cache` in the `converter.yaml` reference (`reference/campaign-yaml.md`);
   - the key layout in `reference/s3-layout.md`;
   - the `image_cache` counts in the `manifest.json` section.
-- How-to: a short "Cache source images" section on the Deploy page covering:
+- **How-it-works:** `page-flow.md` and `wrapper.md` describe the lookup, the miss path and "the cache never
+  fails a page".
+- **How-to:** a short "Cache source images" section on the Deploy page covering:
   - creating the bucket;
   - setting `image_cache.bucket`;
   - what hits and misses look like in the run log.
+- **Roadmap.** `docs/roadmap/cache-layer.md` proposes two larger variants (a caching HTTP proxy, and
+  Fluid/Alluxio). It says nothing is cached today, which becomes false. The page is updated as follows:
+  - it describes this S3 cache as built;
+  - it keeps the two variants as the next step for GPU-idle or origin-load evidence;
+  - it states the one rule this cache deliberately does differently: the page proposes the requested width
+    in the cache key, while this cache's key is fixed by operators as `{ref}/{ref}_{page:05d}.jpg`, with no
+    width. A cached image is reused at whatever width first stored it (section 1).
 - The site docs rules apply: no names, dates, versions, hosts or hardware.
 
 **Tests.**
