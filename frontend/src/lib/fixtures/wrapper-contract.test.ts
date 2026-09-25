@@ -6,7 +6,7 @@
 // committed; a pytest fails when it goes stale, and this fails when the
 // schema no longer reads what the wrapper writes.
 import { describe, expect, test } from "vitest";
-import { runManifestSchema, summarizeRun } from "$lib/run.js";
+import { pageStats, runManifestSchema, summarizeRun } from "$lib/run.js";
 import contract from "./wrapper-contract.json";
 import { dropped } from "./dropped.js";
 
@@ -48,5 +48,28 @@ describe("the wrapper's manifest.json", () => {
     expect(failed?.error).toMatch(/worker thread died/);
     expect(failed?.source).toMatch(/^https:\/\//);
     expect(failed?.alto).toMatch(/\/alto\/0002\.xml$/);
+  });
+});
+
+describe("the wrapper's manifest.json, scored", () => {
+  const parsed = runManifestSchema.parse(contract.manifestScored);
+
+  test("parses, and nothing it carries is dropped at any depth", () => {
+    expect(dropped(contract.manifestScored, parsed)).toEqual([]);
+  });
+
+  test("pageStats carries each page's quality through", () => {
+    const stats = pageStats(
+      parsed.results,
+      parsed.page_sources,
+      parsed.viewer_url,
+    );
+    const byId = Object.fromEntries(stats.map((p) => [p.id, p.quality]));
+    expect(byId).toEqual({
+      "0001": 0.9123,
+      "0002": undefined,
+      "0003": 0.41,
+      "0004": 0.7,
+    });
   });
 });

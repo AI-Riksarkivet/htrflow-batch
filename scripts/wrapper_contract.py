@@ -42,6 +42,18 @@ FIXTURE = ROOT / "frontend" / "src" / "lib" / "fixtures" / "wrapper-contract.jso
 #: from the installed htrflow, which the image has and this venv does not.
 HTRFLOW_VERSION = "0.0.0-contract"
 PIPELINE = "steps:\n- step: Segmentation\n- step: Export\n"
+#: A pipeline whose QualityPrediction step names a Hub model and revision --
+#: what `_manifest_scored` reads back out through `quality.qp_model`.
+PIPELINE_QP = (
+    "steps:\n"
+    "- step: Segmentation\n"
+    "- step: QualityPrediction\n"
+    "  settings:\n"
+    "    model_settings:\n"
+    "      model: org/qp-model\n"
+    "      revision: " + "a" * 40 + "\n"
+    "- step: Export\n"
+)
 
 
 def _pages(n: int) -> list[PageRef]:
@@ -94,6 +106,49 @@ def _manifest(work: Path) -> dict:
             PIPELINE,
             12.5,
             123456,
+        )
+
+
+def _manifest_scored(work: Path) -> dict:
+    """The same four-page run, but with QualityPrediction scores on three of
+    its pages -- the `quality` block Task 7's pages table sorts by."""
+    (work / "pipeline-qp.yaml").write_text(PIPELINE_QP)
+    cfg = Config.from_env(
+        {
+            "VOLUME_REF": "vol0",
+            "IIIF_MANIFEST_URL": "https://iiif.example.org/vol0/manifest",
+            "PIPELINE_PATH": str(work / "pipeline-qp.yaml"),
+            "PIPELINE_ID": "demo-v1",
+            "S3_BUCKET": "htr-results",
+            "PUBLIC_RESULTS_BASE": "https://results.example.org/htr-test",
+            "WORKDIR_PATH": str(work / "work-qp"),
+            "IMAGE_DIGEST": "sha256:" + "0" * 64,
+        }
+    )
+    stats = StreamStats(
+        results={
+            "0001": PageOutcome(status="ok", seconds=4.21),
+            "0002": PageOutcome(
+                status="failed",
+                seconds=1.5,
+                error="page 0002: htrflow's Segmentation worker thread died",
+            ),
+            "0003": PageOutcome(status="skipped"),
+            "0004": PageOutcome(status="ok", seconds=3.9),
+        },
+        stall_seconds=0.4,
+    )
+    with mock.patch.object(publish, "_htrflow_version", lambda: HTRFLOW_VERSION):
+        return publish.run_manifest(
+            cfg,
+            _pages(4),
+            stats,
+            cfg.manifest_url,
+            PIPELINE_QP,
+            12.5,
+            123456,
+            quality={"0001": 0.9123, "0003": 0.41, "0004": 0.7},
+            canvases=["0001", "0003", "0004"],
         )
 
 
@@ -188,7 +243,11 @@ def build() -> dict:
     try:
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)
-            return {"manifest": _manifest(work), "terminations": _terminations(work)}
+            return {
+                "manifest": _manifest(work),
+                "manifestScored": _manifest_scored(work),
+                "terminations": _terminations(work),
+            }
     finally:
         logging.disable(logging.NOTSET)
 

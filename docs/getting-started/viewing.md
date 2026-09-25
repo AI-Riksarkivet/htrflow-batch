@@ -30,6 +30,25 @@ links in its **alto** column:
   text.
 - **download** saves the XML as `<page>.xml`.
 
+## Predicted page quality
+
+A volume run with a
+[`QualityPrediction` step](../reference/campaign-yaml.md#predicted-page-quality)
+has a score from 0 to 1 for each page. Without the step, none of the
+following appears.
+
+- The run viewer's per-page table has a **quality** column. Select its
+  header to sort the pages lowest score first, with unscored pages last;
+  select it again to return to page order.
+- In the Universal Viewer, the text panel shows the page's **Predicted
+  quality** above its text. It reads the score from the page's ALTO.
+- The **More information** panel lists **Predicted quality** for the page,
+  and for the volume its mean, lowest score and pages scored. Both come
+  from `iiif.json`.
+
+Where each score is stored is in the
+[S3 layout](../reference/s3-layout.md#manifestjson-completion-marker).
+
 ## Exposing the web front
 
 A browser needs two addresses:

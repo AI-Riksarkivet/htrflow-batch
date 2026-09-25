@@ -101,6 +101,24 @@ kubectl -n <namespace> get job <campaign> \
 A campaign that stays queued, or a volume that fails, is in
 [Troubleshooting](troubleshooting.md).
 
+### Predicted page quality
+
+A campaign whose pipeline has a
+[`QualityPrediction` step](../reference/campaign-yaml.md#predicted-page-quality)
+scores each page from 0 to 1. Its card shows the scores; a campaign without
+the step shows none of this.
+
+- A **quality** column gives each volume's mean page score, and the pages
+  row gives the campaign's mean, weighted by the pages scored.
+- A **lowest predicted quality** line names the lowest-scoring pages across
+  the campaign, each a link that opens the viewer at that page. When only
+  some volumes have scores yet, the line says how many it covers.
+- The scores carry no colour and no threshold: what counts as poor depends
+  on the material.
+
+The scores come from each volume's
+[`manifest.json` and `progress.json`](../reference/s3-layout.md#manifestjson-completion-marker).
+
 ## 6. Open the results
 
 A volume's **open** link opens the viewer on its `iiif.json`, with the text

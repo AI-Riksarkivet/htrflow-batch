@@ -10,6 +10,8 @@ from htrflow_converter import render
 from htrflow_converter.models import ConverterConfig
 
 from htrflow_web import projection
+from htrflow_web.progress import MAX_SCORED
+from htrflow_web.projection import _campaign_quality
 
 CFG = SimpleNamespace(public_results_base="https://results.example.org")
 #: `warmup` is required (Task 28 fix round item 4) -- this is what every
@@ -1930,3 +1932,143 @@ def test_a_source_the_browser_rejects_is_no_source(url: str):
 @pytest.mark.parametrize("url", WHATWG_ACCEPTS)
 def test_a_source_the_browser_accepts_is_kept(url: str):
     assert projection._source_url(f"vol0\t{url}") == url
+
+
+# --- the campaign's quality, summed over its volumes (Task 6) --------------
+
+
+def _row(vid, q):
+    return {
+        "id": vid,
+        "iiifUrl": f"https://pub/{vid}/iiif.json",
+        "progress": {"quality": q},
+    }
+
+
+def test_the_campaign_mean_is_weighted_by_scored_pages():
+    rows = [
+        _row(
+            "a",
+            {
+                "mean": 0.9,
+                "min": 0.8,
+                "scored": 1,
+                "lowest": [{"page": "1", "quality": 0.8, "canvas": 0}],
+            },
+        ),
+        _row(
+            "b",
+            {
+                "mean": 0.5,
+                "min": 0.2,
+                "scored": 3,
+                "lowest": [{"page": "7", "quality": 0.2, "canvas": 6}],
+            },
+        ),
+        _row("c", None),
+    ]
+    q = _campaign_quality(rows)
+    assert (
+        q["mean"] == 0.6 and q["min"] == 0.2 and q["scored"] == 4 and q["volumes"] == 2
+    )
+    assert q["lowest"][0] == {
+        "volume": "b",
+        "page": "7",
+        "quality": 0.2,
+        "canvas": 6,
+        "iiifUrl": "https://pub/b/iiif.json",
+    }
+
+
+def test_a_volume_read_twice_names_its_lowest_page_once():
+    """Two rows for one volume (listed twice in the campaign) would name
+    each of its lowest pages twice; the card keys its list by volume and
+    page, so each is named once."""
+    q = {
+        "mean": 0.5,
+        "min": 0.2,
+        "scored": 3,
+        "lowest": [
+            {"page": "7", "quality": 0.2, "canvas": 6},
+            {"page": "8", "quality": 0.3, "canvas": 7},
+        ],
+    }
+    lowest = _campaign_quality([_row("a", q), _row("a", q)])["lowest"]
+    assert [(e["volume"], e["page"]) for e in lowest] == [("a", "7"), ("a", "8")]
+
+
+def test_no_scored_volume_is_no_campaign_quality():
+    assert _campaign_quality([_row("a", None)]) is None
+    assert _campaign_quality([]) is None
+
+
+def test_a_scored_count_at_the_cap_does_not_overflow_the_mean():
+    """``_quality`` accepts ``scored`` up to ``MAX_SCORED``; the weighted mean
+    below multiplies by it, and a block that large must not raise."""
+    rows = [_row("a", {"mean": 0.5, "min": 0.5, "scored": MAX_SCORED, "lowest": []})]
+    q = _campaign_quality(rows)
+    assert q["scored"] == MAX_SCORED and q["mean"] == 0.5
+
+
+def _pipeline(text: str) -> dict:
+    return {"metadata": {"name": "htr-pipeline-p"}, "data": {"pipeline.yaml": text}}
+
+
+@pytest.mark.parametrize(
+    ("configmap", "expected"),
+    [
+        (_pipeline("steps:\n- step: Segmentation\n- step: QualityPrediction\n"), True),
+        # htrflow resolves a step by its lower-cased name, and so does this.
+        (_pipeline("steps:\n- step: qualityprediction\n"), True),
+        (_pipeline("steps:\n- step: Segmentation\n- step: Export\n"), False),
+        (_pipeline("steps: [unclosed\n"), False),
+        (_pipeline(""), False),
+        ({"metadata": {}}, False),
+        (None, False),
+        (_pipeline("[" * 20000 + "]" * 20000), False),
+        (_pipeline("steps: " + "{a: " * 5000), False),
+        (_pipeline("steps:\n- step: QualityPrediction\n  at: 2026-99-99\n"), False),
+        (_pipeline("steps:\n- step: QualityPrediction\n  n: !!int zz\n"), False),
+        (
+            _pipeline(
+                "steps:\n- step: QualityPrediction\n"
+                + "# padding\n" * (projection.MAX_PIPELINE_YAML // 10)
+            ),
+            False,
+        ),
+        ({"data": {"pipeline.yaml": 123}}, False),
+        (
+            _pipeline(
+                "steps:\n- step: QualityPrediction\n"
+                "  at: !!timestamp '99999999999999999999-01-01'\n"
+            ),
+            False,
+        ),
+    ],
+    ids=[
+        "qp",
+        "lower-case",
+        "no-qp",
+        "bad-yaml",
+        "empty",
+        "no-data",
+        "missing",
+        "deeply-nested",
+        "deeply-nested-map",
+        "bad-date",
+        "bad-int",
+        "over-the-cap",
+        "not-a-string",
+        "bad-timestamp",
+    ],
+)
+def test_a_pipeline_scores_quality_when_it_has_the_step(configmap, expected):
+    assert projection.quality_prediction(configmap) is expected
+
+
+def test_a_pipeline_just_under_the_cap_is_still_read():
+    """The cap is on size, not on a real pipeline: one padded to just under
+    it still says what its steps are."""
+    head = "steps:\n- step: QualityPrediction\n"
+    pad = "#" * (projection.MAX_PIPELINE_YAML - len(head) - 1) + "\n"
+    assert projection.quality_prediction(_pipeline(head + pad)) is True

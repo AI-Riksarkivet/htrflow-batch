@@ -21,6 +21,7 @@ function job(name: string, over: Partial<JobSummary> = {}): JobSummary {
     resultsBase: "https://results.example.org/htr-test/demo-v1",
     warmup: { phase: "succeeded" },
     jobGone: false,
+    qualityPrediction: false,
     ...over,
   };
 }

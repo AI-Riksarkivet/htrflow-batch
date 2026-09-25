@@ -64,6 +64,32 @@ describe("the read API's contract", () => {
     expect(volumes.some((v) => v.reason !== undefined)).toBe(true);
   });
 
+  // Task 6's contract scores exactly one volume of one campaign: the parsed
+  // shapes have to carry that number through, not merely accept it.
+  test("the scored volume's and the campaign's quality both parse", () => {
+    const scored = contract.details
+      .flatMap((r) => jobDetailSchema.parse(r).volumes)
+      .find((v) => v.progress?.quality != null);
+    expect(typeof scored?.progress?.quality?.mean).toBe("number");
+    const detail = contract.details
+      .map((r) => jobDetailSchema.parse(r))
+      .find((d) => d.quality !== null);
+    expect(detail?.quality?.volumes).toBe(1);
+  });
+
+  // The list row says which campaigns score, so a card holds its column
+  // before its detail lands; an API from before the field reads as no.
+  test("the list row says which campaigns score page quality", () => {
+    const scoring = contract.summaries
+      .map((r) => jobSummarySchema.parse(r))
+      .filter((s) => s.qualityPrediction)
+      .map((s) => s.name);
+    expect(scoring).toEqual(["kyrk"]);
+    const older = { ...contract.summaries[0] } as Record<string, unknown>;
+    delete older.qualityPrediction;
+    expect(jobSummarySchema.parse(older).qualityPrediction).toBe(false);
+  });
+
   // The page asks for reaped campaigns REAPED_PAGE at a time and never past
   // REAPED_MAX; the numbers are the route's own -- how many it sends unasked,
   // and the last `?reaped=` it answers 200 to. A page asking past the cap
