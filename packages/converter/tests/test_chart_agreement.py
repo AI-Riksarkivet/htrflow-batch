@@ -780,14 +780,16 @@ def test_a_wrapper_setting_for_a_local_run_only_reaches_no_rendered_job():
         assert not (local and name in admitted), name
 
 
-def test_every_conditionally_rendered_env_var_is_admitted():
+def test_lookahead_bytes_and_image_cache_bucket_are_admitted_when_rendered():
     """render.py appends LOOKAHEAD_BYTES (a named size) and IMAGE_CACHE_BUCKET
     (converter.yaml's `image_cache` set) to the campaign Job on top of what
     its skeleton carries -- neither is in the skeleton itself, so nothing
     but job-shape's `free` list stands between "render.py added it" and
     "Kyverno refuses the Job" (test_policy_admission.py proves that with the
     real CLI). This is the same check without one, so a forgotten `free`
-    entry fails here even when Kyverno is not on PATH."""
+    entry fails here even when Kyverno is not on PATH. It covers these two
+    by name: a third conditional env var must switch its own setting on
+    below."""
     campaign, pipeline, cfg = _good_fixture()
     cfg = cfg.model_copy(
         update={
