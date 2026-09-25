@@ -193,6 +193,11 @@ data:
         || aws --endpoint-url "$ep" s3api create-bucket --bucket "$1" >/dev/null
     }
     ensure_bucket "$S3_BUCKET"
+    {{- if .Values.s3.imageCacheBucket }}
+    if [ -n "${IMAGE_CACHE_BUCKET:-}" ]; then
+      ensure_bucket "$IMAGE_CACHE_BUCKET"   # private: no policy, no CORS
+    fi
+    {{- end }}
     aws --endpoint-url "$ep" s3api put-bucket-policy --bucket "$S3_BUCKET" --policy file:///init/results-policy.json
     aws --endpoint-url "$ep" s3api put-bucket-cors --bucket "$S3_BUCKET" --cors-configuration file:///init/cors.json
     echo "rustfs init complete"
@@ -239,6 +244,10 @@ spec:
             - name: S3_BUCKET
               valueFrom:
                 secretKeyRef: { name: {{ .Values.s3.secretName }}, key: S3_BUCKET }
+            {{- with .Values.s3.imageCacheBucket }}
+            - name: IMAGE_CACHE_BUCKET
+              value: {{ . | quote }}
+            {{- end }}
           volumeMounts:
             - { name: init, mountPath: /init, readOnly: true }
             - { name: s3, mountPath: /secrets/s3, readOnly: true }

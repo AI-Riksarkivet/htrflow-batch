@@ -27,6 +27,9 @@ devStack:
 s3:
   bucket: htr-results
   secretName: htr-batch-s3
+  # A private bucket for the image cache (converter.yaml's image_cache.bucket):
+  # created by the init hook with no public policy. Empty: none.
+  imageCacheBucket: ""
 
 rustfs:
   enabled: false
