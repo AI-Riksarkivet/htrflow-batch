@@ -224,6 +224,19 @@ def test_a_resumed_page_touches_no_cache(env, cfg, s3, monkeypatch, sample_manif
     assert "SE-RA-1234/SE-RA-1234_00001.jpg" not in keys
 
 
+def test_the_results_bucket_named_as_the_cache_caches_nothing(env, cfg, s3):
+    """The results bucket is public-read: no source image may land in it."""
+    cached = {**env, "IMAGE_CACHE_BUCKET": cfg.s3_bucket}
+    assert main(cached, process_page_factory=fake_factory) == EXIT_OK
+    assert not [k for k in _keys(s3, cfg) if k.endswith(".jpg")]
+    body = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert "image_cache" not in body
+
+
 def test_a_missing_cache_bucket_still_completes_the_volume(env, cfg, s3):
     assert (
         main(

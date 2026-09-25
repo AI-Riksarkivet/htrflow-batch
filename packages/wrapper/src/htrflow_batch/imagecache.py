@@ -75,10 +75,22 @@ class ImageCache:
         *,
         max_bytes: int,
         max_pixels: int,
+        results_bucket: str,
     ) -> ImageCache | None:
-        """The cache for this volume, or None: off, or a volume whose pages
-        the five-digit key cannot number (said once)."""
+        """The cache for this volume, or None: off, the results bucket, or a
+        volume whose pages the five-digit key cannot number (each said once).
+
+        The results bucket is anonymous-read, so a source image cached there
+        would be public: named as the cache, it switches the cache off."""
         if not bucket:
+            return None
+        if bucket == results_bucket:
+            log.warning(
+                "[%s] image cache off: IMAGE_CACHE_BUCKET is the results bucket "
+                "%s, which is public-read, and source images must stay private",
+                ref,
+                bucket,
+            )
             return None
         if any(p.index > MAX_PAGE for p in pages):
             log.warning(

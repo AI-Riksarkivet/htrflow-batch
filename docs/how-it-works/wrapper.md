@@ -272,6 +272,8 @@ The cache speeds a run up, and the run never depends on it:
   creates the bucket.
 - **A volume with a page index past 99999 is not cached at all**, with one
   log line, because the key's page number has five digits.
+- **The results bucket is never the cache.** It is public-read, so an
+  `IMAGE_CACHE_BUCKET` that names it turns the cache off, with one log line.
 - **The key has no width.** A hit serves the image at whatever width first
   stored it. A pipeline asking for a larger `MAX_IMAGE_WIDTH` gets the
   cached size.

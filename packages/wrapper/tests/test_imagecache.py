@@ -114,7 +114,9 @@ def test_a_second_put_of_the_same_key_overwrites(client, tmp_path):
 def test_for_volume_is_none_without_a_bucket(client):
     pages = [_page(1)]
     assert (
-        ImageCache.for_volume(client, "", "R1", pages, max_bytes=1, max_pixels=0)
+        ImageCache.for_volume(
+            client, "", "R1", pages, max_bytes=1, max_pixels=0, results_bucket="r"
+        )
         is None
     )
 
@@ -123,7 +125,7 @@ def test_for_volume_is_none_past_the_five_digit_limit_and_says_so_once(client, c
     pages = [_page(1), _page(MAX_PAGE + 1)]
     with caplog.at_level(logging.WARNING):
         got = ImageCache.for_volume(
-            client, BUCKET, "R1", pages, max_bytes=1, max_pixels=0
+            client, BUCKET, "R1", pages, max_bytes=1, max_pixels=0, results_bucket="r"
         )
     assert got is None
     assert sum("99999" in r.getMessage() for r in caplog.records) == 1
@@ -131,7 +133,7 @@ def test_for_volume_is_none_past_the_five_digit_limit_and_says_so_once(client, c
 
 def test_for_volume_builds_one_otherwise(client):
     got = ImageCache.for_volume(
-        client, BUCKET, "R1", [_page(1)], max_bytes=1, max_pixels=0
+        client, BUCKET, "R1", [_page(1)], max_bytes=1, max_pixels=0, results_bucket="r"
     )
     assert isinstance(got, ImageCache)
 
@@ -202,3 +204,22 @@ def test_an_object_without_a_recorded_source_is_a_miss(client, tmp_path):
     path = tmp_path / "p.jpg"
     assert _cache(client).get(_page(1), path) is False
     assert not path.exists()
+
+
+def test_for_volume_refuses_the_results_bucket_in_one_sentence(client, caplog):
+    """The results bucket is anonymous-read: source images cached there would
+    be public."""
+    with caplog.at_level(logging.WARNING):
+        got = ImageCache.for_volume(
+            client,
+            "htr-results",
+            "R1",
+            [_page(1)],
+            max_bytes=1,
+            max_pixels=0,
+            results_bucket="htr-results",
+        )
+    assert got is None
+    lines = [r.getMessage() for r in caplog.records]
+    assert len(lines) == 1
+    assert "htr-results" in lines[0] and "off" in lines[0]
