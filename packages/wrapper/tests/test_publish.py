@@ -366,3 +366,12 @@ def test_iiif_json_and_manifest_json_share_the_one_quality_block(tmp_path):
     assert iiif["items"][1]["metadata"] == [
         {"label": {"en": ["Predicted quality"]}, "value": {"none": ["0.50"]}}
     ]
+
+
+def test_the_manifest_carries_the_cache_counts_only_when_given(cfg, monkeypatch):
+    monkeypatch.setattr(publish, "_htrflow_version", lambda: "0.2.3")
+    stats = StreamStats(results={"0001": PageOutcome(status="ok", seconds=1.0)})
+    args = (cfg, _pages()[:1], stats, "https://m", PIPELINE, 1.0, 1)
+    assert "image_cache" not in publish.run_manifest(*args)
+    counts = {"bucket": "images-batch", "hits": 1, "misses": 0, "stored": 0}
+    assert publish.run_manifest(*args, image_cache=counts)["image_cache"] == counts
