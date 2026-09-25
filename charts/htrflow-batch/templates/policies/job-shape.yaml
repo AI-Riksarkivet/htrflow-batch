@@ -25,14 +25,17 @@ exec python -m htrflow_batch.warmup
 The rest of the two skeletons, as the converter renders them: every env var
 by name -- `pinned` at the skeleton's own value, `free` set by render.py per
 campaign (a plain value; `bytes` among them a whole number of bytes --
-the converter renders LOOKAHEAD_BYTES only at a named size, but a Job
-without one is admitted too), `secretEnv` from a Secret key,
+the converter renders LOOKAHEAD_BYTES only at a named size, and
+IMAGE_CACHE_BUCKET only when converter.yaml sets `image_cache`, but a Job
+without either is admitted too), `secretEnv` from a Secret key,
 `fieldEnv` from that one field -- the mounts of each container, the Secret volume's file
 mode and the two securityContexts. An env var, a file mode or a mount point
 is enough to run code out of a ConfigMap the apply identity may write
 (PATH, LD_PRELOAD, PYTHONPATH, an executable key), so none is left open
 (audit 0923 I-1, M-4). test_chart_agreement.py holds this block to the
-manifests.
+manifests. IMAGE_CACHE_BUCKET is a bucket name, not a byte count, so it is
+in `free` but not `bytes`; the warm-up Job never gets it -- it never reads a
+page, so it never looks in the cache.
 */}}
 {{- $spec := `
 batch:
@@ -45,7 +48,7 @@ batch:
     TMPDIR: /work/tmp
     YOLO_CONFIG_DIR: /work/ultralytics
     AWS_SHARED_CREDENTIALS_FILE: /secrets/s3/credentials
-  free: [PIPELINE_ID, S3_PREFIX, PUBLIC_RESULTS_BASE, IMAGE_DIGEST, BACKOFF_LIMIT_PER_INDEX, MANIFEST_MAX_BYTES, FETCH_MAX_BYTES, LOOKAHEAD_BYTES]
+  free: [PIPELINE_ID, S3_PREFIX, PUBLIC_RESULTS_BASE, IMAGE_DIGEST, BACKOFF_LIMIT_PER_INDEX, MANIFEST_MAX_BYTES, FETCH_MAX_BYTES, LOOKAHEAD_BYTES, IMAGE_CACHE_BUCKET]
   bytes: [MANIFEST_MAX_BYTES, FETCH_MAX_BYTES, LOOKAHEAD_BYTES]
   secretEnv: [S3_ENDPOINT, S3_BUCKET]
   fieldEnv:

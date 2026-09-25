@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from htrflow_converter.models import ConverterConfig, Size
+from htrflow_converter.models import ConverterConfig, ImageCacheSettings, Size
 from htrflow_converter.render import CAMPAIGN_SELECTOR
 
 ROOT = Path(__file__).parents[3]
@@ -620,8 +620,9 @@ def _job_shape_spec() -> dict:
 @pytest.mark.parametrize(
     "role,skeleton,added",
     [
-        # A named size adds the lookahead its /work bounds (B105).
-        ("batch", "campaign-job.yaml", {"LOOKAHEAD_BYTES"}),
+        # A named size adds the lookahead its /work bounds (B105); the image
+        # cache adds its bucket, when converter.yaml turns it on (Task 3).
+        ("batch", "campaign-job.yaml", {"LOOKAHEAD_BYTES", "IMAGE_CACHE_BUCKET"}),
         ("warmup", "warmup-job.yaml", {"HF_TOKEN"}),
     ],
 )
@@ -717,9 +718,14 @@ def test_every_env_job_shape_leaves_free_has_a_named_setter():
 
 
 #: A `size` one is rendered only for a pipeline that names a size, from
-#: that size's key: test_sizes.py holds it to the key it names.
+#: that size's key: test_sizes.py holds it to the key it names. A `cache`
+#: one is rendered only when converter.yaml sets `image_cache`, from its
+#: `bucket`: both are conditional, so `_CHANGED`'s plain-value comparison
+#: below does not fit them (see the local-run-only and
+#: conditionally-rendered tests further down instead).
 @pytest.mark.parametrize(
-    "name", [n for n, (kind, _) in FREE_ENV.items() if kind not in ("fixed", "size")]
+    "name",
+    [n for n, (kind, _) in FREE_ENV.items() if kind not in ("fixed", "size", "cache")],
 )
 def test_a_wrapper_env_the_page_says_a_file_sets_is_set_from_it(name: str):
     """ "Set by `converter.yaml` `fetch_max_bytes`" is true only if changing
@@ -758,6 +764,12 @@ def test_a_wrapper_setting_for_a_local_run_only_reaches_no_rendered_job():
     sized = cfg.model_copy(update={"sizes": {"s": Size(cpu="1", memory="4Gi")}})
     at_size = pipeline.model_copy(update={"size": "s"})
     rendered |= set(_job_env(_job(campaign, at_size, sized)))
+    # A campaign whose converter.yaml turns the image cache on carries its
+    # bucket (Task 3): IMAGE_CACHE_BUCKET is not a local-only wrapper var.
+    cached = cfg.model_copy(
+        update={"image_cache": ImageCacheSettings(bucket="images-batch")}
+    )
+    rendered |= set(_job_env(_job(campaign, pipeline, cached)))
     shape = job_shape()["batch"]
     admitted = {*shape["pinned"], *shape["free"], *shape["secretEnv"]}
     admitted |= set(shape["fieldEnv"])
@@ -766,6 +778,29 @@ def test_a_wrapper_setting_for_a_local_run_only_reaches_no_rendered_job():
         local = wrapper_set_by(name).startswith(LOCAL_ONLY)
         assert local == (name not in rendered | set(script_exports()) | baked), name
         assert not (local and name in admitted), name
+
+
+def test_every_conditionally_rendered_env_var_is_admitted():
+    """render.py appends LOOKAHEAD_BYTES (a named size) and IMAGE_CACHE_BUCKET
+    (converter.yaml's `image_cache` set) to the campaign Job on top of what
+    its skeleton carries -- neither is in the skeleton itself, so nothing
+    but job-shape's `free` list stands between "render.py added it" and
+    "Kyverno refuses the Job" (test_policy_admission.py proves that with the
+    real CLI). This is the same check without one, so a forgotten `free`
+    entry fails here even when Kyverno is not on PATH."""
+    campaign, pipeline, cfg = _good_fixture()
+    cfg = cfg.model_copy(
+        update={
+            "sizes": {"s": Size(cpu="1", memory="4Gi")},
+            "image_cache": ImageCacheSettings(bucket="images-batch"),
+        }
+    )
+    pipeline = pipeline.model_copy(update={"size": "s"})
+    env = set(_job_env(_job(campaign, pipeline, cfg)))
+    shape = job_shape()["batch"]
+    admitted = {*shape["pinned"], *shape["free"], *shape["secretEnv"]}
+    admitted |= set(shape["fieldEnv"])
+    assert env <= admitted
 
 
 def test_a_web_setting_the_page_says_the_chart_sets_is_set_by_that_value():
