@@ -11,7 +11,7 @@ from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
-from typing import Callable, Iterable, Iterator
+from typing import TYPE_CHECKING, Callable, Iterable, Iterator
 
 import httpx
 from pydantic import BaseModel, Field
@@ -27,6 +27,9 @@ from .fetch import (
     fetch_page,
 )
 from .iiif import PageRef
+
+if TYPE_CHECKING:
+    from .imagecache import ImageCache
 
 log = logging.getLogger("htrflow_batch")
 
@@ -128,6 +131,7 @@ class PageStream:
         stop: threading.Event | None = None,
         deadline: float = DOWNLOAD_DEADLINE_SECONDS,
         lookahead_bytes: int = LOOKAHEAD_BYTES,
+        cache: "ImageCache | None" = None,
     ) -> None:
         self.bytes_fetched = 0
         self._max_bytes, self._lookahead_bytes = max_bytes, lookahead_bytes
@@ -142,6 +146,7 @@ class PageStream:
             max_pixels=max_pixels,
             stop=stop,
             deadline=deadline,
+            cache=cache,
         )
         self._queued = list(pages)
         self._lookahead = max(1, lookahead)
@@ -201,7 +206,8 @@ class PageStream:
                     result = fut.result()  # in submission order, head first
                 except Exception as e:  # fetch_page catches its own errors
                     result = FetchResult(page=page, path=None, error=describe(e))
-                self.bytes_fetched += result.size
+                if not result.from_cache:
+                    self.bytes_fetched += result.size
                 yield result
                 # Back from the consumer: page done, image deleted —
                 # its slot frees and the next page goes out.

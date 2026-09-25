@@ -39,6 +39,7 @@ import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
 from pydantic import BaseModel
@@ -52,6 +53,9 @@ from .bounded import (
     get,
 )
 from .iiif import PageRef, _int_or_none
+
+if TYPE_CHECKING:
+    from .imagecache import ImageCache
 
 #: Default cap on one image body (env ``FETCH_MAX_BYTES``; docs: wrapper).
 FETCH_MAX_BYTES = 64 * 1024 * 1024
@@ -93,6 +97,9 @@ class FetchResult(BaseModel):
     size: int = 0
     #: The page could not be fetched TODAY; the next attempt may (3095).
     transient: bool = False
+    #: Read from the image cache, not downloaded: not in ``bytes_fetched``,
+    #: which counts what the source served (docs: wrapper, "Image cache").
+    from_cache: bool = False
 
 
 #: Attempts per page, and the first wait between them (doubling after it).
@@ -327,10 +334,15 @@ def fetch_page(
     max_pixels: int = MAX_IMAGE_PIXELS,
     stop: threading.Event | None = None,
     deadline: float = DOWNLOAD_DEADLINE_SECONDS,
+    cache: "ImageCache | None" = None,
 ) -> FetchResult:
     last, transient = "unknown error", True
     url = page.image_url
     path = dest_dir / f"{page.name}.jpg"
+    if cache is not None and cache.get(page, path):
+        return FetchResult(
+            page=page, path=path, error=None, size=path.stat().st_size, from_cache=True
+        )
     attempt, refused_size = 0, False
     while attempt < retries:
         if stop is not None and stop.is_set():
@@ -347,6 +359,8 @@ def fetch_page(
                         path.unlink(missing_ok=True)
                         raise _Reject(clock.reason)
                     _check_pixels(path, max_pixels)  # W14
+                    if cache is not None:
+                        cache.put(page, path)  # best-effort; never fails the page
                     return FetchResult(page=page, path=path, error=None, size=size)
                 last, status = f"HTTP {resp.status_code}", resp.status_code
                 wait = _retry_after(resp)

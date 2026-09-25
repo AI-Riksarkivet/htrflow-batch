@@ -3,11 +3,14 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
+import boto3
 import httpx
 import pytest
+from moto import mock_aws
 
 from htrflow_batch.fetch import FetchResult, fetch_page
 from htrflow_batch.iiif import PageRef
+from htrflow_batch.imagecache import ImageCache
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 12  # JPEG SOI + APP0 marker
 
@@ -21,6 +24,16 @@ def _pages(n):
 
 def _client(handler):
     return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+@pytest.fixture
+def page():
+    return PageRef(
+        index=1,
+        name="0001",
+        image_url="https://iiif.example/p1/full/2500,/0/default.jpg",
+        canvas={},
+    )
 
 
 def _fetch_all(pages, tmp_path, handler, **kw):
@@ -634,3 +647,58 @@ def test_the_wait_between_attempts_ends_when_the_run_aborts(tmp_path):
     r = fetch_page(_pages(1)[0], tmp_path, _client(handler), stop=stop)
     assert time.monotonic() - t0 < 5
     assert r.error == "stopped: run aborted"
+
+
+# -- the image cache ---------------------------------------------------------
+
+
+def _cache(c):
+    return ImageCache(c, "images-batch", "R0001203", max_bytes=1 << 20, max_pixels=0)
+
+
+def test_a_cache_hit_never_calls_the_iiif_server(tmp_path, page):
+    calls = []
+
+    def handler(req):
+        calls.append(req.url)
+        return httpx.Response(200, content=JPEG)
+
+    with mock_aws():
+        c = boto3.client("s3", region_name="us-east-1")
+        c.create_bucket(Bucket="images-batch")
+        c.put_object(Bucket="images-batch", Key=_cache(c).key(page), Body=JPEG)
+        result = fetch_page(page, tmp_path, _client(handler), cache=_cache(c))
+    assert result.error is None and result.from_cache and calls == []
+    assert result.size == len(JPEG)
+
+
+def test_a_miss_downloads_and_stores(tmp_path, page):
+    with mock_aws():
+        c = boto3.client("s3", region_name="us-east-1")
+        c.create_bucket(Bucket="images-batch")
+        cache = _cache(c)
+        result = fetch_page(
+            page,
+            tmp_path,
+            _client(lambda r: httpx.Response(200, content=JPEG)),
+            cache=cache,
+        )
+        stored = c.get_object(Bucket="images-batch", Key=cache.key(page))["Body"].read()
+    assert result.error is None and not result.from_cache
+    assert stored == JPEG
+    assert cache.report()["stored"] == 1
+
+
+def test_a_failed_download_stores_nothing(tmp_path, page):
+    with mock_aws():
+        c = boto3.client("s3", region_name="us-east-1")
+        c.create_bucket(Bucket="images-batch")
+        cache = _cache(c)
+        result = fetch_page(
+            page,
+            tmp_path,
+            _client(lambda r: httpx.Response(404)),
+            retries=1,
+            cache=cache,
+        )
+    assert result.error and cache.report()["stored"] == 0

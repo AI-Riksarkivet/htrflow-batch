@@ -353,7 +353,15 @@ fail=0
 # a dozen download threads share a lock over. config.py +3: image_cache_bucket,
 # off by default. Half of the module is the docstrings saying the cache is
 # never a correctness dependency and nothing in it may raise into a page.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 4604
+# 4604 -> 4661 (2026-09-25, image cache Task 2): fetch.py +9 -- the cache is
+# tried before the download and fed the file after one, `from_cache` on the
+# result. stream.py +4: the cache passed into the pool's fetch_page, a hit
+# left out of bytes_fetched (it never touched the IIIF server). main.py +19:
+# `_stream` builds the volume's ImageCache and logs its counts once done.
+# publish.py +5: `image_cache` on run/run_manifest, present in manifest.json
+# only when the cache ran. Most of it is the two lines of docstring on each
+# saying why a hit is not a download and why the count still has to add up.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 4661
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
