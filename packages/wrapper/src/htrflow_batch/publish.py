@@ -117,6 +117,7 @@ def run_manifest(
     quality: Mapping[str, float] | None = None,
     canvases: Sequence[str] = (),
     summary: dict | None | _Unset = _UNSET,
+    image_cache: dict | None = None,
 ) -> dict:
     """The manifest.json body: what the volume is, what produced it, what came
     out, and what a resume or the Phase 2 gate reads back (docs: s3-layout).
@@ -126,7 +127,8 @@ def run_manifest(
     (``run``, ahead of ``iiif.json``) pass it in -- including an explicit
     ``None``, meaning "no quality block" -- rather than have it built twice;
     a caller that omits the argument (the contract script) gets it computed
-    here."""
+    here. ``image_cache`` is the run's ``ImageCache.report()`` (imagecache.py);
+    with the cache off it is None and the ``image_cache`` key is absent."""
     ok_pages = [n for n, r in stats.results.items() if r.status == "ok"]
     failed_pages = [n for n, r in stats.results.items() if r.status == "failed"]
     scores = quality or {}
@@ -173,6 +175,8 @@ def run_manifest(
     )
     if block is not None:
         body["quality"] = block
+    if image_cache is not None:
+        body["image_cache"] = image_cache
     return body
 
 
@@ -194,6 +198,7 @@ def run(
     uploaded: set[str],
     t_start: float,
     bytes_fetched: int,
+    image_cache: dict | None = None,
 ) -> Published:
     """iiif.json (when any dims resolved), pipeline.yaml, manifest.json last.
     Returns whether iiif.json was written, so main.py can tell progress.json's
@@ -201,7 +206,8 @@ def run(
     enough that it never crossed the interim cadence (progress.py) still ends
     up saying so once it is actually done -- and the volume's quality block,
     so the final progress.json can carry it too without a second read of
-    manifest.json."""
+    manifest.json. ``image_cache`` is the run's cache counts (imagecache.py),
+    or None with the cache off."""
     dims = alto_dims(cfg, store, pages, uploaded)
     wrote_iiif = bool(dims)
     pipeline_text = Path(cfg.pipeline_path).read_text()
@@ -235,6 +241,7 @@ def run(
         quality=store.page_quality,
         canvases=canvases,
         summary=block,
+        image_cache=image_cache,
     )
     store.put_json("manifest.json", body)
     log.info(

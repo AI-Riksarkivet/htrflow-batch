@@ -28,6 +28,7 @@ from .iiif import (
     redact_urls,
     source_digest,
 )
+from .imagecache import ImageCache
 from .logship import LogCapture
 from .progress import Progress
 from .store import ResultStore
@@ -317,7 +318,7 @@ def _main(
             source, source_url, pages = _setup(cfg, client, store, state)
             tracker.pages, tracker.source = pages, source
             todo, done = _resume(cfg, store, pages, state)
-            stats, nbytes = _stream(
+            stats, nbytes, cache_report = _stream(
                 cfg,
                 client,
                 store,
@@ -331,7 +332,16 @@ def _main(
         uploaded = _verify(store, pages, stats, state, cfg.last_attempt)
         state.stage = "publish"
         published = publish.run(
-            cfg, store, source, source_url, pages, stats, uploaded, t_start, nbytes
+            cfg,
+            store,
+            source,
+            source_url,
+            pages,
+            stats,
+            uploaded,
+            t_start,
+            nbytes,
+            image_cache=cache_report,
         )
         if published.wrote_iiif:
             tracker.viewer_published = True
@@ -463,15 +473,25 @@ def _stream(
     state: RunState,
     stop: threading.Event,
     tracker: Progress,
-) -> tuple[StreamStats, int]:
+) -> tuple[StreamStats, int, dict | None]:
     """Download ∥ process ∥ upload, never more than LOOKAHEAD_PAGES ahead:
-    the per-page outcomes and the bytes fetched."""
+    the per-page outcomes, the bytes fetched, and the image cache's report
+    (None with the cache off; docs: wrapper, "Image cache")."""
     state.stage = "stream"
     # Seeded with the pages resume skipped BEFORE the loop, not patched up
     # after it: they are in the bucket, so every reader of these counts --
     # progress.json included -- should see them from the first page on.
     stats = StreamStats(results={name: PageOutcome(status="skipped") for name in done})
     tracker.stats = stats
+    cache = ImageCache.for_volume(
+        store.client,
+        cfg.image_cache_bucket,
+        cfg.volume_ref,
+        todo,
+        max_bytes=cfg.fetch_max_bytes,
+        max_pixels=cfg.max_image_pixels,
+        results_bucket=cfg.s3_bucket,
+    )
     stream = PageStream(
         todo,
         Path(cfg.workdir) / "input",
@@ -483,6 +503,7 @@ def _stream(
         max_pixels=cfg.max_image_pixels,
         stop=stop,
         deadline=cfg.download_deadline_seconds,
+        cache=cache,
     )
     try:
         # The first downloads are in flight, so the model load overlaps them
@@ -503,7 +524,17 @@ def _stream(
         )
     finally:
         stream.close()  # never blocks; cancels what is still queued
-    return stats, stream.bytes_fetched
+    report = cache.report() if cache is not None else None
+    if report is not None:
+        log.info(
+            "[%s] image cache %s: %d hits, %d misses, %d stored",
+            cfg.volume_ref,
+            report["bucket"],
+            report["hits"],
+            report["misses"],
+            report["stored"],
+        )
+    return stats, stream.bytes_fetched, report
 
 
 def _verify(

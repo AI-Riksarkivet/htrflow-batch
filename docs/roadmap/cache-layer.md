@@ -1,8 +1,8 @@
 # Cache layer
 
-A proposal, not built: a read-through cache between campaign pods and the
-IIIF origin. Build it only when measurements from real campaigns show it is
-needed. This page covers the evidence that would justify it, two ways to
+A proposal, not built: a read-through cache layer between campaign pods
+and the IIIF origin, beyond the S3 image cache that already exists. Build it
+only when measurements from real campaigns show it is needed. This page covers the evidence that would justify it, two ways to
 build it, what each one promises, how each one fails, and the spike that
 decides between them.
 
@@ -20,14 +20,19 @@ The wrapper fetches pages straight from the IIIF origin
 - Each image URL comes from the canvas's image service in the source
   manifest, capped at `MAX_IMAGE_WIDTH`. Volumes listed as plain `images:`
   are fetched at the URL given.
-- Nothing is cached. A retry or a re-run under a new pipeline fetches every
-  page it processes again, from the origin.
+- An S3 image cache can be switched on
+  ([Deploy → Cache source images](../getting-started/deploy.md#cache-source-images)).
+  Each page's image is looked for in a private bucket first and stored there
+  after a download, so a retry or a re-run under a new pipeline reads the
+  pages it holds from the bucket, not the origin
+  ([The Wrapper → Image cache](../how-it-works/wrapper.md#image-cache)).
+  Without it, every such run fetches every page it processes again.
 
 Streaming already caps the GPU's wait at about one page's download at the
-start, plus any moments the origin falls behind. So the case for a cache
-rests mostly on two things: shielding the origin from backfill and repeat
-fetches, and the economics of reading the same corpus more than once. It
-rests less on idle GPUs.
+start, plus any moments the origin falls behind, and the S3 image cache
+already answers repeat fetches. The two variants below are the next step,
+for when the evidence shows idle GPUs or origin load: they add prefetching
+ahead of the queue, and shield the origin on a volume's first read too.
 
 ## The evidence that would justify it
 
@@ -39,7 +44,7 @@ Every completed volume's `manifest.json` records the numbers needed
 | `wall_seconds` | the whole run, from the wrapper's start to the last write |
 | `gpu_stall_seconds` | time the consumer waited for the next page to land: the fetch time the GPU actually felt |
 | `results.<page>.seconds` | processing time for each page that reached the pipeline |
-| `bytes_fetched` | image bytes this run downloaded |
+| `bytes_fetched` | image bytes this run downloaded from the origin; pages read from the S3 image cache add nothing |
 | `pages`, `pages_per_second` | volume size and throughput |
 
 Fetch time itself is not recorded. Downloads run concurrently and ahead of
@@ -72,7 +77,9 @@ not a handful of volumes:
   `5xx` fetch errors in the run logs, and page failures they explain.
 - **Repeat fetches.** The same volumes are fetched again and again, through
   retries, re-runs under new pipeline ids or several tenants. `bytes_fetched`
-  summed per volume across runs shows how much.
+  summed per volume across runs shows how much. The S3 image cache is the
+  answer built for this one; its hits and misses are in each
+  `manifest.json`'s `image_cache`.
 
 ## What both variants keep
 
@@ -80,7 +87,10 @@ not a handful of volumes:
   cache accelerates and is never a correctness dependency: if it is cold or
   gone, Jobs are slower, not broken.
 - **Width in the key.** The requested width stays part of the cache key, so
-  a cached image can never be served at the wrong resolution.
+  a cached image can never be served at the wrong resolution. The built S3
+  image cache deliberately does not do this: operators fixed its key as
+  `{ref}/{ref}_{page:05d}.jpg`, with no width, so a cached image is reused
+  at whatever width first stored it.
 - **Queue-aware warming.** Warming at submit time would push hundreds of
   volumes through the cache hours before they run, and evict each other on
   the way. A small warmer instead prefetches only the next few volumes that

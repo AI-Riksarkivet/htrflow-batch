@@ -1737,3 +1737,63 @@ def test_every_chart_value_is_read_by_a_template():
         )
     ]
     assert unread == []
+
+
+# --- Task 4: the dev stacks create a private image cache bucket -----------
+
+#: What the devstack chart's own render tests start from: RustFS on, its
+#: init hook on, and the value that lets it render with credentials this
+#: repo publishes -- `ci/full-values.yaml` already carries all three
+#: (README's own command), so a bare render of it is the "value empty" case
+#: below and needs no extra `sets`.
+DEVSTACK_FULL_VALUES = "ci/full-values.yaml"
+
+
+def _devstack_render(sets: tuple[str, ...] = ()) -> list[dict]:
+    result = helm_template(values=DEVSTACK_FULL_VALUES, sets=sets, chart=DEVSTACK_CHART)
+    assert result.returncode == 0, result.stderr
+    return [doc for doc in yaml.safe_load_all(result.stdout) if doc]
+
+
+def test_the_image_cache_bucket_is_created_with_no_policy_or_cors():
+    """`s3.imageCacheBucket` set: the init script ensures the bucket exists
+    and stops there -- no `put-bucket-policy` / `put-bucket-cors` call names
+    it, unlike the results bucket right below it in the same script."""
+    rendered = _devstack_render(("s3.imageCacheBucket=images-batch",))
+    script = named(rendered, "ConfigMap", "rustfs-init")["data"]["init.sh"]
+    assert 'ensure_bucket "$IMAGE_CACHE_BUCKET"' in script
+    assert 'put-bucket-policy --bucket "$IMAGE_CACHE_BUCKET"' not in script
+    assert 'put-bucket-cors --bucket "$IMAGE_CACHE_BUCKET"' not in script
+    # the results bucket's own policy/CORS lines are untouched
+    assert 'put-bucket-policy --bucket "$S3_BUCKET"' in script
+    assert 'put-bucket-cors --bucket "$S3_BUCKET"' in script
+
+    job = named(rendered, "Job", "rustfs-init")
+    env = {
+        e["name"]: e.get("value")
+        for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env["IMAGE_CACHE_BUCKET"] == "images-batch"
+
+
+def test_without_the_value_the_init_configmap_and_job_are_unchanged():
+    """The empty default (`s3.imageCacheBucket: ""`) must render exactly the
+    objects a render without the key at all would -- checked against
+    `origin/main` with a `helm template` diff at review time; here the same
+    property holds within a single render: nothing IMAGE_CACHE_BUCKET-shaped
+    appears anywhere in either object."""
+    rendered = _devstack_render()
+    script = named(rendered, "ConfigMap", "rustfs-init")["data"]["init.sh"]
+    assert "IMAGE_CACHE_BUCKET" not in script
+
+    job = named(rendered, "Job", "rustfs-init")
+    names = [e["name"] for e in job["spec"]["template"]["spec"]["containers"][0]["env"]]
+    assert "IMAGE_CACHE_BUCKET" not in names
+
+
+def test_the_schema_refuses_a_short_image_cache_bucket_name(tmp_path: Path):
+    path = tmp_path / "values.yaml"
+    path.write_text("s3:\n  imageCacheBucket: ab\n", encoding="utf-8")
+    result = helm_template(values=str(path), chart=DEVSTACK_CHART)
+    assert result.returncode != 0
+    assert "s3/imageCacheBucket" in result.stderr

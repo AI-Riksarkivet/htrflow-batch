@@ -103,6 +103,7 @@ Each key is an environment variable of the container.
 | `LOG_SHIP_SECONDS` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | `15.0` | — | no secret — nobody |
 | `MANIFEST_MAX_BYTES` | `converter.yaml` `manifest_max_bytes` | `16777216` | — | no secret — nobody |
 | `FETCH_MAX_BYTES` | `converter.yaml` `fetch_max_bytes` | `67108864` | — | no secret — nobody |
+| `IMAGE_CACHE_BUCKET` | `converter.yaml` `image_cache.bucket`; no `image_cache`, never set | *(empty)* | — | no secret — nobody |
 | `DOWNLOAD_DEADLINE_SECONDS` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | `300.0` | — | no secret — nobody |
 | `MAX_IMAGE_PIXELS` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | `100000000` | — | no secret — nobody |
 | `PAGE_TIMEOUT_SECONDS` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | `600.0` | — | no secret — nobody |
@@ -161,6 +162,7 @@ Each key is a key of `converter.yaml`.
 | `hf_token_secret` | `converter.yaml` | *(empty)* | chart `hfToken.existingSecret` | names the Secret the warm-up reads `HF_TOKEN` from; job-shape admits only `hfToken.existingSecret` — cluster |
 | `manifest_max_bytes` | `converter.yaml` | `16777216` | — | no secret — nobody |
 | `fetch_max_bytes` | `converter.yaml` | `67108864` | — | no secret — nobody |
+| `image_cache` | `converter.yaml` | *(empty)* | — | no secret — nobody |
 | `priority_classes` | `converter.yaml` | `[htr-interactive, htr-bulk, htr-idle]` | chart `queue.priorityClasses[].name` | no secret — nobody |
 | `flavors` | `converter.yaml` | *(empty)* | chart `queue.flavors[].name`, `.nodeLabels` | no secret — nobody |
 | `sizes` | `converter.yaml` | *(empty)* | — | no secret — nobody |

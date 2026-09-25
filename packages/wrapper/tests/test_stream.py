@@ -634,6 +634,26 @@ def test_the_download_deadline_reaches_every_fetch(tmp_path, monkeypatch):
     assert len(list(stream)) == 2 and seen == [7.0, 7.0]
 
 
+def test_bytes_fetched_excludes_cache_hits(tmp_path, monkeypatch):
+    """A cache hit's bytes came from S3, not the IIIF server; ``bytes_fetched``
+    keeps meaning bytes downloaded from IIIF (global constraints)."""
+
+    def fake_fetch(page, **kw):
+        if page.name == "0001":
+            p = tmp_path / "0001.jpg"
+            p.write_bytes(b"x" * 100)
+            return FetchResult(page=page, path=p, error=None, size=100, from_cache=True)
+        p = tmp_path / "0002.jpg"
+        p.write_bytes(b"x" * 50)
+        return FetchResult(page=page, path=p, error=None, size=50)
+
+    monkeypatch.setattr(stream_mod, "fetch_page", fake_fetch)
+    stream = PageStream(_pages(2), tmp_path, _client(lambda r: None), lookahead=64)
+    results = list(stream)
+    assert [r.from_cache for r in results] == [True, False]
+    assert stream.bytes_fetched == 50
+
+
 def test_a_transient_fetch_failure_is_deferred_not_failed(tmp_path, caplog):
     """3095: a page the source could not serve today is not an outcome; it
     stays out of `failed` so verify reports it missing and the retry redoes

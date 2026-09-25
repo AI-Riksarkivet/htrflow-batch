@@ -8,7 +8,13 @@ import yaml
 from pydantic import ValidationError
 
 from htrflow_converter import render
-from htrflow_converter.models import Campaign, ConverterConfig, Toleration, Volume
+from htrflow_converter.models import (
+    Campaign,
+    ConverterConfig,
+    ImageCacheSettings,
+    Toleration,
+    Volume,
+)
 from htrflow_converter.parse import load
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -1030,3 +1036,25 @@ def test_every_wrapper_variable_the_job_sets_is_one_the_wrapper_reads(tmp_path):
 
     assert (attempt(str(limit - 1)), attempt(str(limit))) == (False, True)
     assert attempt("") is False  # the annotation not there yet: not the last
+
+
+def _env(job: dict) -> dict:
+    return {
+        e["name"]: e.get("value")
+        for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+
+
+def test_the_image_cache_bucket_reaches_the_campaign_pod():
+    kyrk, demo, cfg = _kyrk()
+    cached = cfg.model_copy(
+        update={"image_cache": ImageCacheSettings(bucket="images-batch")}
+    )
+    job = render.campaign_objects(kyrk, demo, cached)[1]
+    assert _env(job)["IMAGE_CACHE_BUCKET"] == "images-batch"
+
+
+def test_without_the_image_cache_the_pod_has_no_such_env():
+    kyrk, demo, cfg = _kyrk()
+    job = render.campaign_objects(kyrk, demo, cfg)[1]
+    assert "IMAGE_CACHE_BUCKET" not in _env(job)

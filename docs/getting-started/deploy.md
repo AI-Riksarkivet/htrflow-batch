@@ -228,6 +228,64 @@ matches the wrong one.
   or the image allow-list
   ([Security → Trust boundary](../how-it-works/security.md#trust-boundary)).
 
+## Cache source images
+
+Campaign pods can keep every page image they download in a second,
+**private** S3 bucket. A volume run again, by a retry, another pipeline or
+another campaign, then reads its pages from there and asks the IIIF server
+for nothing. It is optional and off by default.
+
+1. **Create the bucket** on the same S3 store as the results, reachable with
+   the same `s3.existingSecret` credentials, which need `s3:GetObject`,
+   `s3:PutObject` and `s3:ListBucket` on it. Without `s3:ListBucket`, S3
+   answers a key that is not there with 403 instead of 404, and the wrapper
+   logs the bucket once as unreadable. It must be a separate, private
+   bucket, **never the results bucket**: that one is public-read, and a pod
+   told to cache there switches the cache off and logs why. Give it **no**
+   public policy and no CORS: nothing links to it, and source images can
+   carry access rules the ALTO does not. The wrapper never creates it.
+
+    ```bash
+    aws s3api create-bucket --bucket images-batch --endpoint-url <s3-endpoint-url>
+    ```
+
+2. **Name it in `converter.yaml`** in the campaigns repo. Every campaign
+   rendered after that carries it
+   ([Campaign & Pipeline YAML](../reference/campaign-yaml.md)):
+
+    ```yaml
+    image_cache:
+      bucket: images-batch
+    ```
+
+3. **Read the counts.** Each volume's run log has one line for the cache,
+   after its pages are through:
+
+    ```text
+    [R0001203] image cache images-batch: 12 hits, 3 misses, 3 stored
+    ```
+
+    A hit is a page read from the bucket. A miss is a page downloaded
+    instead: not there yet, or there but not a usable image. Stored counts the
+    downloads written back. Fewer stored than misses means a download or a
+    write failed, and the log says which above. The same counts are in
+    `manifest.json`'s `image_cache`, while `bytes_fetched` counts only what
+    the IIIF server sent ([S3 Layout](../reference/s3-layout.md)).
+
+A cached image is reused at whatever width first stored it, since the key
+has no width. An image stored by a run with a smaller `MAX_IMAGE_WIDTH` (a
+local run can set one) stays that size for every later run until its object
+is deleted; the volume's objects share one prefix
+([S3 Layout → Image cache bucket](../reference/s3-layout.md#image-cache-bucket)). Nothing is ever evicted; the bucket's own
+lifecycle rules can expire objects if wanted. What a hit, a miss or a
+cache error does inside the pod is in
+[The Wrapper → Image cache](../how-it-works/wrapper.md#image-cache).
+
+On the devstack chart, `s3.imageCacheBucket` creates the bucket, private,
+next to the results bucket. Then set `image_cache.bucket` to the same name.
+The compose stack has no converter: set `HTR_IMAGE_CACHE_BUCKET` instead,
+and its init creates the bucket and its wrapper uses it.
+
 ## Upgrading
 
 ```bash

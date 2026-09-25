@@ -67,7 +67,11 @@ volumes:
       - https://…/scan-0001.jpg
 ```
 
-![One pod per archival volume: wait for the models, then fetch, transcribe and upload page by page, then verify, publish and exit](docs/slides/assets/p1-pod.svg)
+![One pod per archival volume: wait for the models, then fetch each page from the optional image cache or else IIIF, transcribe and upload page by page, then verify, publish and exit](docs/slides/assets/p1-pod.svg)
+
+Source images can also be cached in a private S3 bucket, so a volume run
+again needs nothing from the IIIF server
+([Cache source images](https://ai-riksarkivet.github.io/htrflow-batch/getting-started/deploy/#cache-source-images)).
 
 A web front shows every campaign and volume live, with each volume's run
 log and the transcription in the viewer:
