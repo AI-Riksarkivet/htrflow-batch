@@ -49,16 +49,24 @@ d.arrow([(c[1] + cw2, y2 + 48), (c[2] - GAP, y2 + 48)])
 d.arrow([(c[3], y2 + 48), (c[2] + cw2 + GAP, y2 + 48)])
 
 # row 3: storage, and the outside world
-g3, y3, lane = 496, 552, 464
-d.group(c[0] - 24, g3, cw2 + 48, GH, "Storage", L("database"))
-d.card(c[0], y3, cw2, "S3 bucket", "ALTO · PAGE", L("database"))
-d.group(c[2] - 24, g3, 1576 - c[2] + 24, GH, "Outside", L("globe"), outside=True)
+g3, y3 = 496, 552
+# Two nested lanes, so "results" and the image cache's "hit" never cross: results
+# leaves the pod left of the hit arrow and turns left on the upper lane; the hit
+# comes up from the cache on the lower lane and enters the pod to its right.
+lane_r, lane_h, lane = 448, 476, 464
+cx, cw3 = c[1] - 8, cw2 + 8          # "Image cache" needs a few more px than a column
+d.group(c[0] - 24, g3, cx + cw3 + 16 - (c[0] - 24), GH, "Storage", L("database"))
+d.card(c[0], y3, cw2, "S3 bucket", "ALTO · quality", L("database"))
+d.card(cx, y3, cw3, "Image cache", "optional, private", L("database"))
+d.group(c[2] - 16, g3, 1576 - c[2] + 16, GH, "Outside", L("globe"), outside=True)
 d.card(c[2], y3, cw2, "IIIF servers", "the page images", L("images"), outside=True)
 d.card(c[3], y3, cw2, "Model hub", "Hugging Face", L("cloud-download"), outside=True)
 d.card(c[4], y3, cw2, "Browser", "anyone reading", L("globe"), outside=True)
-d.arrow([(mid[2] - 50, y2 + CARD_H), (mid[2] - 50, lane), (mid[0] + 60, lane), (mid[0] + 60, y3 - GAP)],
-        label="results", at=(mid[1], lane))
-d.arrow([(mid[2] + 50, y3), (mid[2] + 50, y2 + CARD_H + GAP)], label="pages", at=(mid[2] + 50, lane))
+d.arrow([(mid[2] - 80, y2 + CARD_H), (mid[2] - 80, lane_r), (mid[0] + 60, lane_r), (mid[0] + 60, y3 - GAP)],
+        label="results", at=(mid[0] + 220, lane_r))
+d.arrow([(mid[1], y3), (mid[1], lane_h), (mid[2] + 10, lane_h), (mid[2] + 10, y2 + CARD_H + GAP)],
+        label="hit", at=(mid[1] + 170, lane_h))
+d.arrow([(mid[2] + 90, y3), (mid[2] + 90, y2 + CARD_H + GAP)], label="miss", at=(mid[2] + 90, lane))
 d.arrow([(mid[3], y3), (mid[3], y2 + CARD_H + GAP)], label="models", at=(mid[3], lane))
 d.arrow([(mid[4], y3), (mid[4], y2 + CARD_H + GAP)], label="reads", at=(mid[4], lane))
 d.save(OUT + "part-1-architecture.svg")
