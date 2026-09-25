@@ -223,3 +223,84 @@ def test_for_volume_refuses_the_results_bucket_in_one_sentence(client, caplog):
     lines = [r.getMessage() for r in caplog.records]
     assert len(lines) == 1
     assert "htr-results" in lines[0] and "off" in lines[0]
+
+
+# -- the review's edge cases ---------------------------------------------------
+
+
+def _real_jpeg(width: int, height: int) -> bytes:
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("L", (width, height)).save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+def test_a_cached_object_over_max_pixels_is_a_miss(client, tmp_path):
+    _stored(client, _page(5), _real_jpeg(200, 100))
+    cache = ImageCache(client, BUCKET, "R0001203", max_bytes=1 << 20, max_pixels=10_000)
+    path = tmp_path / "0005.jpg"
+    assert cache.get(_page(5), path) is False
+    assert not path.exists()
+    assert cache.report()["misses"] == 1
+
+
+@pytest.mark.parametrize("code,status", [("AccessDenied", 403), ("InternalError", 500)])
+def test_a_get_refused_otherwise_than_404_falls_back_said_once(
+    tmp_path, caplog, code, status
+):
+    from botocore.stub import Stubber
+
+    c = boto3.client(
+        "s3",
+        region_name="us-east-1",
+        aws_access_key_id="x",
+        aws_secret_access_key="x",
+    )
+    cache = ImageCache(c, BUCKET, "R0001203", max_bytes=1 << 20, max_pixels=0)
+    with Stubber(c) as stub, caplog.at_level(logging.WARNING):
+        for i in (1, 2, 3):
+            stub.add_client_error(
+                "get_object", service_error_code=code, http_status_code=status
+            )
+            assert cache.get(_page(i), tmp_path / f"{i}.jpg") is False
+    lines = [r.getMessage() for r in caplog.records]
+    assert len(lines) == 1 and code in lines[0] and BUCKET in lines[0]
+    assert cache.report()["misses"] == 3
+    assert not list(tmp_path.iterdir())
+
+
+def test_a_put_refused_otherwise_than_no_such_bucket_is_logged_never_raised(
+    tmp_path, caplog
+):
+    from botocore.stub import ANY, Stubber
+
+    c = boto3.client(
+        "s3",
+        region_name="us-east-1",
+        aws_access_key_id="x",
+        aws_secret_access_key="x",
+    )
+    cache = ImageCache(c, BUCKET, "R0001203", max_bytes=1 << 20, max_pixels=0)
+    path = tmp_path / "p.jpg"
+    path.write_bytes(JPEG)
+    with Stubber(c) as stub, caplog.at_level(logging.WARNING):
+        for _ in range(2):
+            stub.add_client_error(
+                "put_object",
+                service_error_code="AccessDenied",
+                http_status_code=403,
+                expected_params={
+                    "Bucket": BUCKET,
+                    "Key": ANY,
+                    "Body": ANY,
+                    "ContentType": "image/jpeg",
+                    "Metadata": ANY,
+                },
+            )
+            cache.put(_page(1), path)  # never raises
+    lines = [r.getMessage() for r in caplog.records]
+    assert len(lines) == 1 and "could not be written" in lines[0]
+    assert cache.report()["stored"] == 0

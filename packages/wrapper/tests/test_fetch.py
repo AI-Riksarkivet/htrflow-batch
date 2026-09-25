@@ -795,3 +795,26 @@ def test_a_cache_put_that_raises_anything_leaves_the_page_ok(tmp_path, page, cap
     assert result.error is None and result.path is not None
     assert cache.report()["stored"] == 0
     assert any("bang" in r.getMessage() for r in caplog.records)
+
+
+def test_a_cache_put_refused_otherwise_than_no_such_bucket_leaves_the_page_ok(
+    tmp_path, page
+):
+    from botocore.exceptions import ClientError
+
+    denied = ClientError({"Error": {"Code": "AccessDenied"}}, "PutObject")
+    missing = ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+    cache = _cache(_Raising(get=missing, put=denied))
+    result = fetch_page(
+        page,
+        tmp_path,
+        _client(lambda r: httpx.Response(200, content=JPEG)),
+        cache=cache,
+    )
+    assert result.error is None and result.path is not None
+    assert cache.report() == {
+        "bucket": "images-batch",
+        "hits": 0,
+        "misses": 1,
+        "stored": 0,
+    }
