@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from collections.abc import Mapping
 
 from .config import Config
 from .iiif import PageRef, painting_body
@@ -59,11 +60,22 @@ def _label(value: object, fallback: str) -> dict:
     return _language_map(value) or {"none": [fallback]}
 
 
+_QUALITY_LABEL = {"en": ["Predicted quality"]}
+
+
+def _quality_entry(text: str) -> list[dict]:
+    """One IIIF metadata pair; UV lists these in its "More information"
+    panel as they are, with no patch."""
+    return [{"label": _QUALITY_LABEL, "value": {"none": [text]}}]
+
+
 def build_viewer_manifest(
     cfg: Config,
     source_manifest: dict,
     pages: "list[PageRef]",
     dims: "dict[str, tuple[int, int]]",
+    quality: "Mapping[str, float] | None" = None,
+    summary: dict | None = None,
 ) -> dict:
     base = cfg.public_results_base.rstrip("/")
     vol = f"{base}/{cfg.volume_prefix}"
@@ -75,40 +87,41 @@ def build_viewer_manifest(
         src = page.canvas
         body = painting_body(src)
         canvas_id = f"{vol}/canvas/{page.name}"
-        canvases.append(
-            {
-                "id": canvas_id,
-                "type": "Canvas",
-                "label": _label(src.get("label"), page.name),
-                "width": w,
-                "height": h,  # capped processing dims (D19 alignment)
-                "seeAlso": [
-                    {
-                        "id": f"{vol}/alto/{page.name}.xml",
-                        "type": "Dataset",
-                        "profile": "http://www.loc.gov/standards/alto/ns-v4#",
-                        "format": "application/xml+alto",
-                        "label": {"none": ["ALTO"]},
-                    }
-                ],
-                "items": [
-                    {
-                        "id": f"{canvas_id}/ap",
-                        "type": "AnnotationPage",
-                        "items": [
-                            {
-                                "id": f"{canvas_id}/anno",
-                                "type": "Annotation",
-                                "motivation": "painting",
-                                "target": canvas_id,
-                                "body": body,
-                            }
-                        ],
-                    }
-                ],
-            }
-        )
-    return {
+        canvas = {
+            "id": canvas_id,
+            "type": "Canvas",
+            "label": _label(src.get("label"), page.name),
+            "width": w,
+            "height": h,  # capped processing dims (D19 alignment)
+            "seeAlso": [
+                {
+                    "id": f"{vol}/alto/{page.name}.xml",
+                    "type": "Dataset",
+                    "profile": "http://www.loc.gov/standards/alto/ns-v4#",
+                    "format": "application/xml+alto",
+                    "label": {"none": ["ALTO"]},
+                }
+            ],
+            "items": [
+                {
+                    "id": f"{canvas_id}/ap",
+                    "type": "AnnotationPage",
+                    "items": [
+                        {
+                            "id": f"{canvas_id}/anno",
+                            "type": "Annotation",
+                            "motivation": "painting",
+                            "target": canvas_id,
+                            "body": body,
+                        }
+                    ],
+                }
+            ],
+        }
+        if quality and page.name in quality:
+            canvas["metadata"] = _quality_entry(f"{quality[page.name]:.2f}")
+        canvases.append(canvas)
+    manifest = {
         "@context": "http://iiif.io/api/presentation/3/context.json",
         "id": f"{vol}/iiif.json",
         "type": "Manifest",
@@ -125,3 +138,9 @@ def build_viewer_manifest(
         ],
         "items": canvases,
     }
+    if summary is not None:
+        manifest["metadata"] = _quality_entry(
+            f"mean {summary['mean']:.2f}, lowest {summary['min']:.2f}, "
+            f"over {summary['scored']} pages"
+        )
+    return manifest

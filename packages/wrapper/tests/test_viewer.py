@@ -119,6 +119,50 @@ def test_viewer_manifest_label_falls_back_when_empty(cfg, p2_manifest):
     assert m["label"] == {"none": ["SE-RA-1234"]}
 
 
+def test_a_scored_canvas_says_its_predicted_quality(cfg):
+    from htrflow_batch.iiif import PageRef
+
+    pages = [
+        PageRef(index=1, name="0001", image_url="https://i/1.jpg", canvas={"id": "c1"})
+    ]
+    m = build_viewer_manifest(
+        cfg, {}, pages, {"0001": (10, 10)}, quality={"0001": 0.87312}
+    )
+    assert m["items"][0]["metadata"] == [
+        {"label": {"en": ["Predicted quality"]}, "value": {"none": ["0.87"]}}
+    ]
+    assert "metadata" not in m
+
+
+def test_the_volume_summary_is_manifest_metadata(cfg):
+    from htrflow_batch.iiif import PageRef
+
+    pages = [
+        PageRef(index=1, name="0001", image_url="https://i/1.jpg", canvas={"id": "c1"})
+    ]
+    summary = {"mean": 0.8123, "min": 0.4, "scored": 12}
+    m = build_viewer_manifest(cfg, {}, pages, {"0001": (10, 10)}, summary=summary)
+    assert m["metadata"] == [
+        {
+            "label": {"en": ["Predicted quality"]},
+            "value": {"none": ["mean 0.81, lowest 0.40, over 12 pages"]},
+        }
+    ]
+
+
+def test_without_scores_the_viewer_manifest_is_unchanged(cfg):
+    from htrflow_batch.iiif import PageRef
+
+    pages = [
+        PageRef(index=1, name="0001", image_url="https://i/1.jpg", canvas={"id": "c1"})
+    ]
+    plain = build_viewer_manifest(cfg, {}, pages, {"0001": (10, 10)})
+    assert plain == build_viewer_manifest(
+        cfg, {}, pages, {"0001": (10, 10)}, quality={}, summary=None
+    )
+    assert "metadata" not in plain and "metadata" not in plain["items"][0]
+
+
 def test_viewer_manifest_publishes_no_javascript_body(cfg):
     """W6: end to end -- nothing a canvas carries reaches the published
     manifest without having been scheme-checked first."""

@@ -37,6 +37,35 @@ describe("runManifestSchema", () => {
   });
 });
 
+describe("a manifest's predicted quality", () => {
+  // The run viewer drops its whole summary when the manifest does not
+  // parse; a bad score is one field, and loses only itself.
+  const scored = {
+    ...base,
+    results: {
+      "0001": { status: "ok", seconds: 2.5, quality: 0.9 },
+      "0002": { status: "ok", seconds: 1, quality: "x" },
+      "0003": { status: "ok", seconds: 0.4, quality: 7 },
+      "0004": { status: "ok", seconds: 0.4, quality: -0.1 },
+    },
+    quality: { mean: "high", min: null, scored: -3 },
+  };
+
+  test("a page with a bad score still parses, with no score", () => {
+    const parsed = runManifestSchema.safeParse(scored);
+    expect(parsed.success).toBe(true);
+    const byId = Object.fromEntries(
+      pageStats(parsed.data?.results ?? {}).map((p) => [p.id, p.quality]),
+    );
+    expect(byId).toEqual({
+      "0001": 0.9,
+      "0002": undefined,
+      "0003": undefined,
+      "0004": undefined,
+    });
+  });
+});
+
 describe("percentile", () => {
   test("interpolates linearly over a sorted list", () => {
     expect(percentile([1, 2, 3, 4], 0.5)).toBe(2.5);

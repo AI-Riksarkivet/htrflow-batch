@@ -75,6 +75,9 @@ class EmptyReader:
     def list_configmaps(self) -> list[dict]:
         return []
 
+    def list_pipelines(self) -> list[dict]:
+        return []
+
     def list_pods(self, namespace: str, job_name: str) -> list[dict]:
         return []
 
