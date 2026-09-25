@@ -7,13 +7,16 @@ import hashlib
 import logging
 import time
 import xml.etree.ElementTree as ET
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import NamedTuple
 
+from . import quality as qp
 from .config import Config
 from .iiif import PageRef, redact_url, redact_urls, source_digest
 from .store import ResultStore
 from .stream import StreamStats
-from .viewer import build_viewer_manifest, parse_alto_dims_bytes
+from .viewer import build_viewer_manifest, parse_alto_dims
 
 log = logging.getLogger("htrflow_batch")
 
@@ -31,20 +34,28 @@ def alto_dims(
     """Page dimensions as actually processed: from the ALTO this run uploaded
     (store.upload_page parsed it there, so this costs no round-trip), or read
     back from S3 for a page a previous run published, so a resumed volume's
-    viewer manifest stays complete. A page whose ALTO will not parse is left
-    out rather than failing the publish. A store error is NOT (audit 0923
-    W-6): skipped, it dropped that canvas from the final iiif.json for good,
-    since manifest.json follows and nothing writes it again -- raised, the
-    run exits 1 and the retry redoes only the publish."""
+    viewer manifest stays complete -- and, on that same read-back, a resumed
+    page's score (quality.py). A page whose ALTO will not parse is left out
+    rather than failing the publish. A store error is NOT (audit 0923 W-6):
+    skipped, it dropped that canvas from the final iiif.json for good, since
+    manifest.json follows and nothing writes it again -- raised, the run
+    exits 1 and the retry redoes only the publish."""
     dims = known_dims(store, pages)
     for p in pages:
         if p.name in dims or p.name not in uploaded:
             continue
         data = store.get_bytes(f"alto/{p.name}.xml")
         try:
-            dims[p.name] = parse_alto_dims_bytes(data)
-        except (ValueError, ET.ParseError):
-            pass  # an ALTO that will not parse is left out, not fatal
+            root = ET.fromstring(data)
+        except ET.ParseError:
+            continue  # an ALTO that will not parse is left out, not fatal
+        # A resumed page's score comes back with its size (quality.py).
+        if (score := qp.parse_alto_quality(root)) is not None:
+            store.page_quality[p.name] = score
+        try:
+            dims[p.name] = parse_alto_dims(root)
+        except ValueError:
+            pass
     if len(dims) < len(pages):
         log.warning("viewer manifest covers %d/%d pages", len(dims), len(pages))
     if not dims:
@@ -56,13 +67,15 @@ def alto_dims(
     return dims
 
 
-def _results_json(stats: StreamStats) -> dict:
-    """Per-page outcomes for manifest.json; error strings lose URL secrets (S6)."""
+def _results_json(stats: StreamStats, quality: Mapping[str, float]) -> dict:
+    """Per-page outcomes for manifest.json; error strings lose URL secrets (S6).
+    A page's predicted quality (quality.py) rides along when it has one."""
     return {
         n: {
             "status": r.status,
             "seconds": round(r.seconds, 2),
             **({"error": redact_urls(r.error)} if r.error else {}),
+            **({"quality": round(quality[n], qp.DIGITS)} if n in quality else {}),
         }
         for n, r in sorted(stats.results.items())
     }
@@ -82,6 +95,17 @@ def _htrflow_version() -> str:
         return "unknown"
 
 
+class _Unset:
+    """Sentinel type for ``run_manifest``'s ``summary`` parameter: tells a
+    caller-supplied ``None`` (there is no quality block) apart from no
+    argument at all (compute it here). A plain ``None`` default cannot carry
+    that distinction, since ``None`` is also the correct value for "no
+    scores"."""
+
+
+_UNSET = _Unset()
+
+
 def run_manifest(
     cfg: Config,
     pages: list[PageRef],
@@ -90,12 +114,23 @@ def run_manifest(
     pipeline_text: str,
     wall: float,
     bytes_fetched: int,
+    quality: Mapping[str, float] | None = None,
+    canvases: Sequence[str] = (),
+    summary: dict | None | _Unset = _UNSET,
 ) -> dict:
     """The manifest.json body: what the volume is, what produced it, what came
-    out, and what a resume or the Phase 2 gate reads back (docs: s3-layout)."""
+    out, and what a resume or the Phase 2 gate reads back (docs: s3-layout).
+    ``quality`` is a page's predicted score off its ALTO (quality.py); with
+    none at all, the top-level ``quality`` key is absent, same as before this
+    step existed. ``summary`` lets a caller that already computed the block
+    (``run``, ahead of ``iiif.json``) pass it in -- including an explicit
+    ``None``, meaning "no quality block" -- rather than have it built twice;
+    a caller that omits the argument (the contract script) gets it computed
+    here."""
     ok_pages = [n for n, r in stats.results.items() if r.status == "ok"]
     failed_pages = [n for n, r in stats.results.items() if r.status == "failed"]
-    return {
+    scores = quality or {}
+    body = {
         "volume": cfg.volume_ref,
         "pipeline_id": cfg.pipeline_id,
         "pipeline_sha256": hashlib.sha256(pipeline_text.encode()).hexdigest(),
@@ -111,7 +146,7 @@ def run_manifest(
         # from and so can never disagree with.
         "pages_ok": len(ok_pages),
         "pages_failed": len(failed_pages),
-        "results": _results_json(stats),
+        "results": _results_json(stats, scores),
         "source_manifest": source_manifest_url,
         # W7: which source image each page came from, so a resume after an
         # edited images: list / re-ordered manifest can tell a stale page from
@@ -131,6 +166,22 @@ def run_manifest(
         "viewer_url": f"{cfg.public_results_base.rstrip('/')}"
         f"/{cfg.volume_prefix}/iiif.json",
     }
+    block = (
+        qp.summary(scores, pipeline_text, canvases)
+        if isinstance(summary, _Unset)
+        else summary
+    )
+    if block is not None:
+        body["quality"] = block
+    return body
+
+
+class Published(NamedTuple):
+    """What the publish stage tells main: whether iiif.json went out, and
+    the volume's quality block (None without scores) for progress.json."""
+
+    wrote_iiif: bool
+    quality: dict | None
 
 
 def run(
@@ -143,26 +194,47 @@ def run(
     uploaded: set[str],
     t_start: float,
     bytes_fetched: int,
-) -> bool:
+) -> Published:
     """iiif.json (when any dims resolved), pipeline.yaml, manifest.json last.
     Returns whether iiif.json was written, so main.py can tell progress.json's
     ``viewer_published`` the final publish covered it too -- a volume small
     enough that it never crossed the interim cadence (progress.py) still ends
-    up saying so once it is actually done."""
+    up saying so once it is actually done -- and the volume's quality block,
+    so the final progress.json can carry it too without a second read of
+    manifest.json."""
     dims = alto_dims(cfg, store, pages, uploaded)
     wrote_iiif = bool(dims)
+    pipeline_text = Path(cfg.pipeline_path).read_text()
+    canvases = [p.name for p in pages if p.name in dims]
+    block = qp.summary(store.page_quality, pipeline_text, canvases)
     if dims:
         store.put_json(
-            "iiif.json", build_viewer_manifest(cfg, source_manifest, pages, dims)
+            "iiif.json",
+            build_viewer_manifest(
+                cfg,
+                source_manifest,
+                pages,
+                dims,
+                quality=store.page_quality,
+                summary=block,
+            ),
         )
-    pipeline_text = Path(cfg.pipeline_path).read_text()
     store.put_text("pipeline.yaml", pipeline_text, "text/yaml")
     # Snapshotted here, not before the stage: reading stored ALTO back and
     # writing iiif.json/pipeline.yaml is time this run spent (wall_seconds
     # and pages_per_second have always covered it).
     wall = time.monotonic() - t_start
     body = run_manifest(
-        cfg, pages, stats, source_manifest_url, pipeline_text, wall, bytes_fetched
+        cfg,
+        pages,
+        stats,
+        source_manifest_url,
+        pipeline_text,
+        wall,
+        bytes_fetched,
+        quality=store.page_quality,
+        canvases=canvases,
+        summary=block,
     )
     store.put_json("manifest.json", body)
     log.info(
@@ -174,4 +246,4 @@ def run(
         wall,
         body["viewer_url"],
     )
-    return wrote_iiif
+    return Published(wrote_iiif, body.get("quality"))

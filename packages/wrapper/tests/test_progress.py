@@ -308,6 +308,14 @@ def test_the_last_error_is_redacted_and_bounded(cfg, s3):
     assert len(error["error"]) <= LAST_ERROR_CHARS + 3
 
 
+def test_quality_is_absent_until_set_then_carried(cfg, s3):
+    tracker = Progress(cfg, ResultStore(cfg))
+    tracker.stats = StreamStats(results={"0001": PageOutcome(status="ok")})
+    assert "quality" not in tracker.body()
+    tracker.quality = {"target": "bow_f1", "mean": 0.9, "scored": 1}
+    assert tracker.body()["quality"] == {"target": "bow_f1", "mean": 0.9, "scored": 1}
+
+
 def test_no_failure_is_no_last_error(cfg, s3):
     tracker = Progress(cfg, ResultStore(cfg))
     tracker.stats = StreamStats(results={"0001": PageOutcome(status="ok")})

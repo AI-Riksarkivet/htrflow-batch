@@ -248,6 +248,18 @@ TROCR = {
     },
 }
 EXPORT = {"step": "Export", "settings": {"dest": "out", "format": "alto"}}
+QP = {
+    "step": "QualityPrediction",
+    "settings": {
+        "model_settings": {
+            "model": "org/qp-model",
+            "revision": REVISION,
+            "model_file": "model.joblib",
+            "bin_config_file": "bins.json",
+        },
+        "feature_groups": ["segmentation", "layout", "htr_confidence", "text"],
+    },
+}
 
 
 def test_a_pinned_pipeline_is_admitted(tmp_path: Path):
@@ -341,6 +353,24 @@ def test_a_loader_without_a_processor_needs_no_processor_pin(tmp_path: Path):
     policy = render_policy(tmp_path, "model-revision")
     verdict, out = admission(tmp_path, policy, pipeline(YOLO))
     assert verdict == "admitted", out
+
+
+def test_a_pinned_quality_prediction_step_is_admitted(tmp_path: Path):
+    policy = render_policy(tmp_path, "model-revision")
+    verdict, out = admission(tmp_path, policy, pipeline(YOLO, TROCR, QP))
+    assert verdict == "admitted", out
+
+
+def test_an_unpinned_quality_prediction_model_is_refused(tmp_path: Path):
+    """Its model is a pickle: the same rule as every other model, and the
+    policy needs no change to apply it -- it reads any step with
+    settings.model_settings.model."""
+    policy = render_policy(tmp_path, "model-revision")
+    unpinned = yaml.safe_load(yaml.safe_dump(QP))
+    del unpinned["settings"]["model_settings"]["revision"]
+    verdict, out = admission(tmp_path, policy, pipeline(YOLO, TROCR, unpinned))
+    assert verdict == "refused", out
+    assert "org/qp-model" in out
 
 
 # --- D-7: a pipeline in binaryData is a pipeline the rule cannot read ------

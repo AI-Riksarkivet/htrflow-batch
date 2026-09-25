@@ -11,6 +11,10 @@ export const pageResultSchema = z.object({
   status: z.string(),
   seconds: z.number(),
   error: z.string().optional(),
+  // Present only on a page the QualityPrediction step scored (quality.py).
+  // A score that is not one (a string, outside [0, 1]) loses only itself:
+  // a failed parse would blank the whole run viewer.
+  quality: z.number().min(0).max(1).optional().catch(undefined),
 });
 
 export const runManifestSchema = z
@@ -32,7 +36,9 @@ export const runManifestSchema = z
     viewer_url: z.string().optional(),
   })
   // Everything else the wrapper writes (bytes_fetched, canvas_ids, the
-  // digests resume compares...) is kept as it came and read by nothing here;
+  // digests resume compares, publish.py's volume `quality` block -- the
+  // pages table reads each page's own score instead...) is kept as it came
+  // and read by nothing here, so no shape of it can fail the parse;
   // wrapper-contract.test.ts checks the fields above against the real file.
   .loose();
 

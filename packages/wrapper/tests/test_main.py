@@ -140,6 +140,64 @@ def test_resume_skips_done(env, cfg, s3):
     assert canvas_names == {"0001", "0002", "0003"}  # skipped page not omitted
 
 
+def _alto_pc(pc: str) -> str:
+    return f'<alto><Layout><Page WIDTH="2500" HEIGHT="3538" PC="{pc}"/></Layout></alto>'
+
+
+def _get_json(s3, cfg, rel):
+    return json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key=f"demo-v1/SE-RA-1234/{rel}")[
+            "Body"
+        ].read()
+    )
+
+
+def test_a_scored_run_publishes_its_quality_everywhere(env, cfg, s3):
+    scores = {"0001": "0.9", "0002": "0.4", "0003": "0.7"}
+
+    def factory(cfg):
+        return lambda path: _write_outputs(
+            cfg, path.stem, alto=_alto_pc(scores[path.stem])
+        )
+
+    assert main(env, process_page_factory=factory) == EXIT_OK
+    manifest = _get_json(s3, cfg, "manifest.json")
+    assert {n: r["quality"] for n, r in manifest["results"].items()} == {
+        "0001": 0.9,
+        "0002": 0.4,
+        "0003": 0.7,
+    }
+    assert manifest["quality"]["mean"] == 0.6667
+    assert manifest["quality"]["lowest"][0]["page"] == "0002"
+    progress = _get_json(s3, cfg, "progress.json")
+    assert progress["stage"] == "done"
+    assert progress["quality"] == manifest["quality"]
+
+
+def test_a_resumed_page_keeps_its_score(env, cfg, s3):
+    s3.put_object(
+        Bucket=cfg.s3_bucket,
+        Key="demo-v1/SE-RA-1234/alto/0001.xml",
+        Body=_alto_pc("0.25").encode(),
+    )
+    _put_done(s3, cfg, "0001", formats=("page",))
+
+    def factory(cfg):
+        return lambda path: _write_outputs(cfg, path.stem, alto=_alto_pc("0.75"))
+
+    assert main(env, process_page_factory=factory) == EXIT_OK
+    manifest = _get_json(s3, cfg, "manifest.json")
+    assert manifest["results"]["0001"]["status"] == "skipped"
+    assert manifest["results"]["0001"]["quality"] == 0.25
+    assert manifest["quality"]["scored"] == 3
+
+
+def test_an_unscored_run_writes_no_quality_anywhere(env, cfg, s3):
+    assert main(env, process_page_factory=fake_factory) == EXIT_OK
+    assert "quality" not in _get_json(s3, cfg, "manifest.json")
+    assert "quality" not in _get_json(s3, cfg, "progress.json")
+
+
 def test_resume_reprocesses_pages_whose_source_changed(env, cfg, s3):
     """W7: resume was by position only; an edited images: list or a
     re-ordered manifest kept stale outputs. The previous manifest.json's

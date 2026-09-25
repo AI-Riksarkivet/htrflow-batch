@@ -406,6 +406,7 @@ describe("describeProgress", () => {
     lastError: null,
     errors: 0,
     viewerPublished: true,
+    quality: null,
   };
 
   // The page counts moved to the status column's own figures, in the shape

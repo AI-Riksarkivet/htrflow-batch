@@ -61,6 +61,12 @@ def _labels(obj: dict) -> dict:
     return (obj.get("metadata") or {}).get("labels") or {}
 
 
+def pipeline_of(obj: dict) -> str:
+    """The pipeline id an object is labelled with: a campaign's Job, its
+    record, or a pipeline ConfigMap itself."""
+    return _labels(obj).get(_PIPELINE_LABEL, "")
+
+
 def configmap_ref(job: dict, volume: str = "campaign") -> str | None:
     """Name of the ConfigMap mounted as one of the Job's volumes: ``campaign``
     holds ``volumes.txt``, ``pipeline`` holds ``pipeline.yaml``. Reading the
@@ -131,9 +137,11 @@ def _finished_at(job: dict) -> str | None:
     return None
 
 
-def summarize(job: dict, cfg, warmup: dict) -> dict:
+def summarize(job: dict, cfg, warmup: dict, quality_prediction: bool = False) -> dict:
     """``JobSummary``: one row for ``GET /api/v1/jobs``. ``warmup`` is the
-    caller's pre-matched ``{phase, reason?}`` (Task 28)."""
+    caller's pre-matched ``{phase, reason?}`` (Task 28), and
+    ``quality_prediction`` whether the campaign's pipeline scores page
+    quality (``quality_prediction`` below, on its pipeline ConfigMap)."""
     meta = job.get("metadata") or {}
     namespace = meta.get("namespace", "")
     pipeline = _labels(job).get(_PIPELINE_LABEL, "")
@@ -157,6 +165,10 @@ def summarize(job: dict, cfg, warmup: dict) -> dict:
         "warmup": warmup,
         # There is a Job behind this row. The record's rows say False (B76).
         "jobGone": False,
+        # On the list row, not only the detail: the card holds its quality
+        # column (and the line under the totals) from its first paint, so
+        # nothing moves when the detail lands.
+        "qualityPrediction": quality_prediction,
     }
 
 
@@ -242,7 +254,9 @@ def _int(text: object) -> int:
         return 0
 
 
-def record_summary(record: dict, status: dict, cfg, warmup: dict) -> dict | None:
+def record_summary(
+    record: dict, status: dict, cfg, warmup: dict, quality_prediction: bool = False
+) -> dict | None:
     """One row for a campaign whose Job is gone -- reaped by its
     ``ttlSecondsAfterFinished`` -- from the two ConfigMaps it left behind
     (B76). The same shape ``summarize`` returns, so the page draws it with
@@ -285,6 +299,7 @@ def record_summary(record: dict, status: dict, cfg, warmup: dict) -> dict | None
         "resultsBase": _results_base(namespace, pipeline, cfg),
         "warmup": warmup,
         "jobGone": True,
+        "qualityPrediction": quality_prediction,
     }
 
 
@@ -409,6 +424,7 @@ def record_detail(
     return {
         **row,
         **pages,
+        "qualityPrediction": quality_prediction(pipeline_configmap),
         "pipelineSteps": _pipeline_steps(pipeline_yaml),
         "pipelineYaml": pipeline_yaml,
         "latest": latest,
@@ -966,7 +982,16 @@ def _log_url(pipeline: str, volume_id: str, cfg) -> str:
 
 
 def _pipeline_yaml(configmap: dict | None) -> str:
-    return ((configmap or {}).get("data") or {}).get("pipeline.yaml", "")
+    text = ((configmap or {}).get("data") or {}).get("pipeline.yaml", "")
+    # The API server sends strings; a hand-built object may not, and a
+    # non-string reaches the parser as a stream it cannot read.
+    return text if isinstance(text, str) else ""
+
+
+#: A real pipeline is a few KB. Past this the text is not parsed at all:
+#: the list route parses every pipeline ConfigMap on every request, so one
+#: object near the 1 MiB ConfigMap limit is cost the whole list would pay.
+MAX_PIPELINE_YAML = 64 * 1024
 
 
 def _pipeline_steps(text: str) -> list[str]:
@@ -974,9 +999,18 @@ def _pipeline_steps(text: str) -> list[str]:
     card's pipeline chip lists in its tooltip. A ConfigMap that is missing,
     empty or shaped differently is no steps rather than an error: the chip
     then just names the pipeline, and the campaign is unaffected either way."""
+    if len(text) > MAX_PIPELINE_YAML:
+        return []
+    # Any exception from the parse is no steps, never an error, and the
+    # types are not enumerated: this text is operator-editable and parsed on
+    # every list request, and PyYAML raises assorted types on malformed
+    # input (YAMLError, ValueError from a `2026-99-99` date, AttributeError
+    # from a `!!timestamp` it cannot match, RecursionError -- an Exception
+    # subclass -- from deep nesting). One bad ConfigMap must not fail the
+    # list. Only the parse is guarded; the extraction below is ours.
     try:
         doc = yaml.safe_load(text)
-    except yaml.YAMLError:
+    except Exception:
         return []
     steps = doc.get("steps") if isinstance(doc, dict) else None
     if not isinstance(steps, list):
@@ -989,6 +1023,15 @@ def _pipeline_steps(text: str) -> list[str]:
         for s in steps
         if isinstance(s, dict) and isinstance(s.get("step"), str)
     ]
+
+
+def quality_prediction(configmap: dict | None) -> bool:
+    """Whether a pipeline ConfigMap's YAML has a QualityPrediction step --
+    by its lower-cased name, the way htrflow resolves a step. A ConfigMap
+    that is missing or unreadable scores nothing, never an error: the card
+    then simply has no quality column."""
+    steps = _pipeline_steps(_pipeline_yaml(configmap))
+    return any(step.lower() == "qualityprediction" for step in steps)
 
 
 def _failures(volumes: list[dict]) -> list[dict]:
@@ -1084,6 +1127,52 @@ def _not_cached(*_args) -> tuple[bool, None]:
     return False, None
 
 
+#: The campaign's lowest pages, across every volume read.
+CAMPAIGN_LOWEST = 5
+
+
+def _campaign_quality(rows: list[dict]) -> dict | None:
+    """The campaign's predicted quality over the volumes whose progress
+    carries one: the mean weighted by each volume's scored pages, and the
+    worst pages anywhere, each with the viewer manifest it opens in.
+    ``volumes`` says how many volumes it covers; the card says so when that
+    is not all of them."""
+    scored = [
+        (row, q)
+        for row in rows
+        if (q := (row.get("progress") or {}).get("quality")) is not None
+    ]
+    if not scored:
+        return None
+    pages = sum(q["scored"] for _, q in scored)
+    # Sorted lowest first, so the first of a (volume, page) named twice (a
+    # volume listed twice in the campaign) is its lowest; the card keys its
+    # list by volume and page, and a duplicate would throw there.
+    ranked = sorted(
+        (
+            {"volume": row["id"], **entry, "iiifUrl": row["iiifUrl"]}
+            for row, q in scored
+            for entry in q["lowest"]
+        ),
+        key=lambda e: (e["quality"], e["volume"], e["page"]),
+    )
+    lowest: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for entry in ranked:
+        if len(lowest) == CAMPAIGN_LOWEST:
+            break
+        if (key := (entry["volume"], entry["page"])) not in seen:
+            seen.add(key)
+            lowest.append(entry)
+    return {
+        "mean": round(sum(q["mean"] * q["scored"] for _, q in scored) / pages, 4),
+        "min": min(q["min"] for _, q in scored),
+        "scored": pages,
+        "volumes": len(scored),
+        "lowest": lowest,
+    }
+
+
 def _campaign_pages(rows: list[dict]) -> dict:
     """What the card says above its table, summed over the volumes whose
     progress was read. ``lastError`` is the most recent page failure among
@@ -1104,6 +1193,7 @@ def _campaign_pages(rows: list[dict]) -> dict:
         "pagesFailed": sum(p["failed"] for p in known),
         "errors": sum(p["errors"] for p in known),
         "lastError": max(last_errors, key=lambda e: e[0])[1] if last_errors else None,
+        "quality": _campaign_quality(rows),
     }
 
 
@@ -1129,7 +1219,7 @@ def detail(
     INTERNAL results base (this pod's own way to the bucket), never the
     public one every URL below is built from: on the PoC they are not the
     same address (docs: development/local-k3s)."""
-    summary = summarize(job, cfg, warmup)
+    summary = summarize(job, cfg, warmup, quality_prediction(pipeline_configmap))
     status = job.get("status") or {}
     completed = parse_index_ranges(status.get("completedIndexes"))
     failed = parse_index_ranges(status.get("failedIndexes"))

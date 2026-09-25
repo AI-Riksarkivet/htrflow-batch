@@ -20,6 +20,7 @@ not.
 from __future__ import annotations
 
 import json
+import math
 import threading
 import time
 from datetime import datetime, timezone
@@ -100,6 +101,75 @@ def _age_seconds(updated_at: str | None, now: float) -> int | None:
     return max(0, round(now - then))
 
 
+#: A volume's quality block names at most this many of its worst pages; the
+#: wrapper writes five (quality.LOWEST), anything longer is not ours.
+MAX_LOWEST = 5
+
+#: No volume has this many pages; anything larger is not ours.
+MAX_SCORED = 10_000_000
+
+
+def _score(value: object) -> float | None:
+    ok = (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and 0.0 <= value <= 1.0
+    )
+    return float(value) if ok else None
+
+
+def _quality(value: object, pages: int = MAX_SCORED) -> dict | None:
+    """The wrapper's quality block (docs: reference/s3-layout), or nothing.
+    A mean outside [0, 1], a negative count or a string is not one of ours:
+    dropped whole rather than drawn. ``pages`` is the volume's page total:
+    more pages scored than the volume has is not ours either, and would
+    outweigh every other volume in the campaign's mean."""
+    if not isinstance(value, dict):
+        return None
+    mean, low = _score(value.get("mean")), _score(value.get("min"))
+    scored = value.get("scored")
+    if (
+        mean is None
+        or low is None
+        or not isinstance(scored, int)
+        or isinstance(scored, bool)
+        or scored < 1
+        or scored > min(pages, MAX_SCORED)
+    ):
+        return None
+    lowest = []
+    seen: set[str] = set()
+    raw_lowest = value.get("lowest")
+    for entry in raw_lowest if isinstance(raw_lowest, list) else []:
+        if len(lowest) == MAX_LOWEST:
+            break
+        if not isinstance(entry, dict):
+            continue
+        q = _score(entry.get("quality"))
+        page = _str_or_none(entry.get("page"))
+        canvas = entry.get("canvas")
+        # A page named twice is kept once, the first time (the wrapper ranks
+        # lowest first): the frontend keys its list by page.
+        if q is None or page is None or page in seen:
+            continue
+        seen.add(page)
+        ok_canvas = (
+            isinstance(canvas, int) and not isinstance(canvas, bool) and canvas >= 0
+        )
+        lowest.append(
+            {"page": page, "quality": q, "canvas": canvas if ok_canvas else None}
+        )
+    return {
+        "mean": mean,
+        "min": low,
+        "scored": scored,
+        "model": _str_or_none(value.get("model")),
+        "revision": _str_or_none(value.get("revision")),
+        "lowest": lowest,
+    }
+
+
 def _from_progress(doc: dict, now: float) -> dict | None:
     """The wrapper's ``progress.json``. A document without a page total is
     not one of ours (or is half-written): no progress rather than zeroes."""
@@ -122,6 +192,7 @@ def _from_progress(doc: dict, now: float) -> dict | None:
         # PUBLISH_EVERY_PAGES pages would otherwise link to a manifest that
         # is not there yet).
         "viewerPublished": bool(doc.get("viewer_published")),
+        "quality": _quality(doc.get("quality"), doc["pages_total"]),
     }
 
 
@@ -158,6 +229,7 @@ def _from_manifest(doc: dict, now: float) -> dict | None:
         # (publish.py writes iiif.json before it, when any page's dims
         # resolved) -- true is the honest answer for a finished volume.
         "viewerPublished": True,
+        "quality": _quality(doc.get("quality"), doc["pages"]),
     }
 
 
