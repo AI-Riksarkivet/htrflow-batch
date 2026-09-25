@@ -446,6 +446,21 @@ def test_the_json_feature_groups_are_accepted():
     _pipeline(_SEG, _LINES, _HTR, qp)
 
 
+def test_the_region_line_feature_groups_are_accepted():
+    """regionization is computed from htrflow's page tree alone (lines per
+    region, single-/multi-line region fractions) -- no image, model or
+    resource needed, so the real region-line QP pipeline runs it."""
+    qp = _qp()
+    qp["settings"]["feature_groups"] = [
+        "segmentation",
+        "layout",
+        "htr_confidence",
+        "text",
+        "regionization",
+    ]
+    _pipeline(_SEG, _LINES, _HTR, qp)
+
+
 @pytest.mark.parametrize(
     "change,words",
     [

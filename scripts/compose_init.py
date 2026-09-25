@@ -5,10 +5,10 @@ Env: S3_ENDPOINT (default http://rustfs:9000), S3_BUCKET (results bucket,
 default htr-results), FIXTURES_BUCKET (default htr-fixtures), PUBLIC_LOGS
 ("true"/"false", default true — whether status/logs/* is anonymous-readable),
 IMAGE_CACHE_BUCKET (private image cache bucket, default empty — none
-created; no policy or CORS applied), MOCK_BASE (default
-http://rustfs:9000/htr-fixtures/mock-vol — the container-internal form used
-by compose; see .docker/docker-compose.yml comment for browser-fidelity
-trade-off), AWS creds via standard vars."""
+created; no policy or CORS applied), MOCK_BASE (the address the mock
+manifest names its pages at; compose sets the localhost form that the
+wrapper and the browser both resolve, see .docker/docker-compose.yml), AWS
+creds via standard vars."""
 
 import json
 import os

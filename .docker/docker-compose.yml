@@ -4,12 +4,21 @@
 # source of truth is packages/wrapper/src/htrflow_batch/config.py.
 #
 # Which images run: HTR_WRAPPER_IMAGE and HTR_WEB_IMAGE, when set, else the
-# defaults below (finding 3104). `make compose-smoke` builds both from the
-# checkout with the same recipes that build the shipped images and sets
-# them; `make compose-smoke-run WRAPPER_IMAGE=…@sha256:… WEB_IMAGE=…@sha256:…`
-# smokes a published release by digest. Without either, the wrapper is
-# `docker compose build wrapper` from the checkout and the web front is the
-# pinned release below (the service itself is image-only — see its comment).
+# published release by digest -- the same digests the release commit pins in
+# the demo pipeline and the chart (a test keeps them equal). `make
+# compose-smoke` builds both from the checkout with the recipes that build
+# the shipped images and sets the two variables; `make compose-smoke-run
+# WRAPPER_IMAGE=…@sha256:… WEB_IMAGE=…@sha256:…` smokes any other build. No
+# service carries a `build:`: with one, a missing image turned `up` into a
+# full wrapper build from source.
+#
+# Host ports: HTR_COMPOSE_S3_PORT (S3, default 19000) and
+# HTR_COMPOSE_WEB_PORT (web front, default 8080), for a host where either is
+# taken. RustFS listens on the S3 port inside the container too, and the
+# wrapper shares RustFS's network namespace, so `http://localhost:<port>`
+# names the same server to the wrapper and to a browser on the host: the
+# mock manifest's page images and the published iiif.json both resolve in
+# the viewer.
 #
 # Constants (${HTR_*}) come from the repo-root `.env` (defaults in
 # `.env.example`): the Makefile exports them, and every reference below
@@ -20,28 +29,25 @@
 # this host that also run `docker compose` from a directory named `.docker`
 # (compose's default project name is derived from the directory basename,
 # which is shared across repos and can wipe out unrelated containers on
-# `docker compose down`). Host ports 19000/19001 (rather than the RustFS
-# default 9000/9001) avoid a collision with an unrelated MinIO already
-# bound to 9000-9001 on this host.
+# `docker compose down`).
 name: htrflow-batch-smoke
 services:
   rustfs:
     image: rustfs/rustfs:latest
     command: ["/data"]
     ports:
-      - "19000:9000"
-      - "19001:9001"
+      - "${HTR_COMPOSE_S3_PORT:-19000}:${HTR_COMPOSE_S3_PORT:-19000}"
     environment:
       RUSTFS_ACCESS_KEY: ${HTR_DEV_S3_ACCESS_KEY:-rustfsadmin}
       RUSTFS_SECRET_KEY: ${HTR_DEV_S3_SECRET_KEY:-rustfsadmin}
-      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_ADDRESS: 0.0.0.0:${HTR_COMPOSE_S3_PORT:-19000}
     volumes:
       - rustfs-data:/data
     healthcheck:
       # RustFS returns 403 (AccessDenied) for an unauthenticated GET / rather
       # than 200 — `curl -f` would treat that as failure, so just check that
       # the server answers at all.
-      test: ["CMD", "curl", "-s", "-o", "/dev/null", "http://localhost:9000/"]
+      test: ["CMD", "curl", "-s", "-o", "/dev/null", "http://localhost:${HTR_COMPOSE_S3_PORT:-19000}/"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -54,19 +60,11 @@ services:
     volumes:
       - ../scripts:/scripts:ro
     environment:
-      S3_ENDPOINT: http://rustfs:9000
-      # NOT localhost: this URL is baked verbatim into the mock manifest's
-      # canvas image body.id, which the wrapper container fetches directly
-      # (packages/wrapper/src/htrflow_batch/iiif.py:_image_url) — a host-only
-      # "localhost:19000" is unreachable from inside the wrapper container
-      # (its own loopback, not the host's). The same body.id is copied
-      # verbatim into the published iiif.json, so a real browser session
-      # opening UV will not render the source page image (a known
-      # local-smoke-stack limitation); the ALTO/search overlay UV actually
-      # depends on is served from PUBLIC_RESULTS_BASE below, which *is*
-      # browser-resolvable, so the manifest-shape checks in step 3 and the
-      # smoke test below both still hold.
-      MOCK_BASE: http://rustfs:9000/htr-fixtures/mock-vol
+      S3_ENDPOINT: http://rustfs:${HTR_COMPOSE_S3_PORT:-19000}
+      # The address the manifest names its page images at, which the wrapper
+      # fetches and the published iiif.json copies for the viewer: localhost,
+      # which is RustFS for both (see the note at the top).
+      MOCK_BASE: http://localhost:${HTR_COMPOSE_S3_PORT:-19000}/htr-fixtures/mock-vol
       S3_BUCKET: ${HTR_BUCKET:-htr-results}
       # Anonymous read on status/logs/* — same trade-off as the chart's
       # devStack.rustfs.publicLogs (see charts/htrflow-batch/values.yaml).
@@ -80,10 +78,10 @@ services:
               "python", "/scripts/compose_init.py"]
 
   wrapper:
-    image: ${HTR_WRAPPER_IMAGE:-riksarkivet/htrflow-batch:latest}
-    build:
-      context: ..
-      dockerfile: .docker/htrflow-batch.dockerfile
+    image: ${HTR_WRAPPER_IMAGE:-riksarkivet/htrflow-batch@sha256:637fbe4a2d66001b8e37966fc1e9f443b2a80809ce6b76c0dd72e9a31e3883f1}  # v0.5.0
+    # RustFS's network namespace: `localhost:<port>` is RustFS here, as it
+    # is to the browser (see the note at the top).
+    network_mode: "service:rustfs"
     depends_on:
       fixtures-init:
         condition: service_completed_successfully
@@ -91,14 +89,14 @@ services:
       - ./pipeline-demo-v1.yaml:/config/pipeline.yaml:ro
     environment:
       VOLUME_REF: mock-vol
-      IIIF_MANIFEST_URL: http://rustfs:9000/htr-fixtures/mock-vol/manifest.json
+      IIIF_MANIFEST_URL: http://localhost:${HTR_COMPOSE_S3_PORT:-19000}/htr-fixtures/mock-vol/manifest.json
       PIPELINE_PATH: /config/pipeline.yaml
       PIPELINE_ID: demo-v1
-      S3_ENDPOINT: http://rustfs:9000
+      S3_ENDPOINT: http://localhost:${HTR_COMPOSE_S3_PORT:-19000}
       S3_BUCKET: ${HTR_BUCKET:-htr-results}
       AWS_ACCESS_KEY_ID: ${HTR_DEV_S3_ACCESS_KEY:-rustfsadmin}
       AWS_SECRET_ACCESS_KEY: ${HTR_DEV_S3_SECRET_KEY:-rustfsadmin}
-      PUBLIC_RESULTS_BASE: http://localhost:19000/${HTR_BUCKET:-htr-results}
+      PUBLIC_RESULTS_BASE: http://localhost:${HTR_COMPOSE_S3_PORT:-19000}/${HTR_BUCKET:-htr-results}
       IMAGE_CACHE_BUCKET: ${HTR_IMAGE_CACHE_BUCKET:-}  # empty: no image cache
       MAX_PAGES: "1"          # CPU is ~41x slower than GPU; full volume ≈ 13 min
       WORKDIR_PATH: /work
@@ -116,12 +114,10 @@ services:
     # ["python", "-m", "htrflow_batch"] (see .docker/htrflow-batch.dockerfile).
 
   web:
-    # NO `build:` here on purpose. `dagger call compose-test` mounts only
-    # this directory as the compose project, so a build context of `..`
-    # cannot resolve (it looked for /.docker/.docker/htrflow-web.dockerfile);
-    # the wrapper above gets away with a build only because compose-test
-    # never starts it. So this service is image-only: the pinned release, or
-    # HTR_WEB_IMAGE — which is what `make compose-smoke` sets.
+    # Image-only, like every service here: `dagger call compose-test` mounts
+    # only this directory as the compose project, so a build context of `..`
+    # could not resolve anyway. The pinned release, or HTR_WEB_IMAGE — which
+    # is what `make compose-smoke` sets.
     image: ${HTR_WEB_IMAGE:-riksarkivet/htrflow-web@sha256:1fbabef550593f6d77da71bb7b9470fce5e8fdd41ccd494b6cb41b7cd5042bbb}  # v0.5.0
     # Site only: a compose stack has no apiserver, so the read API would have
     # nothing to read and the console script would exit on a missing
@@ -130,7 +126,7 @@ services:
     environment:
       HTRFLOW_WEB_SITE_ONLY: "1"
     ports:
-      - "8080:8081"
+      - "${HTR_COMPOSE_WEB_PORT:-8080}:8081"
     depends_on:
       rustfs:
         condition: service_healthy
