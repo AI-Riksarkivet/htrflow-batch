@@ -40,6 +40,7 @@ warmup_wait_seconds: 900          # how long a pod waits for its pipeline's warm
 ttl_seconds_after_finished: 604800  # a week: how long a finished campaign's Job stays before Kubernetes deletes it; a pipeline's own `ttl_seconds_after_finished:` overrides it
 manifest_max_bytes: 16777216      # 16 MiB
 fetch_max_bytes: 67108864         # 64 MiB
+image_cache: null                 # off by default; { bucket: <name> } caches source images in that S3 bucket
 flavors: []                       # the chart's queue.flavors, by name and nodeLabels (see Pod sizes)
 sizes: {}                         # named pod sizes a pipeline's `size:` picks (see Pod sizes)
 default_size: null                # the size a pipeline with no `size:` runs at (see Pod sizes)
@@ -75,6 +76,15 @@ Which Secrets and PVCs a pod may mount is the chart's admission policy.
 model. It names a Secret you create, with a `token` key holding a
 read-scope Hub token; only the warm-up Job gets it, as `HF_TOKEN`
 ([Deploy](../getting-started/deploy.md)).
+
+`image_cache` is off by default, and absent renders every campaign pod
+exactly as before it existed. Set `bucket` to cache source page images in an
+S3 bucket on the same store as the results, so a volume run again needs
+nothing from the IIIF server; the bucket is **private** (never in a public
+policy, never linked) and must exist before a campaign runs
+([Deploy](../getting-started/deploy.md)). Setting it renders every campaign
+pod's `IMAGE_CACHE_BUCKET`. See [S3 Layout](s3-layout.md#image-cache-bucket)
+for the key layout and what a hit or a miss does.
 
 ### Pod sizes
 
