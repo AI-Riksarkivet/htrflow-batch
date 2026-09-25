@@ -251,7 +251,7 @@ The workflow itself runs in three steps:
    | Digest | Pinned in |
    |---|---|
    | `htrflow-web` | `web.image` in `charts/htrflow-batch/values.yaml`, and the compose stack |
-   | `htrflow-batch` | the demo pipeline `init` writes, `packages/converter/src/htrflow_converter/template/pipelines/demo-v1.yaml`, and so its copy in `examples/campaigns/` |
+   | `htrflow-batch` | the demo pipeline `init` writes, `packages/converter/src/htrflow_converter/template/pipelines/demo-v1.yaml`, and so its copy in `examples/campaigns/`, and the compose stack |
    | `htrflow-campaigns` | all three containers of the Argo CD hook (the clone, the check and the apply), `packages/converter/src/htrflow_converter/template/argocd/apply.yaml`, with the release's tag as a comment beside it |
 
    `.dagger/published.go` (`publishedPins`) names the file each of the

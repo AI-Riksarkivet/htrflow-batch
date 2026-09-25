@@ -18,6 +18,14 @@ release's `publicResultsBase`. Why each mechanism behaves as it does is in
 | Is this volume actually finished? | `curl -I <results-base-url>/<namespace>/<pipeline>/<volume>/manifest.json` (only `manifest.json` means done) |
 | Which image and models produced this ALTO? | Read the file: its `Processing ID="htrflow-batch"` block names them |
 
+## The Quickstart stack
+
+| What you see | Fix |
+|---|---|
+| `make compose-up` stops with `address already in use` | Another program has port 8080 or 19000: `make compose-down`, then `make compose-up HTR_COMPOSE_WEB_PORT=<free> HTR_COMPOSE_S3_PORT=<free>`, and use those ports in the viewer URL |
+| The viewer shows nothing, or an error loading the manifest | The wrapper has not finished: wait for `COMPLETE` in `docker compose -f .docker/docker-compose.yml logs wrapper` |
+| The wrapper exits non-zero | Its log says why; the usual cause is no internet access to Hugging Face for the models |
+
 ## A campaign reads "Queued" and nothing is admitted
 
 "Queued" is not a Kueue state: the campaign browser shows it for a Job that
@@ -47,7 +55,7 @@ kubectl -n <namespace> get workloads -l "kueue.x-k8s.io/job-uid=$JOB_UID"
 | What you see | Cause | Fix |
 |---|---|---|
 | Workloads pending while the GPU is idle | The Kueue controller is down; from outside it looks like a busy GPU | Check the Kueue controller before the GPU |
-| Other campaigns hold `flavorsUsage` at the quota | It is waiting its turn | Nothing, or raise `queue.resources` ([Deploy → Queue quota](deploy.md#queue-quota)) |
+| Other campaigns hold `flavorsUsage` at the quota | It is waiting its turn | Nothing, or raise `queue.resources` ([Deploy → Options](deploy.md#options)) |
 | Pending while the queue is empty | The Job's `parallelism × per-pod requests` exceeds the quota, so it is inadmissible for ever | Set `converter.yaml`'s `window` so that `window × per-pod requests` fits the quota, then re-render ([Queueing](../how-it-works/queueing.md)) |
 | A Job but no Workload at all, and no event | Its `priority:` names a `WorkloadPriorityClass` the cluster does not have | Match `converter.yaml`'s `priority_classes` to the chart's `queue.priorityClasses`; `validate` then refuses the bad name |
 | Workload `Evicted`, reason `Deactivated` | The campaign is paused in git | Remove `suspend: true` from the campaign file and apply |
@@ -86,7 +94,7 @@ The warm-up's message also shows on the campaign card's warm-up chip.
 | Still running | A slow first download | Wait. Its pod deadline is 1 h, and a timeout is retried |
 | `Failed`, exit 13 | A bad model id or revision, an unknown step, a setting a step does not take, invalid YAML | Fix the pipeline (under a new pipeline id if campaigns already ran it) and apply |
 | `Failed`, transient (a missing HF token Secret, a Hub outage) | Its retries are spent | Fix the cause and re-run the apply. **The apply replaces a failed warm-up by itself**; do not delete it by hand |
-| Pod never starts, `CreateContainerConfigError` | `hf_token_secret` names a Secret that does not exist | Create it ([Deploy → Hugging Face token](deploy.md#hugging-face-token-for-a-private-model)) |
+| Pod never starts, `CreateContainerConfigError` | `hf_token_secret` names a Secret that does not exist | Create it ([Deploy → Options](deploy.md#options)) |
 | `Complete`, but no marker where the campaign looks | The two pods are not looking at the same volume, or the marker was removed | See below |
 
 A `Complete` warm-up with no marker: first check that the warm-up Job has

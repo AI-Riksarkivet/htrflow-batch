@@ -95,18 +95,21 @@ make compose-smoke   # foreground: runs the wrapper to completion, then
 make compose-down
 ```
 
-`make compose-smoke` builds both images from the checkout with the same
-recipes as the images that ship (`build-wrapper`, `build-web`), runs the
-wrapper to completion on them, then brings the web service up and fetches
-its `/uv.html` — the default local check. The compose file takes the two
+`make compose-up` runs the published release the compose file pins by
+digest (the same digests as the chart and the demo pipeline); it never
+builds. `make compose-smoke` builds both images from the checkout with the
+same recipes as the images that ship (`build-wrapper`, `build-web`, tagged
+`<registry>/…:<IMAGE_TAG>` like every local build), runs the wrapper to
+completion on them, then brings the web service up and fetches its
+`/uv.html` — the default local check. The compose file takes the two
 images from `HTR_WRAPPER_IMAGE` and `HTR_WEB_IMAGE`, which is how the smoke
-runs what it built rather than the release the file pins. `make
-compose-smoke-run WRAPPER_IMAGE=<ref> WEB_IMAGE=<ref>` runs the same smoke
-on any two images, a published release by digest included. The stack is
-torn down, volumes included, however the run ends. `dagger call compose-test`
-drives the same stack with the published web image the compose file pins
-by digest. The stack itself is described in
-[Try it](../getting-started/try-it.md).
+runs what it built. `make compose-smoke-run WRAPPER_IMAGE=<ref>
+WEB_IMAGE=<ref>` runs the same smoke on any two images. The stack is torn
+down, volumes included, however the run ends. `dagger call compose-test`
+drives the web service alone, on the pinned web image.
+`HTR_COMPOSE_S3_PORT` and `HTR_COMPOSE_WEB_PORT` move the host ports (make
+arguments, or `.env`); the stack itself is described in
+[Quickstart](../getting-started/try-it.md).
 
 The web service runs site-only in both (`HTRFLOW_WEB_SITE_ONLY=1`): a compose
 stack has no API server, so `/api/v1/…` answers 503 by design and the site is

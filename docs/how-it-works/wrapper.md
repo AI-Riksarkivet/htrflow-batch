@@ -327,7 +327,7 @@ apply deletes the warm-up Job and ConfigMap of a pipeline file that is gone.
 **Private models.** A private or gated model needs a Hub token on the
 warm-up only: `converter.yaml`'s `hf_token_secret` names the Secret, and
 campaign pods never get it
-([Deploy](../getting-started/deploy.md#hugging-face-token-for-a-private-model)).
+([Deploy](../getting-started/deploy.md#options)).
 
 **How a campaign pod waits for it.** The `warmup-wait` init container polls
 for `/data/warmup/<pipeline-id>.done` every 10 s. It waits at most

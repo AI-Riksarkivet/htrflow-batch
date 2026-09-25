@@ -51,10 +51,8 @@ device plugin) is a separate chart:
 
 The production-shaped install and the hardening steps live in
 [docs/getting-started/deploy.md](../../docs/getting-started/deploy.md); a dev
-cluster with `charts/htrflow-devstack` is in
-[docs/getting-started/try-it.md](../../docs/getting-started/try-it.md), and
-the contributor loop in
-[docs/development/dev-cluster.md](../../docs/development/dev-cluster.md).
+cluster with `charts/htrflow-devstack`, and the contributor loop around it,
+in [docs/development/dev-cluster.md](../../docs/development/dev-cluster.md).
 Cluster-local constants come from the repo-root `.env` (`.env.example` has
 the PoC defaults). The one image to pin: `make poc-push` builds and pushes
 the web image (`packages/web` plus the SPA and Universal Viewer, all in

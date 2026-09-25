@@ -13,7 +13,8 @@
 -include .env.example
 -include .env
 export HTR_RELEASE HTR_NAMESPACE HTR_REGISTRY HTR_REGISTRY_NODEPORT HTR_S3_ENDPOINT HTR_S3_NODEPORT \
-       HTR_BUCKET HTR_WEB_NODEPORT HTR_DEV_S3_ACCESS_KEY HTR_DEV_S3_SECRET_KEY HTRFLOW_DIR
+       HTR_BUCKET HTR_WEB_NODEPORT HTR_DEV_S3_ACCESS_KEY HTR_DEV_S3_SECRET_KEY HTRFLOW_DIR \
+       HTR_COMPOSE_S3_PORT HTR_COMPOSE_WEB_PORT
 
 # On RA hosts dagger containers need the corp CA; harmless elsewhere if the file exists.
 CA_BUNDLE ?= /etc/ssl/certs/ca-certificates.crt
@@ -121,7 +122,7 @@ compose-smoke-run:
 	export HTR_WRAPPER_IMAGE=$(WRAPPER_IMAGE) HTR_WEB_IMAGE=$(WEB_IMAGE) && \
 	docker compose up --no-build --abort-on-container-exit --exit-code-from wrapper wrapper && \
 	docker compose up --no-build -d web && \
-	curl -fsS --retry 15 --retry-delay 2 --retry-all-errors -o /dev/null http://localhost:8080/uv.html
+	curl -fsS --retry 15 --retry-delay 2 --retry-all-errors -o /dev/null http://localhost:$(HTR_COMPOSE_WEB_PORT)/uv.html
 
 compose-down:
 	cd .docker && docker compose down -v

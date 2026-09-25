@@ -1,184 +1,105 @@
 # Run a campaign
 
-This page takes you from an installed chart to a campaign that transcribes
-itself while you watch. [Campaigns](../how-it-works/campaigns.md) explains
-the mechanics behind each step.
+From an installed chart ([Deploy](deploy.md)) to volumes transcribing while
+you watch. A campaign is a file in a git repository of its own, the
+campaigns repo; the converter, `htrflow-campaigns`, checks it and applies it
+to the cluster. [Campaigns](../how-it-works/campaigns.md) explains what
+happens behind each step.
 
-Before you start, you need:
-
-- the chart deployed with its S3 Secret ([Deploy](deploy.md));
-- a `publicResultsBase` that browsers can reach;
-- `kubectl` access to the cluster;
-- `uv` on your machine and in the campaigns repo's CI, wherever the
-  converter renders.
+You need `uv` and a kubeconfig for the cluster.
 
 ## 1. Create the campaigns repo
 
-Desired state lives in a git repository of its own. The converter is a
-Python package: it renders on your machine and in the campaigns repo's CI,
-and the published `htrflow-campaigns` image runs the same CLI inside the
-cluster when the Argo CD hook applies the repo. Run it as a `uvx` tool
-straight from this repository to create a campaigns repo:
-
 ```bash
-uvx --from "git+https://github.com/AI-Riksarkivet/htrflow-batch@<ref>#subdirectory=packages/converter" \
-  htrflow-campaigns init my-campaigns
-```
-
-`<ref>` is a release tag, a commit SHA or a branch. If `uvx --from` does not
-resolve a subdirectory URL on your machine, install the CLI once instead:
-
-```bash
-git clone https://github.com/AI-Riksarkivet/htrflow-batch
-uv tool install ./htrflow-batch/packages/converter
+uv tool install "git+https://github.com/AI-Riksarkivet/htrflow-batch@<release-tag>#subdirectory=packages/converter"
 htrflow-campaigns init my-campaigns
 ```
 
-Either way, `my-campaigns/` has the shape of
+`<release-tag>` is the release the chart came from. This installs the CLI
+once; `uvx --from` with the same URL runs it without installing. With a
+checkout of this repository, `uv tool install ./packages/converter` does
+the same.
+
+`my-campaigns/` has the shape of
 [`examples/campaigns/`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/examples/campaigns):
 
 ```
-converter.yaml                 # namespace, queue, window, S3 secret, PVC, runtime class, results base
-campaigns/<campaign>.yaml      # pipeline: <id> + volumes:
-pipelines/<id>.yaml            # image: <digest> + steps:
-.github/workflows/render.yml   # validate and policy-check on PR; render + commit rendered/ on main
-argocd/apply.yaml              # the Argo CD PostSync hook that applies rendered/
-README.md                      # the repo's two rules: append-only campaigns, pause and cancel as Git changes
+converter.yaml                 # where campaigns run: namespace, queue, S3 secret, results base
+campaigns/demo.yaml            # a campaign: a pipeline and a list of volumes
+pipelines/demo-v1.yaml         # a pipeline: the wrapper image by digest, and htrflow's steps
+.github/workflows/render.yml   # CI: validate and policy-check on PR, render on main
+argocd/apply.yaml              # the Argo CD hook that applies rendered/
 ```
 
-The CI is GitHub Actions. For a repo on Azure DevOps, pass `--ci azure`:
-`init` then writes `azure-pipelines.yml`, the same three stages, in place
-of `.github/`. Its header comment lists what the project must grant it.
-
-Set `converter.yaml` to agree with the chart: `namespace`, `queue`,
-`s3_secret`, `data_pvc` and `public_results_base`
-([Deploy](deploy.md#install)). All the file formats are in
-[Campaign & Pipeline YAML](../reference/campaign-yaml.md).
-
-Write access to this repository decides which image and which models run
-with the bucket's write credentials. Treat it that way
+Make it a git repository of its own and push it. Write access to it
+decides which image and which models run with the bucket's write
+credentials, so guard it like that
 ([Security → Trust boundary](../how-it-works/security.md#trust-boundary)).
+`--ci azure` writes `azure-pipelines.yml` in place of `.github/`.
 
-## 2. Pin an image digest
+## 2. Point it at your install
 
-Every pipeline file names the wrapper image by digest, and the converter
-rejects tags. The published images are on Docker Hub. For an image you
-pushed yourself, read the digest back:
+In `converter.yaml`, set `public_results_base` to the chart's
+`publicResultsBase`. `namespace`, `queue`, `s3_secret` and `data_pvc` must
+name what the chart created; the defaults match the chart's defaults
+([Deploy → Check it](deploy.md#5-check-it)).
 
-```bash
-docker inspect --format '{{index .RepoDigests 0}}' <registry>/htrflow-batch:<tag>
-```
+## 3. List the volumes
 
-Then put it in `pipelines/<id>.yaml`:
-
-```yaml title="pipelines/<id>.yaml"
-image: <registry>/htrflow-batch@sha256:<digest>
-steps:
-  - step: Segmentation
-    ...
-```
-
-Two Kyverno rules check pipelines, at admission and again in the campaigns
-repo's CI (`htrflow-campaigns validate` checks neither): `<registry>/` must
-be in the release's `security.allowedImageRepos`, and with
-`security.requireModelRevision` on every model needs a 40-character commit
-hash as `revision:`. Where that key goes for each model type is in
-[Campaign & Pipeline YAML](../reference/campaign-yaml.md), under the
-pipeline file.
-
-A pipeline id names the image and the steps together. Once results exist
-under an id, never change it in place. A new digest means a **new pipeline
-id and a new campaign file**, not an edit
-([Campaign & Pipeline YAML](../reference/campaign-yaml.md)).
-
-## 3. Render and apply
-
-### Through CI and GitOps
-
-This is the normal path. `.github/workflows/render.yml` in the campaigns
-repo does the following:
-
-- On a pull request, it runs `htrflow-campaigns validate`, renders the repo,
-  and runs the chart's Kyverno policies over the result with the Kyverno
-  CLI. The CLI submits the manifests as the apply ServiceAccount
-  (`htrflow-campaigns` in `POLICY_NAMESPACE`), the identity that writes them
-  in the cluster, so a rule scoped to another identity is left out just as
-  admission would leave it out.
-- On every push to `main`, it renders and commits `rendered/`.
-
-Set the workflow's `CONVERTER_REF`, `POLICY_NAMESPACE`,
-`POLICY_ALLOWED_IMAGE_REPOS` and `POLICY_REQUIRE_MODEL_REVISION` to match
-your release.
-
-To apply what CI committed, run `htrflow-campaigns apply --prune` on it.
-Never point a GitOps tool at `rendered/` to apply it: once a finished
-campaign's Job is reaped, a tool that makes the cluster match the directory
-would create it again and rerun every volume. With Argo CD, the Application
-syncs only `rendered/sync.yaml` and a `PostSync` hook runs the apply
-([htrflow-campaigns CLI](../reference/cli.md)).
-
-When the apply runs inside the cluster (a CI Job or the Argo CD hook), it
-needs an identity that may write campaign Jobs: set `apply.rbac.enabled` in
-the chart, and `apply.gitCidrs` to the git host the hook clones from.
-
-### From a kubeconfig
-
-```bash
-make campaigns-apply DIR=<campaigns-repo-dir>
-# exactly: uv run htrflow-campaigns apply <dir> --out <dir>/rendered
-```
-
-It renders, skips campaigns that are already finished, applies pipelines
-then campaigns, and prints one `applied: <Kind>/<name>` line per object;
-`--dry-run` shows the list without connecting. Exit `0` is everything
-applied, `3` some objects refused, `1` a pause not enforced or nothing
-applied. The full order and what to do about a refusal are in
-[htrflow-campaigns CLI](../reference/cli.md).
-
-## 4. Add work: it is a commit
-
-```yaml title="campaigns/<campaign>.yaml"
-pipeline: <id>
+```yaml title="campaigns/demo.yaml"
+pipeline: demo-v1
 volumes:
-  - <reference>                    # expanded through converter.yaml's source_template (set it first)
   - id: <volume-id>
     manifest: <iiif-manifest-url>
+  - id: <another-volume-id>
+    images:
+      - <image-url>
 ```
 
-Open a pull request, where CI validates and policy-checks it. Get it
-reviewed, then merge. Once `rendered/` is applied, Kueue admits the
-campaign's Indexed Job up to its `window`, and Kubernetes runs one pod per
-volume. There is no separate "enable" step and nothing to poll.
+A volume is a IIIF manifest or a list of image URLs. A bare string such as
+`- R0001203` is a reference code, turned into a manifest URL by
+`source_template` in `converter.yaml`; set that first, or `validate` refuses
+it. `window:` caps how many volumes run at once. Every key is in
+[Campaign & Pipeline YAML](../reference/campaign-yaml.md).
 
-- **Campaigns are append-only.** An already-rendered campaign's volume list
-  cannot be edited in place. New work goes in a new campaign file.
-- **Pausing is a Git change.** Put `suspend: true` in the campaign file, and
-  the apply step puts the same intent on the Kueue Workload.
-- **Deleting a campaign's file cancels it.** Its Job and ConfigMap are
-  removed by an apply that is asked to prune: `htrflow-campaigns apply
-  --prune` (the Argo CD hook's command), or `make campaigns-apply PRUNE=1`.
-  Pruning deletes every converter-labelled object that is not in this apply,
-  so never run it against a partial checkout.
+`pipelines/demo-v1.yaml` runs the published wrapper image with the demo
+models. Under `values-prod.yaml` every model also needs its Hugging Face
+commit hash as `revision:`, or admission refuses the campaign. The demo
+pipeline has none: add one per model, where
+[Campaign & Pipeline YAML](../reference/campaign-yaml.md) shows, before the
+first apply.
 
-Results already in S3 are never touched by any of these.
+## 4. Check and apply
+
+```bash
+htrflow-campaigns validate my-campaigns
+htrflow-campaigns apply my-campaigns --out my-campaigns/rendered --namespace <namespace>
+```
+
+`validate` prints nothing when the repo is sound, and one line per problem
+when it is not. `apply` renders the repo into `rendered/` and prints one
+`applied: <Kind>/<name>` line per object. Exit `0` means everything was
+applied, `3` that some objects were refused (each named on stderr), `1`
+that nothing was applied or a pause was not enforced. `--dry-run` shows the list without touching the
+cluster.
+
+The warm-up Job downloads the pipeline's models into the model cache first,
+once per pipeline. Kueue then admits the campaign when its GPUs are free,
+and each campaign pod processes one volume.
 
 ## 5. Watch it
 
-The campaign browser is the platform's front door, at the web front's root:
+The campaign browser is the web front's root, `<web-front-url>/`: one card
+per campaign, a bar per volume, and a sentence for each volume that failed.
+From the cluster:
 
-```
-<web-front-url>/
+```bash
+kubectl -n <namespace> get job <campaign> \
+  -o jsonpath='{.status.completedIndexes} done / {.status.failedIndexes} failed{"\n"}'
 ```
 
-- A volume's **open** link goes to the Universal Viewer at `/uv.html`. Once
-  the wrapper has published the volume's `iiif.json`, it opens that, with the
-  text overlay. Before then it opens the source manifest, which shows images
-  only.
-- **source** links the volume's source manifest as the campaign file gives
-  it. An `images:` volume has no source manifest, so it has no **source**
-  link.
-- **log** opens the run viewer at `/log`. It follows a running volume's log
-  live, and shows the per-page summary once the volume finishes.
+A campaign that stays queued, or a volume that fails, is in
+[Troubleshooting](troubleshooting.md).
 
 ### Predicted page quality
 
@@ -198,13 +119,52 @@ the step shows none of this.
 The scores come from each volume's
 [`manifest.json` and `progress.json`](../reference/s3-layout.md#manifestjson-completion-marker).
 
-The browser must reach both the web front and the results base URL. See
-[Exposing the web front](viewing.md#exposing-the-web-front).
+## 6. Open the results
 
-To skip the browser and ask the cluster directly:
+A volume's **open** link opens the viewer on its `iiif.json`, with the text
+over the page image, before the volume has finished too. **log**
+opens the run log, and each page's ALTO XML is one click from there
+([View results](viewing.md)). In the bucket, results are under
+`<namespace>/<pipeline>/<volume>/` ([S3 layout](../reference/s3-layout.md)).
+
+## Changing work
+
+Every change is a commit, then an apply.
+
+- **New volumes go in a new campaign file.** A rendered campaign's volume
+  list cannot change.
+- **Pause** with `suspend: true` in the campaign file; remove it to resume.
+- **Cancel** by deleting the campaign file and applying with `--prune`.
+  Pruning deletes every converter-labelled object not in this render, so
+  only run it on a full checkout.
+- **A new image or new steps** is a new pipeline id and a new campaign
+  file, never an edit to a pipeline that has results
+  ([Campaign & Pipeline YAML](../reference/campaign-yaml.md)).
+
+Results already in the bucket are never touched by any of these.
+
+## Apply from CI
+
+The generated CI validates, renders and policy-checks every pull request
+with the chart's Kyverno policies, and commits `rendered/` on `main`. Set
+its `CONVERTER_REF`, `POLICY_NAMESPACE`, `POLICY_ALLOWED_IMAGE_REPOS` and
+`POLICY_REQUIRE_MODEL_REVISION` to match your release.
+
+Something must then run `htrflow-campaigns apply --prune` on `main`: you,
+from a kubeconfig, or the Argo CD `PostSync` hook in `argocd/apply.yaml`,
+which runs it in the cluster (set `apply.rbac.enabled` and `apply.gitCidrs`
+in the chart). Never point a GitOps sync at `rendered/` itself: it would
+re-create a finished campaign's Job once Kubernetes has reaped it, and
+rerun every volume. The details are in
+[htrflow-campaigns CLI](../reference/cli.md).
+
+## Your own pipeline image
+
+Pin it by digest, never by tag, in `pipelines/<id>.yaml`:
 
 ```bash
-kubectl -n <namespace> get job <campaign> \
-  -o jsonpath='{.status.completedIndexes} done / {.status.failedIndexes} failed{"\n"}'
-curl -s <web-front-url>/api/v1/jobs | jq .
+docker inspect --format '{{index .RepoDigests 0}}' <registry>/htrflow-batch:<tag>
 ```
+
+and add `<registry>/` to the chart's `security.allowedImageRepos`. Kyverno
+checks both at admission and in CI; `validate` checks neither.
