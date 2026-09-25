@@ -1617,5 +1617,10 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5984
 # ClusterQueue and ResourceFlavors, and `get` on its LocalQueue, for the
 # apply's flavor check. _helpers.tpl +20: every two queue.flavors must differ
 # on a label key both name, with its sentence.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2056
+# 2056 -> 2059 (image cache, Task 3 fix): job-shape.yaml +3 -- IMAGE_CACHE_BUCKET
+# added to the campaign Job's `free` list (not `bytes`: it is a bucket name),
+# and the comment explaining it is conditional on converter.yaml's
+# `image_cache` like LOOKAHEAD_BYTES is on a named size, and that the
+# warm-up Job never gets it.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2059
 exit $fail

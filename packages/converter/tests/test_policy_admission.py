@@ -785,6 +785,20 @@ def test_a_campaign_job_at_a_named_size_is_admitted(tmp_path: Path, job_shape: P
         assert verdict == "admitted", out
 
 
+def test_a_campaign_job_with_the_image_cache_on_is_admitted(
+    tmp_path: Path, job_shape: Path
+):
+    """render.py appends IMAGE_CACHE_BUCKET to the campaign Job only when
+    converter.yaml sets `image_cache` (task-3-brief); job-shape must admit
+    it -- the warm-up Job never carries it at all."""
+    batch, warmup = converter_jobs(image_cache={"bucket": "images-batch"})
+    assert any(e["name"] == "IMAGE_CACHE_BUCKET" for e in _main(batch)["env"])
+    assert not any(e["name"] == "IMAGE_CACHE_BUCKET" for e in _main(warmup)["env"])
+    for user in (APPLY_SA, "kubernetes-admin"):
+        verdict, out = admission(tmp_path, job_shape, batch, user=user)
+        assert verdict == "admitted", out
+
+
 @pytest.mark.parametrize(
     "config,role,said",
     [
@@ -994,6 +1008,12 @@ MUTATIONS = {
     "ld-preload": ("batch", _set_env("LD_PRELOAD", {"value": "/campaign/x.so"})),
     "pythonpath": ("warmup", _set_env("PYTHONPATH", {"value": "/config"})),
     "pinned-value": ("batch", _set_env("HOME", {"value": "/campaign"})),
+    # image cache: the allow-list is a real gate, not a rubber stamp -- a
+    # made-up name close to IMAGE_CACHE_BUCKET is refused like any other.
+    "image-cache-typo": (
+        "batch",
+        _set_env("IMAGE_CACHE_BUKCET", {"value": "images-batch"}),
+    ),
     # B105: the lookahead is a byte count the converter derives, nothing else
     "lookahead-not-bytes": ("batch", _env("LOOKAHEAD_BYTES", "$(S3_BUCKET)")),
     "free-from-field": (
@@ -1098,6 +1118,7 @@ SAID = {
     "host-network": "host namespaces or aliases",
     "tolerate-all": "a toleration with operator Exists and no key",
     "lookahead-not-bytes": "LOOKAHEAD_BYTES is not a number of bytes",
+    "image-cache-typo": "env the converter never renders: IMAGE_CACHE_BUKCET",
 }
 
 

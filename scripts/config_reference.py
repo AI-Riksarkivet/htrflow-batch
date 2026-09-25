@@ -125,6 +125,7 @@ FREE_ENV = {
     "FETCH_MAX_BYTES": ("converter", "fetch_max_bytes"),
     "BACKOFF_LIMIT_PER_INDEX": ("fixed", "the Job's `backoffLimitPerIndex`"),
     "LOOKAHEAD_BYTES": ("size", "workdir"),
+    "IMAGE_CACHE_BUCKET": ("cache", "bucket"),
 }
 _FREE_SHOWN = {
     "pipeline": "the pipeline file's `{}`",
@@ -132,6 +133,7 @@ _FREE_SHOWN = {
     "fixed": "the converter, fixed: {}",
     "size": "half the pipeline's size's `{}` (`converter.yaml` `sizes`); "
     "no size, the default",
+    "cache": "`converter.yaml` `image_cache.{}`; no `image_cache`, never set",
 }
 #: What an image's own `ENV` holds, where it comes from at build time.
 IMAGE_ENV_DOC = {

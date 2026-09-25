@@ -103,7 +103,7 @@ Each key is an environment variable of the container.
 | `LOG_SHIP_SECONDS` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | `15.0` | — | no secret — nobody |
 | `MANIFEST_MAX_BYTES` | `converter.yaml` `manifest_max_bytes` | `16777216` | — | no secret — nobody |
 | `FETCH_MAX_BYTES` | `converter.yaml` `fetch_max_bytes` | `67108864` | — | no secret — nobody |
-| `IMAGE_CACHE_BUCKET` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | *(empty)* | — | no secret — nobody |
+| `IMAGE_CACHE_BUCKET` | `converter.yaml` `image_cache.bucket`; no `image_cache`, never set | *(empty)* | — | no secret — nobody |
 | `DOWNLOAD_DEADLINE_SECONDS` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | `300.0` | — | no secret — nobody |
 | `MAX_IMAGE_PIXELS` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | `100000000` | — | no secret — nobody |
 | `PAGE_TIMEOUT_SECONDS` | **a local run only**: no converter key renders it, and job-shape refuses a Job that sets it | `600.0` | — | no secret — nobody |
