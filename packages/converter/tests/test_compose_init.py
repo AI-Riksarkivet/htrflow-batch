@@ -92,3 +92,15 @@ def test_without_the_env_var_no_third_bucket_is_created(
         compose_init.FIXTURES_BUCKET,
         compose_init.RESULTS_BUCKET,
     }
+
+
+def test_the_compose_stack_passes_one_image_cache_knob_to_init_and_wrapper():
+    """The compose stack has no converter, so HTR_IMAGE_CACHE_BUCKET is the
+    one switch: the init creates the bucket, the wrapper uses it. Empty (the
+    default) is off, so the stack behaves as it did without the cache."""
+    import yaml
+
+    compose = yaml.safe_load((ROOT / ".docker" / "docker-compose.yml").read_text())
+    for name in ("fixtures-init", "wrapper"):
+        env = compose["services"][name]["environment"]
+        assert env["IMAGE_CACHE_BUCKET"] == "${HTR_IMAGE_CACHE_BUCKET:-}", name

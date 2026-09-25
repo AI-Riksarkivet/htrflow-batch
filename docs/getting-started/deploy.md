@@ -216,10 +216,10 @@ lifecycle rules can expire objects if wanted. What a hit, a miss or a
 cache error does inside the pod is in
 [The Wrapper → Image cache](../how-it-works/wrapper.md#image-cache).
 
-On the dev stacks, the devstack chart's `s3.imageCacheBucket` creates the
-bucket, private, next to the results bucket; the compose stack's init does
-the same for `IMAGE_CACHE_BUCKET`. Then set `image_cache.bucket` to the same
-name.
+On the devstack chart, `s3.imageCacheBucket` creates the bucket, private,
+next to the results bucket. Then set `image_cache.bucket` to the same name.
+The compose stack has no converter: set `HTR_IMAGE_CACHE_BUCKET` instead,
+and its init creates the bucket and its wrapper uses it.
 
 ## Hugging Face token, for a private model
 
