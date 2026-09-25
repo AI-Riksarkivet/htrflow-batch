@@ -173,12 +173,14 @@ another campaign, then reads its pages from there and asks the IIIF server
 for nothing. It is optional and off by default.
 
 1. **Create the bucket** on the same S3 store as the results, reachable with
-   the same `s3.existingSecret` credentials, which must be able to read and
-   write it. It must be a separate, private bucket, **never the results
-   bucket**: that one is public-read, and a pod told to cache there switches
-   the cache off and logs why. Give it **no** public policy and no CORS:
-   nothing links to it, and source images can carry access rules the ALTO
-   does not. The wrapper never creates it.
+   the same `s3.existingSecret` credentials, which need `s3:GetObject`,
+   `s3:PutObject` and `s3:ListBucket` on it. Without `s3:ListBucket`, S3
+   answers a key that is not there with 403 instead of 404, and the wrapper
+   logs the bucket once as unreadable. It must be a separate, private
+   bucket, **never the results bucket**: that one is public-read, and a pod
+   told to cache there switches the cache off and logs why. Give it **no**
+   public policy and no CORS: nothing links to it, and source images can
+   carry access rules the ALTO does not. The wrapper never creates it.
 
     ```bash
     aws s3api create-bucket --bucket images-batch --endpoint-url <s3-endpoint-url>
