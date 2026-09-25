@@ -123,6 +123,15 @@ def test_byte_caps_default_and_override():
     assert cfg.fetch_max_bytes == 2048
 
 
+def test_the_image_cache_bucket_is_off_unless_set(cfg):
+    assert cfg.image_cache_bucket == ""
+
+
+def test_the_image_cache_bucket_reads_its_env():
+    cfg = Config.from_env(dict(REQUIRED, IMAGE_CACHE_BUCKET="images-batch"))
+    assert cfg.image_cache_bucket == "images-batch"
+
+
 def test_download_deadline_default_and_override():
     """3063: one download's wall-clock budget, separate from the per-read
     timeouts and from the pod's own deadline."""
