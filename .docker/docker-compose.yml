@@ -69,6 +69,9 @@ services:
       # Anonymous read on status/logs/* — same trade-off as the chart's
       # devStack.rustfs.publicLogs (see charts/htrflow-batch/values.yaml).
       PUBLIC_LOGS: "true"
+      # The optional private image cache bucket; empty (the default) is none.
+      # The wrapper below reads the same knob.
+      IMAGE_CACHE_BUCKET: ${HTR_IMAGE_CACHE_BUCKET:-}
       AWS_ACCESS_KEY_ID: ${HTR_DEV_S3_ACCESS_KEY:-rustfsadmin}
       AWS_SECRET_ACCESS_KEY: ${HTR_DEV_S3_SECRET_KEY:-rustfsadmin}
     command: ["uv", "run", "--with", "boto3", "--with", "httpx",
@@ -94,6 +97,7 @@ services:
       AWS_ACCESS_KEY_ID: ${HTR_DEV_S3_ACCESS_KEY:-rustfsadmin}
       AWS_SECRET_ACCESS_KEY: ${HTR_DEV_S3_SECRET_KEY:-rustfsadmin}
       PUBLIC_RESULTS_BASE: http://localhost:${HTR_COMPOSE_S3_PORT:-19000}/${HTR_BUCKET:-htr-results}
+      IMAGE_CACHE_BUCKET: ${HTR_IMAGE_CACHE_BUCKET:-}  # empty: no image cache
       MAX_PAGES: "1"          # CPU is ~41x slower than GPU; full volume ≈ 13 min
       WORKDIR_PATH: /work
       # The image runs as an unprivileged user with no home directory, as in

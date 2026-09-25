@@ -89,6 +89,170 @@ def _keys(s3, cfg):
     return sorted(o["Key"] for o in resp.get("Contents", []))
 
 
+# -- the image cache ---------------------------------------------------------
+
+
+def _counting_http(monkeypatch, sample_manifest):
+    calls = []
+
+    def handler(req):
+        if req.url.path.endswith("manifest.json"):
+            return httpx.Response(200, json=sample_manifest)
+        calls.append(str(req.url))
+        return httpx.Response(200, content=b"\xff\xd8\xff\xe0JPEGDATA")
+
+    monkeypatch.setattr(
+        main_mod,
+        "_http_client",
+        lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    return calls
+
+
+def test_a_volume_run_twice_with_the_cache_fetches_nothing_the_second_time(
+    env, cfg, s3, monkeypatch, sample_manifest
+):
+    s3.create_bucket(Bucket="images-batch")
+    cached = {**env, "IMAGE_CACHE_BUCKET": "images-batch", "RESUME": "false"}
+    first = _counting_http(monkeypatch, sample_manifest)
+    assert main(cached, process_page_factory=fake_factory) == EXIT_OK
+    keys = sorted(
+        o["Key"] for o in s3.list_objects_v2(Bucket="images-batch").get("Contents", [])
+    )
+    assert keys == [f"SE-RA-1234/SE-RA-1234_{i:05d}.jpg" for i in (1, 2, 3)]
+    m1 = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert m1["image_cache"] == {
+        "bucket": "images-batch",
+        "hits": 0,
+        "misses": 3,
+        "stored": 3,
+    }
+    assert len(first) == 3
+
+    second = _counting_http(monkeypatch, sample_manifest)
+    assert main(cached, process_page_factory=fake_factory) == EXIT_OK
+    m2 = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert second == []
+    assert m2["bytes_fetched"] == 0
+    assert m2["image_cache"] == {
+        "bucket": "images-batch",
+        "hits": 3,
+        "misses": 0,
+        "stored": 0,
+    }
+
+
+def test_a_resumed_page_whose_source_changed_gets_the_new_image_not_the_cached(
+    env, cfg, s3, monkeypatch, sample_manifest
+):
+    """Resume sends a page with a new source back to be fetched; the cache
+    holds the old source's image under the same key, and must not answer."""
+    s3.create_bucket(Bucket="images-batch")
+    cached = {**env, "IMAGE_CACHE_BUCKET": "images-batch"}
+
+    def handler(req):
+        if req.url.path.endswith("manifest.json"):
+            return httpx.Response(200, json=sample_manifest)
+        return httpx.Response(200, content=b"\xff\xd8\xff\xe0" + req.url.path.encode())
+
+    monkeypatch.setattr(
+        main_mod,
+        "_http_client",
+        lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    seen: dict[str, bytes] = {}
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            seen[path.stem] = path.read_bytes()
+            return inner(path)
+
+        return process
+
+    assert main(cached, process_page_factory=factory) == EXIT_OK
+    assert b"/mock-vol/" in seen["0001"]
+    _move_source(sample_manifest, "NEW")
+    seen.clear()
+    assert main(cached, process_page_factory=factory) == EXIT_OK
+    assert sorted(seen) == ["0001", "0002", "0003"]
+    assert all(b"/NEW/" in body for body in seen.values())
+    # and the cache now holds the new source's image for the next run
+    obj = s3.get_object(Bucket="images-batch", Key="SE-RA-1234/SE-RA-1234_00001.jpg")
+    assert b"/NEW/" in obj["Body"].read()
+
+
+def test_without_the_cache_the_manifest_has_no_image_cache_key(env, cfg, s3):
+    assert main(env, process_page_factory=fake_factory) == EXIT_OK
+    body = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert "image_cache" not in body
+
+
+def test_a_resumed_page_touches_no_cache(env, cfg, s3, monkeypatch, sample_manifest):
+    s3.create_bucket(Bucket="images-batch")
+    _put_done(s3, cfg, "0001")
+    _counting_http(monkeypatch, sample_manifest)
+    assert (
+        main(
+            {**env, "IMAGE_CACHE_BUCKET": "images-batch"},
+            process_page_factory=fake_factory,
+        )
+        == EXIT_OK
+    )
+    body = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert body["image_cache"]["misses"] == 2
+    keys = [
+        o["Key"] for o in s3.list_objects_v2(Bucket="images-batch").get("Contents", [])
+    ]
+    assert "SE-RA-1234/SE-RA-1234_00001.jpg" not in keys
+
+
+def test_the_results_bucket_named_as_the_cache_caches_nothing(env, cfg, s3):
+    """The results bucket is public-read: no source image may land in it."""
+    cached = {**env, "IMAGE_CACHE_BUCKET": cfg.s3_bucket}
+    assert main(cached, process_page_factory=fake_factory) == EXIT_OK
+    assert not [k for k in _keys(s3, cfg) if k.endswith(".jpg")]
+    body = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert "image_cache" not in body
+
+
+def test_a_missing_cache_bucket_still_completes_the_volume(env, cfg, s3):
+    assert (
+        main(
+            {**env, "IMAGE_CACHE_BUCKET": "images-batch"},
+            process_page_factory=fake_factory,
+        )
+        == EXIT_OK
+    )
+    body = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert body["pages_ok"] == 3 and body["image_cache"]["stored"] == 0
+
+
 def test_happy_path(env, cfg, s3):
     rc = main(env, process_page_factory=fake_factory)
     assert rc == EXIT_OK

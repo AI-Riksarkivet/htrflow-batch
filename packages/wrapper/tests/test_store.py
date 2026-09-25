@@ -147,6 +147,17 @@ def test_main_client_has_bounded_timeouts_and_retries(cfg, s3):
     assert c.retries == {"mode": "standard", "total_max_attempts": 4}
 
 
+@pytest.mark.parametrize("concurrency,pool", [(12, 16), (40, 44), (1, 10)])
+def test_the_main_clients_pool_covers_the_download_threads_and_the_uploader(
+    cfg, s3, concurrency, pool
+):
+    """With the image cache on, every download thread and the uploader share
+    this client; botocore's default pool of 10 left urllib3's "Connection pool
+    is full" warnings in the run log."""
+    cfg = cfg.model_copy(update={"download_concurrency": concurrency})
+    assert ResultStore(cfg).client.meta.config.max_pool_connections == pool
+
+
 def test_the_clients_send_what_an_s3_compatible_store_accepts(cfg, s3, tmp_path):
     """Audit 0923 W-10: botocore's default flexible checksums send PutObject
     as `aws-chunked` with a CRC32 trailer and DeleteObjects with a CRC32 in

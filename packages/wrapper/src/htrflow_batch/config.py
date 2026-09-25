@@ -64,6 +64,9 @@ class Config(BaseModel):
     # S5 byte caps on fetches driven by campaign data (docs: wrapper)
     manifest_max_bytes: int = Field(16 * 1024 * 1024, alias="MANIFEST_MAX_BYTES")
     fetch_max_bytes: int = Field(64 * 1024 * 1024, alias="FETCH_MAX_BYTES")
+    #: The S3 bucket source images are cached in (docs: wrapper, "Image
+    #: cache"); empty is off. Same endpoint and credentials as the results.
+    image_cache_bucket: str = Field("", alias="IMAGE_CACHE_BUCKET")
     #: 3063: wall-clock budget of one download (the manifest, or one attempt
     #: at a page); the per-read timeouts restart with every byte.
     download_deadline_seconds: float = Field(300.0, alias="DOWNLOAD_DEADLINE_SECONDS")

@@ -346,7 +346,33 @@ fail=0
 # progress, main +18: the score kept off the upload parse, and the final
 # progress.json carrying the block. Most of it is the comment saying why the
 # score comes from the file and never fails a page.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 4409
+# 4409 -> 4604 (2026-09-25, image cache Task 1): imagecache.py (+192) is the
+# whole module -- ImageCache keyed {ref}/{ref}_{page:05d}.jpg, for_volume's
+# five-digit guard, a hit checked exactly like a download (looks_like_image,
+# the byte cap, _check_pixels), and the once-per-run bucket/GET/PUT warnings
+# a dozen download threads share a lock over. config.py +3: image_cache_bucket,
+# off by default. Half of the module is the docstrings saying the cache is
+# never a correctness dependency and nothing in it may raise into a page.
+# 4604 -> 4661 (2026-09-25, image cache Task 2): fetch.py +9 -- the cache is
+# tried before the download and fed the file after one, `from_cache` on the
+# result. stream.py +4: the cache passed into the pool's fetch_page, a hit
+# left out of bytes_fetched (it never touched the IIIF server). main.py +19:
+# `_stream` builds the volume's ImageCache and logs its counts once done.
+# publish.py +5: `image_cache` on run/run_manifest, present in manifest.json
+# only when the cache ran. Most of it is the two lines of docstring on each
+# saying why a hit is not a download and why the count still has to add up.
+# 4661 -> 4732 (image cache, final review): imagecache.py +65 -- source_identity
+# (the page's URL with its IIIF size put to max, digested without credentials)
+# written as object metadata on a PUT and compared on a GET, so a changed or
+# reused source is a miss rather than the old image; for_volume refusing the
+# public-read results bucket in one sentence; get split into a never-raising
+# wrapper and _lookup, and a catch-all on put, each logged once. fetch.py +2:
+# _SIZED also reads `/full/max/`, and _unscaled still has no fallback for it.
+# store.py +3: the results client's pool sized for the download threads plus
+# the uploader. main.py +1: the results bucket passed to for_volume. Most of
+# it is the docstrings saying why the object must name its source and why
+# nothing here may raise into a page.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 4732
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
@@ -773,7 +799,13 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 4409
 # a feature group the image cannot run, comes before text recognition or is
 # there twice -- each with its one-line reason, and the comment saying why a
 # pickled model comes only from a pinned repo.
-check converter "$(count packages/converter/src -name '*.py')" 5025
+# 5025 -> 5060 (image cache, Task 3): models.py +28 -- ImageCacheSettings and
+# its bucket-name check (frozen, extra="forbid", the S3 bucket-name regex and
+# its sentence), and the `image_cache` field on ConverterConfig with the
+# comment saying absent is off. render.py +7: appended after `dynamic_env`,
+# not a skeleton entry, so a converter.yaml without the block renders
+# byte-for-byte what it always did.
+check converter "$(count packages/converter/src -name '*.py')" 5060
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
@@ -1596,5 +1628,10 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5984
 # ClusterQueue and ResourceFlavors, and `get` on its LocalQueue, for the
 # apply's flavor check. _helpers.tpl +20: every two queue.flavors must differ
 # on a label key both name, with its sentence.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2056
+# 2056 -> 2059 (image cache, Task 3 fix): job-shape.yaml +3 -- IMAGE_CACHE_BUCKET
+# added to the campaign Job's `free` list (not `bytes`: it is a bucket name),
+# and the comment explaining it is conditional on converter.yaml's
+# `image_cache` like LOOKAHEAD_BYTES is on a named size, and that the
+# warm-up Job never gets it.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2059
 exit $fail

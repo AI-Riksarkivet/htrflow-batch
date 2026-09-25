@@ -4,9 +4,11 @@ mock IIIF manifest, and set the anonymous-read policy + CORS on the buckets.
 Env: S3_ENDPOINT (default http://rustfs:9000), S3_BUCKET (results bucket,
 default htr-results), FIXTURES_BUCKET (default htr-fixtures), PUBLIC_LOGS
 ("true"/"false", default true — whether status/logs/* is anonymous-readable),
-MOCK_BASE (the address the mock manifest names its pages at; compose sets
-the localhost form that the wrapper and the browser both resolve, see
-.docker/docker-compose.yml), AWS creds via standard vars."""
+IMAGE_CACHE_BUCKET (private image cache bucket, default empty — none
+created; no policy or CORS applied), MOCK_BASE (the address the mock
+manifest names its pages at; compose sets the localhost form that the
+wrapper and the browser both resolve, see .docker/docker-compose.yml), AWS
+creds via standard vars."""
 
 import json
 import os
@@ -20,6 +22,7 @@ ENDPOINT = os.environ.get("S3_ENDPOINT", "http://rustfs:9000")
 RESULTS_BUCKET = os.environ.get("S3_BUCKET", "htr-results")
 FIXTURES_BUCKET = os.environ.get("FIXTURES_BUCKET", "htr-fixtures")
 PUBLIC_LOGS = os.environ.get("PUBLIC_LOGS", "true").lower() in ("1", "true", "yes")
+IMAGE_CACHE_BUCKET = os.environ.get("IMAGE_CACHE_BUCKET", "")
 MOCK_BASE = os.environ.get(
     "MOCK_BASE", f"http://rustfs:9000/{FIXTURES_BUCKET}/mock-vol"
 )
@@ -76,7 +79,10 @@ CORS = {
 
 def main() -> None:
     s3 = boto3.client("s3", endpoint_url=ENDPOINT)
-    for bucket in (FIXTURES_BUCKET, RESULTS_BUCKET):
+    buckets = (FIXTURES_BUCKET, RESULTS_BUCKET)
+    if IMAGE_CACHE_BUCKET:
+        buckets += (IMAGE_CACHE_BUCKET,)  # private: no policy, no CORS below
+    for bucket in buckets:
         try:
             s3.create_bucket(Bucket=bucket)
         except s3.exceptions.BucketAlreadyOwnedByYou:

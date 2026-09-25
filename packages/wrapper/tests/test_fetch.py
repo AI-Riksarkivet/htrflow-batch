@@ -3,11 +3,14 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
+import boto3
 import httpx
 import pytest
+from moto import mock_aws
 
 from htrflow_batch.fetch import FetchResult, fetch_page
 from htrflow_batch.iiif import PageRef
+from htrflow_batch.imagecache import ImageCache, source_identity
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 12  # JPEG SOI + APP0 marker
 
@@ -21,6 +24,16 @@ def _pages(n):
 
 def _client(handler):
     return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+@pytest.fixture
+def page():
+    return PageRef(
+        index=1,
+        name="0001",
+        image_url="https://iiif.example/p1/full/2500,/0/default.jpg",
+        canvas={},
+    )
 
 
 def _fetch_all(pages, tmp_path, handler, **kw):
@@ -331,6 +344,26 @@ def test_a_400_that_is_not_a_size_fails_the_page_at_once(tmp_path):
     assert len(calls) == 1
 
 
+def test_a_400_on_a_full_max_request_has_no_fallback(tmp_path):
+    """``/full/max/`` is already the unscaled request: there is nothing
+    smaller to substitute, so no info.json is asked for."""
+    calls = []
+
+    def handler(req):
+        calls.append(str(req.url))
+        return httpx.Response(400)
+
+    page = PageRef(
+        index=1,
+        name="0001",
+        image_url="https://img/iiif/full/max/0/default.jpg",
+        canvas={},
+    )
+    r = fetch_page(page, tmp_path, _client(handler), 3, 0.0)
+    assert r.error == "HTTP 400" and not r.transient
+    assert calls == ["https://img/iiif/full/max/0/default.jpg"]
+
+
 def test_a_400_after_the_fallback_does_not_loop(tmp_path):
     """Once the URL is unscaled the substitution is a no-op, so the second
     400 is final like any other."""
@@ -634,3 +667,154 @@ def test_the_wait_between_attempts_ends_when_the_run_aborts(tmp_path):
     r = fetch_page(_pages(1)[0], tmp_path, _client(handler), stop=stop)
     assert time.monotonic() - t0 < 5
     assert r.error == "stopped: run aborted"
+
+
+# -- the image cache ---------------------------------------------------------
+
+
+def _cache(c):
+    return ImageCache(c, "images-batch", "R0001203", max_bytes=1 << 20, max_pixels=0)
+
+
+def test_a_cache_hit_never_calls_the_iiif_server(tmp_path, page):
+    calls = []
+
+    def handler(req):
+        calls.append(req.url)
+        return httpx.Response(200, content=JPEG)
+
+    with mock_aws():
+        c = boto3.client("s3", region_name="us-east-1")
+        c.create_bucket(Bucket="images-batch")
+        c.put_object(
+            Bucket="images-batch",
+            Key=_cache(c).key(page),
+            Body=JPEG,
+            Metadata={"source": source_identity(page.image_url)},
+        )
+        result = fetch_page(page, tmp_path, _client(handler), cache=_cache(c))
+    assert result.error is None and result.from_cache and calls == []
+    assert result.size == len(JPEG)
+
+
+def test_a_miss_downloads_and_stores(tmp_path, page):
+    with mock_aws():
+        c = boto3.client("s3", region_name="us-east-1")
+        c.create_bucket(Bucket="images-batch")
+        cache = _cache(c)
+        result = fetch_page(
+            page,
+            tmp_path,
+            _client(lambda r: httpx.Response(200, content=JPEG)),
+            cache=cache,
+        )
+        stored = c.get_object(Bucket="images-batch", Key=cache.key(page))["Body"].read()
+    assert result.error is None and not result.from_cache
+    assert stored == JPEG
+    assert cache.report()["stored"] == 1
+
+
+def test_a_failed_download_stores_nothing(tmp_path, page):
+    with mock_aws():
+        c = boto3.client("s3", region_name="us-east-1")
+        c.create_bucket(Bucket="images-batch")
+        cache = _cache(c)
+        result = fetch_page(
+            page,
+            tmp_path,
+            _client(lambda r: httpx.Response(404)),
+            retries=1,
+            cache=cache,
+        )
+    assert result.error and cache.report()["stored"] == 0
+
+
+class _Raising:
+    """An S3 client failing in a way no specific branch names: the cache
+    must still never fail a page."""
+
+    def __init__(self, get: Exception | None = None, put: Exception | None = None):
+        self._get, self._put = get, put
+
+    def get_object(self, **kw):
+        if self._get:
+            raise self._get
+        raise AssertionError("not reached")
+
+    def put_object(self, **kw):
+        if self._put:
+            raise self._put
+
+
+def test_a_cache_get_that_raises_anything_is_a_miss_and_the_page_downloads(
+    tmp_path, page, caplog
+):
+    cache = _cache(_Raising(get=RuntimeError("boom")))
+    with caplog.at_level("WARNING"):
+        for _ in range(2):
+            result = fetch_page(
+                page,
+                tmp_path,
+                _client(lambda r: httpx.Response(200, content=JPEG)),
+                cache=cache,
+            )
+            assert result.error is None and not result.from_cache
+    assert cache.report()["misses"] == 2
+    assert sum("boom" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_a_cache_get_that_raises_mid_body_leaves_no_file(tmp_path, page):
+    class Body:
+        def iter_chunks(self, n):
+            yield JPEG
+            raise RuntimeError("connection reset, unwrapped")
+
+    class Client:
+        def get_object(self, **kw):
+            return {
+                "Body": Body(),
+                "Metadata": {"source": source_identity(page.image_url)},
+            }
+
+    cache = _cache(Client())
+    path = tmp_path / f"{page.name}.jpg"
+    assert cache.get(page, path) is False
+    assert not path.exists()
+    assert cache.report()["misses"] == 1
+
+
+def test_a_cache_put_that_raises_anything_leaves_the_page_ok(tmp_path, page, caplog):
+    cache = _cache(_Raising(get=KeyError("miss"), put=RuntimeError("bang")))
+    with caplog.at_level("WARNING"):
+        result = fetch_page(
+            page,
+            tmp_path,
+            _client(lambda r: httpx.Response(200, content=JPEG)),
+            cache=cache,
+        )
+    assert result.error is None and result.path is not None
+    assert cache.report()["stored"] == 0
+    assert any("bang" in r.getMessage() for r in caplog.records)
+
+
+def test_a_cache_put_refused_otherwise_than_no_such_bucket_leaves_the_page_ok(
+    tmp_path, page
+):
+    from botocore.exceptions import ClientError
+
+    denied = ClientError({"Error": {"Code": "AccessDenied"}}, "PutObject")
+    missing = ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+    cache = _cache(_Raising(get=missing, put=denied))
+    result = fetch_page(
+        page,
+        tmp_path,
+        _client(lambda r: httpx.Response(200, content=JPEG)),
+        cache=cache,
+    )
+    assert result.error is None and result.path is not None
+    assert cache.report() == {
+        "bucket": "images-batch",
+        "hits": 0,
+        "misses": 1,
+        "stored": 0,
+    }

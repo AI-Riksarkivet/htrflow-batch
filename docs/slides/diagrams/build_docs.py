@@ -49,7 +49,7 @@ def group_around(d, cols, y, h, label, icon=None, outside=False, inner=False):
 
 
 # ---------------------------------------------------------------- the whole platform, for the site's front page
-d = Diagram(W, 1496)
+d = Diagram(W, 1496 + 56 + tall_height("x") + 24 + 64)
 H1 = tall_height("x")
 d.group(24, 16, 952, 56 + H1 + 24, "In git", L("git-branch"))
 tall_row(d, 72, [(0, "You", "open a pull request", L("user")),
@@ -74,20 +74,24 @@ d.arrow([(MID[1] - 40, r1 + H1), (MID[1] - 40, r2 - GAP)])
 d.arrow([(MID[2] - 60, r1 + H1), (MID[2] - 60, r2 - 36), (MID[1] + 60, r2 - 36), (MID[1] + 60, r2 - GAP)], label="models", at=((MID[2] - 60 + MID[1] + 60) / 2, r2 - 36))
 g4 = g3 + 56 + H1 + ROWGAP + H1 + 24 + 64
 r3 = g4 + 56
-group_around(d, [0], g4, 56 + H1 + 24, "Storage", L("database"))
-group_around(d, [1, 2], g4, 56 + H1 + 24, "Outside", L("globe"), outside=True)
+g5 = g4 + 56 + H1 + 24 + 64
+r4 = g5 + 56
+group_around(d, [0, 1], g4, 56 + H1 + 24, "Storage", L("database"))
+group_around(d, [1, 2], g5, 56 + H1 + 24, "Outside", L("globe"), outside=True)
 d.tall(C[0], r3, COLW, "S3 bucket", "ALTO · PAGE", L("database"))
-d.tall(C[1], r3, COLW, "IIIF servers", "the page images", L("images"), outside=True)
-d.tall(C[2], r3, COLW, "Browser", "anyone reading", L("globe"), outside=True)
+d.tall(C[1], r3, COLW, "Image cache", "optional, private", L("database"))
+d.tall(C[1], r4, COLW, "IIIF servers", "the page images", L("images"), outside=True)
+d.tall(C[2], r4, COLW, "Browser", "anyone reading", L("globe"), outside=True)
 lane = g4 - 32
 d.arrow([(MID[1] - 60, r2 + H1), (MID[1] - 60, lane), (MID[0] + 50, lane), (MID[0] + 50, r3 - GAP)], label="results", at=((MID[0] + 50 + MID[1] - 60) / 2, lane))
 d.arrow([(MID[1] + 40, r3), (MID[1] + 40, r2 + H1 + GAP)], label="pages", at=(MID[1] + 40, lane))
-d.arrow([(MID[2], r3), (MID[2], r2 + H1 + GAP)], label="reads", at=(MID[2], lane))
+d.arrow([(MID[1] + 40, r4), (MID[1] + 40, r3 + H1 + GAP)], label="on a miss", at=(MID[1] + 40, g5 - 32))
+d.arrow([(MID[2], r4), (MID[2], r2 + H1 + GAP)], label="reads", at=(MID[2], lane))
 d.save(OUT + "overview.svg")
 
 # ---------------------------------------------------------------- architecture: the map (the overview, with the detail)
 H2 = tall_height("a\nb")
-d = Diagram(W, 16 + (56 + H2 + 24) * 2 + 64 * 3 + (56 + H2 + ROWGAP + H2 + 24) + (56 + H2 + 24) + 16)
+d = Diagram(W, 16 + (56 + H2 + 24) * 2 + 64 * 4 + (56 + H2 + ROWGAP + H2 + 24) + (56 + H2 + 24) * 2 + 16)
 d.group(24, 16, 952, 56 + H2 + 24, "Campaigns repo", L("git-branch"))
 tall_row(d, 72, [(0, "Campaign files", "campaigns, pipelines,\nconverter.yaml", L("file-text")),
                  (1, "Converter in CI", "validates pull requests,\nrenders on main", L("file-check")),
@@ -110,15 +114,19 @@ d.arrow([(MID[2] - 60, r1 + H2), (MID[2] - 60, r2 - 36), (MID[1] + 60, r2 - 36),
 d.arrow([(C[2], r2 + H2 / 2), (C[1] + COLW + GAP, r2 + H2 / 2)])
 g4 = g3 + 56 + H2 + ROWGAP + H2 + 24 + 64
 r3 = g4 + 56
-group_around(d, [0], g4, 56 + H2 + 24, "Storage", L("database"))
-group_around(d, [1, 2], g4, 56 + H2 + 24, "Outside", L("globe"), outside=True)
-d.tall(C[0], r3, COLW, "S3 bucket", "PAGE, ALTO, progress,\nrun log, manifest.json", L("database"))
-d.tall(C[1], r3, COLW, "IIIF servers", "width-capped\nimage GETs", L("images"), outside=True)
-d.tall(C[2], r3, COLW, "Browser", "the status page\nand the viewer", L("globe"), outside=True)
+g5 = g4 + 56 + H2 + 24 + 64
+r4 = g5 + 56
+group_around(d, [0, 1], g4, 56 + H2 + 24, "Storage", L("database"))
+group_around(d, [1, 2], g5, 56 + H2 + 24, "Outside", L("globe"), outside=True)
+d.tall(C[0], r3, COLW, "S3 bucket", "PAGE, ALTO, run log,\nmanifest.json, quality", L("database"))
+d.tall(C[1], r3, COLW, "Image cache", "optional, private:\nsource images by page", L("database"))
+d.tall(C[1], r4, COLW, "IIIF servers", "width-capped\nimage GETs", L("images"), outside=True)
+d.tall(C[2], r4, COLW, "Browser", "the status page\nand the viewer", L("globe"), outside=True)
 lane = g4 - 32
 d.arrow([(MID[1] - 60, r2 + H2), (MID[1] - 60, lane), (MID[0] + 50, lane), (MID[0] + 50, r3 - GAP)], label="results", at=((MID[0] + 50 + MID[1] - 60) / 2, lane))
 d.arrow([(MID[1] + 40, r3), (MID[1] + 40, r2 + H2 + GAP)], label="pages", at=(MID[1] + 40, lane))
-d.arrow([(MID[2], r3), (MID[2], r2 + H2 + GAP)], label="reads", at=(MID[2], lane))
+d.arrow([(MID[1] + 40, r4), (MID[1] + 40, r3 + H2 + GAP)], label="on a miss", at=(MID[1] + 40, g5 - 32))
+d.arrow([(MID[2], r4), (MID[2], r2 + H2 + GAP)], label="reads", at=(MID[2], lane))
 d.save(OUT + "architecture.svg")
 
 # ---------------------------------------------------------------- architecture: htrflow in a pod
@@ -128,19 +136,20 @@ ga = 16 + top_h + 64                      # the pod panel
 ia = ga + 56                              # the init container panel
 ib = ia + 56 + H1 + 24 + 24               # the container panel
 ra, rb = ib + 56, ib + 56 + H1 + ROWGAP
-d = Diagram(W, rb + H1 + 24 + 24 + 16)
+HB = tall_height("a\nb")                 # the bottom row: Publish takes two lines
+d = Diagram(W, rb + HB + 24 + 24 + 16)
 d.tall(C[0], 16, COLW, "IIIF server", "the page images", L("images"), outside=True)
 d.tall(C[1], 16, COLW, "Model cache", "read-only, per recipe", L("database"))
 d.tall(C[2], 16, COLW, "S3 bucket", "PAGE and ALTO", L("database"))
-d.group(24, ga, 952, rb + H1 + 24 + 24 - ga, "Pod, one volume", "k8s-pod")
+d.group(24, ga, 952, rb + HB + 24 + 24 - ga, "Pod, one volume", "k8s-pod")
 group_around(d, [1], ia, 56 + H1 + 24, "Init container", inner=True)
 d.tall(C[1], ia + 56, COLW, "Wait for models", "until the cache is ready", L("hard-drive-download"))
-d.group(48, ib, 904, rb + H1 + 24 - ib, "Container", inner=True)
-tall_row(d, ra, [(0, "Fetch the page", "skips pages done", L("download")),
+d.group(48, ib, 904, rb + HB + 24 - ib, "Container", inner=True)
+tall_row(d, ra, [(0, "Fetch new pages", "image cache, else IIIF", L("download")),
                  (1, "htrflow", "runs your pipeline", L("scroll-text"), {"strong": True}),
                  (2, "Upload", "PAGE, then ALTO", L("upload"))])
 tall_row(d, rb, [(0, "Exit", "the GPU is free", L("power")),
-                 (1, "Publish", "manifest.json last", L("cloud-upload")),
+                 (1, "Publish", "quality in iiif.json,\nmanifest.json last", L("cloud-upload")),
                  (2, "Verify", "every page counted", L("search-check"))], reverse=True)
 d.arrow([(MID[0] + 100, 16 + H1), (MID[0] + 100, ra - GAP)], label="pages", at=(MID[0] + 100, ga - 32))
 d.arrow([(MID[1] + 60, 16 + H1), (MID[1] + 60, ia + 56 - GAP)], label="marker", at=(MID[1] + 60, ga - 32))
@@ -178,18 +187,24 @@ gp = 16 + H2 + 64
 ra, rb = gp + 56, gp + 56 + H2 + ROWGAP
 gb = rb + H2 + 24 + 64
 d = Diagram(W, gb + H2 + 16)
+d.tall(C[0], 16, COLW, "Image cache", "optional: the page\nas first fetched", L("database"))
 d.tall(C[1], 16, COLW, "IIIF server", "the manifest and\nthe page image", L("images"), outside=True)
 d.group(24, gp, 952, rb + H2 + 24 - gp, "Inside the wrapper pod, for one page", "k8s-pod")
 tall_row(d, ra, [(0, "PageRef", "index 1, name 0001,\nwidth-capped URL", L("tag")),
-                 (1, "Fetch", "signature and size\nchecked, on tmpfs", L("download")),
+                 (1, "Fetch", "cache hit, else IIIF;\nchecked, on tmpfs", L("download")),
                  (2, "htrflow", "regions, then lines,\nthen their text", L("scroll-text"), {"strong": True})])
 tall_row(d, rb, [(0, "Upload", "PAGE, then ALTO,\nthen both unlinked", L("upload")),
-                 (1, "ALTO stamped", "the htrflow-batch\nProcessing block", L("file-check")),
+                 (1, "ALTO stamped", "Processing block;\npage score PC kept", L("file-check")),
                  (2, "Two files", "page/0001.xml\nalto/0001.xml", L("file-code"))], reverse=True)
-d.arrow([(MID[1], 16 + H2), (MID[1], ra - GAP)], label="GET", at=(MID[1], gp - 32))
+# The panel's label runs to about x=470, so the three arrows into Fetch land right of it,
+# and the hit lane sits under the store lane so the two never cross.
+hit, store = gp - 20, gp - 44
+d.arrow([(MID[0] - 40, 16 + H2), (MID[0] - 40, hit), (MID[1] - 10, hit), (MID[1] - 10, ra - GAP)], label="hit", at=(MID[1] - 170, hit))
+d.arrow([(MID[1] + 50, ra), (MID[1] + 50, store), (MID[0] + 60, store), (MID[0] + 60, 16 + H2 + GAP)], label="store", at=(MID[1] - 60, store), dashed=True)
+d.arrow([(MID[1] + 110, 16 + H2), (MID[1] + 110, ra - GAP)], label="miss", at=(MID[1] + 110, gp - 32))
 d.arrow([(MID[2], ra + H2), (MID[2], rb - GAP)])
 d.tall(C[0], gb, COLW, "S3 bucket", "page/0001.xml,\nalto/0001.xml", L("database"))
-d.card(C[1], gb + (H2 - CARD_H) / 2, COLW * 2 + 56, "After the last page", "iiif.json, pipeline.yaml, manifest.json last", L("flag"), outside=True)
+d.card(C[1], gb + (H2 - CARD_H) / 2, COLW * 2 + 56, "After the last page", "iiif.json, manifest.json last, with quality", L("flag"), outside=True)
 d.arrow([(MID[0], rb + H2), (MID[0], gb - GAP)], label="each page", at=(MID[0], gb - 32))
 d.save(OUT + "page-flow.svg")
 
@@ -272,6 +287,7 @@ A = {
     "warmer": ("Warmer", L("hard-drive-download"), False), "alluxio": ("Alluxio workers", L("layers"), False),
     "shim": ("iiif-shim", L("server"), False), "origin": ("IIIF origin", L("images"), True),
     "fuse": ("Pod via FUSE", "k8s-pod", False),
+    "cache": ("Cache (optional)", L("database"), False),
 }
 
 Steps(W, A, [
@@ -283,15 +299,18 @@ Steps(W, A, [
     ("msg", "pod", "iiif", "fetch the IIIF manifest for line i of volumes.txt"),
     ("msg", "pod", "s3", "list page/ and alto/ — the resume check"),
     ("msg", "pod", "pod", "load the models once, while the first pages download"),
+    ("note", "With no image cache bucket set, steps 9 and 11 are skipped and every page comes from IIIF."),
     ("loop", "Streaming — downloader, consumer and uploader at once", [
-        ("msg", "pod", "iiif", "fetch page N+k, a few pages ahead, width-capped"),
+        ("msg", "pod", "cache", "look for page N+k, a few pages ahead; a hit that passes the download checks is used"),
+        ("msg", "pod", "iiif", "on a miss, fetch page N+k, width-capped"),
+        ("msg", "pod", "cache", "store what was fetched; a failed store is logged, the page stays ok"),
         ("msg", "pod", "pod", "run the pipeline on page N as soon as it is downloaded"),
         ("msg", "pod", "s3", "upload page N−1's PAGE, then its ALTO, as soon as htrflow wrote them"),
         ("msg", "pod", "s3", "progress.json after every page; the run log every 15 s"),
         ("msg", "pod", "pod", "delete page N−1's image and XML from tmpfs"),
     ]),
     ("msg", "pod", "pod", "verify every page is uploaded, skipped or recorded as failed"),
-    ("msg", "pod", "s3", "upload iiif.json, pipeline.yaml, then manifest.json last — the completion marker"),
+    ("msg", "pod", "s3", "upload iiif.json, pipeline.yaml, then manifest.json last — the completion marker; both JSON files carry the quality summary when pages were scored"),
     ("msg", "pod", "api", "exit 0: index i joins completedIndexes"),
 ], "One campaign, in order", L("list-ordered")).draw(OUT + "seq-campaign.svg")
 
@@ -321,11 +340,14 @@ Steps(W, A, [
     ("msg", "kubelet", "kubelet", "the init container warmup-wait reads the marker on the cache"),
     ("msg", "wrapper", "s3", "run log claimed at start, then shipped again every 15 s"),
     ("loop", "Each page", [
-        ("msg", "wrapper", "s3", "page XML, then ALTO XML — the ALTO carries the provenance block"),
+        ("msg", "wrapper", "cache", "look up the page image in the image cache; a checked hit skips IIIF"),
+        ("msg", "wrapper", "iiif", "on a miss, fetch the image, width-capped"),
+        ("msg", "wrapper", "cache", "store the fetched image in the image cache"),
+        ("msg", "wrapper", "s3", "page XML, then ALTO XML — the ALTO carries the provenance block and, when scored, the page score (PC)"),
         ("msg", "wrapper", "s3", "progress.json every page, iiif.json every 10th"),
     ]),
     ("note", "The read API polls progress.json here too, on its own path to the bucket, not the browser's."),
-    ("msg", "wrapper", "s3", "iiif.json, pipeline.yaml, then manifest.json last"),
+    ("msg", "wrapper", "s3", "iiif.json, pipeline.yaml, then manifest.json last, with the quality summary and the image cache's counts"),
     ("msg", "wrapper", "kubelet", "exit 0"),
     ("msg", "kubelet", "jobc", "the container's exit code"),
     ("msg", "jobc", "jobc", "index i added to completedIndexes"),

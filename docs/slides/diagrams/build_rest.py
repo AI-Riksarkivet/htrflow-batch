@@ -104,11 +104,11 @@ cw = (860 - 48 - 2 * 48) / 3
 c = [396 + i * (cw + 48) for i in range(3)]
 mid = [x + cw / 2 for x in c]
 ra, rb = 288, 520
-d.tall(c[0], ra, cw, "Fetch the page", "skips pages done", L("download"))
+d.tall(c[0], ra, cw, "Fetch the page", "cache, else IIIF", L("download"))
 d.tall(c[1], ra, cw, "htrflow", "runs your pipeline", L("scroll-text"), strong=True)
 d.tall(c[2], ra, cw, "Upload", "PAGE, then ALTO", L("upload"))
 d.tall(c[2], rb, cw, "Verify", "every page counted", L("search-check"))
-d.tall(c[1], rb, cw, "Publish", "manifest.json last", L("cloud-upload"))
+d.tall(c[1], rb, cw, "Publish", "quality, manifest last", L("cloud-upload"))
 d.tall(c[0], rb, cw, "Exit", "the GPU is free", L("power"))
 h = 176
 d.arrow([(324, ra + h / 2), (c[0] - GAP, ra + h / 2)])
@@ -119,10 +119,16 @@ d.arrow([(mid[2] + 50, ra + h), (mid[2] + 50, rb - GAP)])
 d.arrow([(c[2], rb + h / 2), (c[1] + cw + GAP, rb + h / 2)])
 d.arrow([(c[1], rb + h / 2), (c[0] + cw + GAP, rb + h / 2)])
 # what the pod reads, and where it writes
-d.card(mid[0] - 260, 24, 300, "IIIF server", "the page images", L("images"), outside=True)
+d.card(24, 24, 280, "Image cache", "optional, private", L("database"))
+d.card(360, 24, 280, "IIIF server", "the page images", L("images"), outside=True)
 d.card(mid[1] - 40, 24, 300, "Model cache", "read-only, shared", L("database"))
 d.card(1296, ra + h / 2 - CARD_H / 2, 280, "S3 bucket", "ALTO · PAGE", L("database"))
-d.arrow([(mid[0] + 30, 120), (mid[0] + 30, ra - GAP)], label="pages", at=(mid[0] + 30, 148))
+# Into Fetch right of the "Container" label; the hit lane sits under the store
+# lane, and the hit leaves the cache left of where the store comes in, so none cross.
+hit, store = 168, 146
+d.arrow([(104, 120), (104, hit), (mid[0] + 5, hit), (mid[0] + 5, ra - GAP)], label="hit", at=(300, hit))
+d.arrow([(mid[0] + 55, ra), (mid[0] + 55, store), (244, store), (244, 120 + GAP)], label="store", at=(440, store), dashed=True)
+d.arrow([(mid[0] + 100, 120), (mid[0] + 100, ra - GAP)], label="miss", at=(mid[0] + 100, 148))
 d.arrow([(mid[1], 120), (mid[1], ra - GAP)], label="weights", at=(mid[1], 148))
 d.arrow([(c[2] + cw, ra + h / 2), (1296 - GAP, ra + h / 2)])
 d.save(OUT + "p1-pod.svg")
