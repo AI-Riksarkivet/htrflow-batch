@@ -69,7 +69,7 @@ changes too. There is no CRD, no controller and no database.
 
 ## How it fits together
 
-![Rough architecture: git, delivery, the cluster, storage and the outside world](docs/slides/assets/part-1-architecture.svg)
+![Rough architecture: git, delivery, the cluster, storage with an optional image cache, and the outside world](docs/slides/assets/part-1-architecture.svg)
 
 - **A pure converter** (`htrflow-campaigns`) checks the campaign and renders it
   into one Kubernetes **Indexed Job**, one index per volume, plus a warm-up Job
@@ -89,7 +89,7 @@ changes too. There is no CRD, no controller and no database.
 
 ## htrflow in a pod
 
-![One pod per archival volume: wait for the models, then fetch, transcribe and upload page by page, then verify, publish and exit](docs/slides/assets/p1-pod.svg)
+![One pod per archival volume: wait for the models, then fetch each page from the optional image cache or else IIIF, transcribe and upload page by page, then verify, publish and exit](docs/slides/assets/p1-pod.svg)
 
 Every pod runs htrflow — your pipeline, unchanged — on one archival volume.
 Each page is uploaded the moment it is done, with provenance in every ALTO:
