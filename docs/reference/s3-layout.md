@@ -94,7 +94,7 @@ own publish writes both again at the end.
 | `max_image_width`, `bytes_fetched`, `wall_seconds`, `gpu_stall_seconds`, `pages_per_second` | run metrics |
 | `viewer_url` | the public `iiif.json` URL |
 | `quality` | the volume's predicted-quality summary, present only with at least one scored page |
-| `image_cache` | `{"bucket", "hits", "misses", "stored"}`, present only when the run had an image cache bucket configured (see "Image cache bucket" below) |
+| `image_cache` | `{"bucket", "hits", "misses", "stored"}`, present only when the run used an image cache: absent with no bucket configured, with the results bucket named as the cache, and for a volume with a page past 99999 (see "Image cache bucket" below) |
 
 `quality`'s fields:
 
