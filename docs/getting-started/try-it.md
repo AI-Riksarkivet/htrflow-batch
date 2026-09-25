@@ -68,8 +68,6 @@ http://localhost:8080/uv.html#?manifest=http://localhost:19000/htr-results/demo-
 You should see the page with every text line outlined, and its
 transcription in the **Text** panel.
 
-![The viewer: the sample page with its lines outlined, and the transcription beside it](../assets/quickstart-viewer.jpg)
-
 `http://localhost:8080/` is the campaign browser. Here it only says it
 cannot reach the campaign service: it lists the campaigns on a cluster, and
 this stack has none.
