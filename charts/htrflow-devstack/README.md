@@ -122,7 +122,10 @@ kubectl -n kube-system label daemonset nvidia-device-plugin app.kubernetes.io/ma
   `rustfs.console.enabled=true` exposes it on `rustfs.console.nodePort`.
 - **Buckets** — the `rustfs-init` Helm hook Job (post-install/upgrade,
   `rustfs.init`) creates `s3.bucket`, applies the bucket policy and CORS,
-  idempotently.
+  idempotently. `s3.imageCacheBucket` (empty by default: none) names a
+  second bucket for the converter's `image_cache.bucket` — created the same
+  idempotent way, but with no policy or CORS: the image cache is never
+  public.
 - **Anonymous read is split** (audit X14): `<pipeline>/<volume>/*` and
   `sources/*` are always anonymous (the browser fetches them directly), and
   `status/logs/*` is anonymous only while `rustfs.publicLogs=true` (default
