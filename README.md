@@ -94,7 +94,10 @@ changes too. There is no CRD, no controller and no database.
 Every pod runs htrflow — your pipeline, unchanged — on one archival volume.
 Each page is uploaded the moment it is done, with provenance in every ALTO:
 which models, which image, which htrflow-batch. A restarted pod skips the pages
-already in the bucket, so a crash costs one page, not a volume.
+already in the bucket, so a crash costs one page, not a volume. Source images
+can also be cached in a private S3 bucket, so a volume run again needs nothing
+from the IIIF server
+([Cache source images](https://ai-riksarkivet.github.io/htrflow-batch/getting-started/deploy/#cache-source-images)).
 
 - [From image to transcription](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/page-flow/): this path in detail
 - [The wrapper](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/wrapper/): stages, provenance, model cache, and why a long volume costs the same memory as a short one

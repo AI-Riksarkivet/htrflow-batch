@@ -32,7 +32,7 @@ once. It then runs a producer–consumer pipeline with three concurrent roles
 
 | Role | What it does |
 |---|---|
-| **downloader pool** (`stream.PageStream`: threads, with `DOWNLOAD_CONCURRENCY` in flight and never more than `LOOKAHEAD_PAGES`, or `LOOKAHEAD_BYTES`, submitted ahead of the consumer) | Fetches pages into tmpfs, submitted in manifest order, retrying each page with backoff. Refuses anything that is not a raster image. Hands pages over in manifest order, so the consumer waits on the head of the window |
+| **downloader pool** (`stream.PageStream`: threads, with `DOWNLOAD_CONCURRENCY` in flight and never more than `LOOKAHEAD_PAGES`, or `LOOKAHEAD_BYTES`, submitted ahead of the consumer) | Fetches pages into tmpfs, submitted in manifest order, retrying each page with backoff. Looks in the [image cache](#image-cache) first when one is set. Refuses anything that is not a raster image. Hands pages over in manifest order, so the consumer waits on the head of the window |
 | **consumer** (a single thread, since the GPU serializes the work anyway) | Runs `pipeline.run(document)` on each page, in order, as soon as that page is available. A page's lookahead slot frees only when the consumer has finished with it and its image is deleted, and that is what bounds tmpfs. Keeps each page's result or exception itself |
 | **uploader** | Ships each page's PAGE XML and then its ALTO to S3 as soon as htrflow writes them (deterministic keys, blind overwrite). Deletes the source image and both output files once the page is done |
 
@@ -199,6 +199,8 @@ S3 sits behind a single seam, `ResultStore`:
   - `bytes_fetched`, `wall_seconds`, `gpu_stall_seconds` and
     `pages_per_second`
   - `viewer_url`
+  - with the image cache on, `image_cache`: its bucket and counts
+    ([Image cache](#image-cache))
 
   The pipeline YAML is also uploaded next to it.
 - **Timeouts.** The S3 client uses a 10 s connect timeout, a 60 s read
@@ -233,6 +235,55 @@ results prefix therefore needs anonymous read and CORS for GET from the
 viewer's origin ([Security → The bucket policy](security.md#the-bucket-policy)).
 The viewer's own patches are described in
 [Web front & read API](../reference/web.md).
+
+## Image cache
+
+A deployment can keep the source images in a private S3 bucket, so a volume
+run again (a retry, another pipeline, another campaign) needs nothing from
+the IIIF server
+([Deploy → Cache source images](../getting-started/deploy.md#cache-source-images)).
+It is off unless `converter.yaml` sets `image_cache.bucket`. That renders
+`IMAGE_CACHE_BUCKET` into every campaign pod. The key, and what the bucket
+must never be, are in
+[S3 Layout → Image cache bucket](../reference/s3-layout.md#image-cache-bucket).
+
+Per page, inside the downloader pool
+([From image to transcription](page-flow.md#the-image-cache)):
+
+- **Lookup.** The page's key is fetched from the bucket.
+- **Hit.** The object is checked exactly like a download (raster signature,
+  `FETCH_MAX_BYTES`, `MAX_IMAGE_PIXELS`) and then used. The IIIF server is
+  not contacted.
+- **Miss.** No object, or one that fails the checks. The page is downloaded
+  as it would be without a cache, then stored under its key, overwriting a
+  bad object.
+
+The cache speeds a run up, and the run never depends on it:
+
+- **It never fails or defers a page.** A GET error sends the page to the
+  download. A failed store is logged, and the page stays ok.
+- **A cache-wide problem is logged once per run, not once per page.** A
+  missing or unreadable bucket is one line that names it. The wrapper never
+  creates the bucket.
+- **A volume with a page index past 99999 is not cached at all**, with one
+  log line, because the key's page number has five digits.
+- **The key has no width.** A hit serves the image at whatever width first
+  stored it. A pipeline asking for a larger `MAX_IMAGE_WIDTH` gets the
+  cached size.
+
+With the cache on, the run says what it did in two places. `manifest.json`
+gains `"image_cache": {"bucket", "hits", "misses", "stored"}`, and the run
+log gets one line with the same counts:
+
+```text
+[R0001203] image cache images-batch: 12 hits, 3 misses, 3 stored
+```
+
+`bytes_fetched` keeps its meaning: bytes downloaded from the IIIF server,
+never bytes read from the cache. The same volume run again under another
+pipeline hits every page the first run stored, and a volume served wholly
+from the cache reports `bytes_fetched: 0`. With the cache off, neither the key nor the
+line appears, and `manifest.json` is as it was.
 
 ## Model handling
 

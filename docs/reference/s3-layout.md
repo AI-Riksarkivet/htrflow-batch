@@ -119,10 +119,11 @@ pipeline id and no image width:
 ```
 
 `<page>` is the page's index in the source manifest (1-based), zero-padded
-to five digits — a volume with any page past 99999 is never cached. The
-cache is never a correctness dependency: a miss, a cache error or a bad
-cached object always falls back to the ordinary download, and nothing it
-does can fail a page. This bucket is **private** — it is never covered by
+to five digits — a volume with any page past 99999 is never cached. A hit
+serves the image at whatever width first stored it, so a pipeline asking for
+a larger `MAX_IMAGE_WIDTH` gets the cached size. The cache is never a
+correctness dependency: a miss, a cache error or a bad cached object always
+falls back to the ordinary download, and nothing it does can fail a page. This bucket is **private** — it is never covered by
 the results bucket's public-read policy and never linked from the viewer or
 the read API.
 
