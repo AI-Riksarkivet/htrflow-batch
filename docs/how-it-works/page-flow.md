@@ -84,6 +84,34 @@ The image lands in `/work/input/`. That directory is on the memory-backed
 and, under `readOnlyRootFilesystem` with nowhere else to write, `HOME`,
 `TMPDIR` and `YOLO_CONFIG_DIR`.
 
+## The image cache
+
+A deployment can switch on an optional S3 image cache
+([Deploy → Cache source images](../getting-started/deploy.md#cache-source-images)).
+With it on, the fetch looks in the cache before the width-capped GET:
+
+- **The lookup.** One S3 GET of the page's key, built from the volume's
+  reference code and the `PageRef`'s `index`
+  ([S3 Layout → Image cache bucket](../reference/s3-layout.md#image-cache-bucket)).
+- **A hit is checked like a download**: a known raster signature,
+  `FETCH_MAX_BYTES` and `MAX_IMAGE_PIXELS`. A hit that passes is the page's
+  image, and the IIIF server is not asked for it.
+- **A miss takes the width-capped GET above.** A miss is no object, or a
+  cached object that fails the checks. Once the download succeeds, the image
+  is stored under the same key, so a bad object is overwritten.
+- **The cache never fails a page.** A GET error falls back to the download,
+  and a store that fails is logged while the page stays ok. A missing or
+  unreadable bucket is logged once, by name.
+- **The width is not in the key.** A hit serves the image at whatever width
+  first stored it, so a pipeline asking for a larger `MAX_IMAGE_WIDTH` gets
+  the cached size. The ALTO's `Page` dimensions are still those of the image
+  actually processed, so the viewer's overlays line up.
+
+`bytes_fetched` in `manifest.json` counts only bytes downloaded from the
+IIIF server. A volume served entirely from the cache reports `0`. The hits,
+misses and stores are counted separately
+([The Wrapper → Image cache](wrapper.md#image-cache)).
+
 ## What htrflow does to it
 
 Every `Inference` step runs its model on the document's **leaf** nodes and
@@ -194,7 +222,8 @@ PAGE, then ALTO, and eventually `manifest.json` last.
 ## Where a later run touches this page again
 
 - **Resume** treats the page as done only if both files exist and its
-  source digest still matches; a done page is never downloaded
+  source digest still matches; a done page is never downloaded, nor
+  looked up in the image cache
   ([The Wrapper](wrapper.md#stages-around-the-streaming-loop)).
 - **Verify** lists S3 once more after the loop. A page missing from either
   format, and not recorded as failed, means exit 1 and a retry. So does a
