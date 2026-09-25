@@ -162,6 +162,7 @@ Each key is a key of `converter.yaml`.
 | `hf_token_secret` | `converter.yaml` | *(empty)* | chart `hfToken.existingSecret` | names the Secret the warm-up reads `HF_TOKEN` from; job-shape admits only `hfToken.existingSecret` — cluster |
 | `manifest_max_bytes` | `converter.yaml` | `16777216` | — | no secret — nobody |
 | `fetch_max_bytes` | `converter.yaml` | `67108864` | — | no secret — nobody |
+| `image_cache` | `converter.yaml` | *(empty)* | — | no secret — nobody |
 | `priority_classes` | `converter.yaml` | `[htr-interactive, htr-bulk, htr-idle]` | chart `queue.priorityClasses[].name` | no secret — nobody |
 | `flavors` | `converter.yaml` | *(empty)* | chart `queue.flavors[].name`, `.nodeLabels` | no secret — nobody |
 | `sizes` | `converter.yaml` | *(empty)* | — | no secret — nobody |

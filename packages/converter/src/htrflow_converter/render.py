@@ -356,6 +356,13 @@ def _campaign_job(
         elif e["name"] in ("S3_ENDPOINT", "S3_BUCKET"):
             e["valueFrom"]["secretKeyRef"]["name"] = cfg.s3_secret
 
+    if cfg.image_cache is not None:
+        # Appended, not a skeleton entry: a converter.yaml without the block
+        # renders byte-for-byte what it always did.
+        job["spec"]["template"]["spec"]["containers"][0]["env"].append(
+            {"name": "IMAGE_CACHE_BUCKET", "value": cfg.image_cache.bucket}
+        )
+
     # The per-volume budget is the pod's own deadline, not a wrapper env var
     # (docs: how-it-works/failure-handling).
     deadline = p.max_seconds or cfg.max_seconds

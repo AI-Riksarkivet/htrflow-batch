@@ -1152,6 +1152,31 @@ class Size(BaseModel):
         return {"cpu": self.cpu, "memory": self.memory, "nvidia.com/gpu": str(self.gpu)}
 
 
+#: An S3 bucket name as the S3 API accepts it (docs: reference/campaign-yaml).
+_BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]\Z")
+
+
+class ImageCacheSettings(BaseModel):
+    """``image_cache:`` in converter.yaml: where campaign pods cache source
+    images (docs: how-it-works/wrapper, "Image cache"). The same S3 store as
+    the results; only the bucket differs."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    bucket: str
+
+    @field_validator("bucket")
+    @classmethod
+    def _check_bucket(cls, v: str) -> str:
+        if not _BUCKET_RE.match(v) or ".." in v:
+            raise ValueError(
+                f"is not an S3 bucket name (got {shown(v)}) — 3 to 63 lowercase "
+                "letters, digits, dots and hyphens, starting and ending with a "
+                "letter or digit"
+            )
+        return v
+
+
 #: Settings that were converter policy and are now Kyverno ClusterPolicies
 #: the htrflow-batch chart ships (B63 Task 22) -> the chart value that
 #: replaces each. ``extra="forbid"`` would reject them as a misspelt
@@ -1223,6 +1248,9 @@ class ConverterConfig(BaseModel):
     #: fetch. At 0 every volume of every campaign fails the cap.
     manifest_max_bytes: int = Field(default=16 * _MiB, ge=1)
     fetch_max_bytes: int = Field(default=64 * _MiB, ge=1)
+    #: Cache source images in this S3 bucket (``ImageCacheSettings``).
+    #: Absent: off, and campaign pods render exactly as without it.
+    image_cache: ImageCacheSettings | None = None
     #: The WorkloadPriorityClass names the cluster has -- the chart's
     #: ``queue.priorityClasses``, and the default is the chart's default. A
     #: campaign's ``priority:`` must be one of them: Kueue's webhook never
