@@ -3,6 +3,20 @@
 This page is the map. It shows the pictures of the system, the job of each
 piece in a line, and where to read the detail.
 
+What changes when htrflow runs on many nodes instead of one machine:
+
+| | one machine | many nodes |
+|---|---|---|
+| **where it runs** | your machine, its GPU | whichever node has a GPU free, chosen for you |
+| **the pages** | a folder on its disk | fetched from a IIIF manifest or plain image URLs |
+| **the models** | downloaded to that disk | a shared cache every node mounts |
+| **the results** | a folder next to the pages | a bucket every node writes to and every browser reads |
+| **when a machine fails** | you start again | the volume resumes on another node from the bucket |
+| **how you start it** | a command | a file in git |
+
+A *volume* on these pages is an archival volume, a bound unit of pages
+with a reference code, never a Kubernetes volume.
+
 ![The map: the campaigns repo, delivery, Kyverno and Kueue in the cluster, the warm-up Job, the campaign pods and the web front, storage, and what sits outside](../assets/diagrams/architecture.svg)
 
 ![htrflow in a pod: the init container waits for the models, then the container fetches, runs htrflow and uploads page by page, verifies, publishes and exits](../assets/diagrams/htrflow-in-a-pod.svg)

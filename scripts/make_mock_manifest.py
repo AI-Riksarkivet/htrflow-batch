@@ -2,8 +2,9 @@
 
 Canvas width/height are placeholders (the wrapper never reads them; real
 dims come from the ALTO at publish time per D19).
-Set MOCK_BASE to point at a different S3 endpoint; compose sets MOCK_BASE=http://rustfs:9000/htr-fixtures/mock-vol
-so the wrapper container can fetch the images (host port 19000). Outside compose
+Set MOCK_BASE to point at a different S3 endpoint; compose sets
+MOCK_BASE=http://localhost:<HTR_COMPOSE_S3_PORT>/htr-fixtures/mock-vol, an
+address the wrapper container and the browser both resolve. Outside compose
 the default is derived from HTR_S3_ENDPOINT (repo-root .env, PoC NodePort)."""
 
 import json

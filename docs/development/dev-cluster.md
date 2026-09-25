@@ -1,16 +1,87 @@
 # Dev cluster
 
-The contributor loop on a single-node GPU dev cluster: the platform installed
-as one release of `charts/htrflow-batch`, and every dependency it needs from
-outside provided by `charts/htrflow-devstack` — RustFS as the S3 store, an
-image registry in its own `registry` namespace, and the NVIDIA RuntimeClass
-and device plugin. Kueue is installed separately (`make install-kueue`), and
-so is Kyverno (`make install-kyverno`, which `make install-devstack` runs
-first); neither chart renders their controllers. Installing the stack is
-[Try it → on a dev cluster](../getting-started/try-it.md#on-a-dev-cluster-the-devstack-chart);
-this page is everything around it.
-The devstack is not production-shaped — its caveats are in
-[Security](../how-it-works/security.md).
+A disposable single-node cluster with one NVIDIA GPU, with everything the
+platform needs from outside included: `charts/htrflow-devstack` provides
+RustFS as the S3 store, an image registry in its own `registry` namespace,
+and the NVIDIA RuntimeClass and device plugin, next to one release of
+`charts/htrflow-batch`. It uses the published images, so nothing has to be
+built. None of it is production-shaped: never install it next to real data
+or real credentials ([Security](../how-it-works/security.md) lists the
+caveats); [Deploy](../getting-started/deploy.md) is the real install.
+
+## Install the stack
+
+You need a Kubernetes cluster with one NVIDIA GPU node, a kubeconfig for it,
+and `git`, `kubectl`, `helm`, `make` and `uv`.
+
+```bash
+git clone https://github.com/AI-Riksarkivet/htrflow-batch && cd htrflow-batch
+make install            # uv workspace: the converter CLI (htrflow-campaigns)
+make install-kueue      # Kueue: the queue and GPU quota
+make install-devstack   # Kyverno, then the devstack chart: S3, registry, device plugin
+```
+
+The cluster targets take the release name and namespace from `HTR_RELEASE`
+and `HTR_NAMESPACE` ([`.env`](#env), defaults `htr` and `htr-batch`);
+`<namespace>` below is that namespace. `make install-devstack` takes
+`KYVERNO=false` to skip Kyverno and `NVIDIA_DEVICE_PLUGIN=false` for a
+cluster that already has the device plugin ([Gotchas](#gotchas)).
+
+```bash
+helm upgrade --install htr charts/htrflow-batch -n <namespace> \
+  --set publicResultsBase=http://<node-address>:30900/htr-results \
+  --set web.internalResultsBase=http://rustfs.<namespace>.svc.cluster.local:9000/htr-results \
+  --set network.apiServer.cidr=<apiserver-address>/32 \
+  --set network.iiifCidrs='{<iiif-source-cidr>}' \
+  --set network.clusterCidrs='{<pod-cidr>,<service-cidr>}' \
+  --set network.web.allowPublicIngress=true \
+  --set security.policies.allowDisabled=true
+make psa-labels
+```
+
+- `<node-address>` is where your browser reaches the node: the web front on
+  port 30800, the results on 30900. Not directly reachable? See
+  [Reaching it from a workstation](#reaching-it-from-a-workstation).
+- `<apiserver-address>` is the API server as pods reach it; on one node,
+  usually the node's address.
+- `network.iiifCidrs` must cover the host you transcribe from; campaign pods
+  reach nothing else.
+- `network.web.allowPublicIngress` accepts every client address, and
+  `security.policies.allowDisabled` accepts the Kyverno policies off. Both
+  are right for a disposable cluster only. To turn the policies on, add
+  `--set security.policies.enabled=true` and
+  `--set security.allowedImageRepos='{docker.io/riksarkivet/,rustfs/,docker.io/amazon/aws-cli}'`
+  (plus `<registry>/` for your own images).
+
+Then write a campaigns repo and apply it:
+
+```bash
+uv run htrflow-campaigns init my-campaigns
+```
+
+In `my-campaigns/converter.yaml` set `public_results_base` to the same URL
+as `publicResultsBase`, and list your volumes in `campaigns/demo.yaml`
+([Run a campaign](../getting-started/campaigns.md#3-list-the-volumes)). Then:
+
+```bash
+make campaigns-apply DIR=my-campaigns
+```
+
+`http://<node-address>:30800/` shows the campaign as it runs. The RustFS
+credentials are in the S3 Secret the devstack wrote:
+`kubectl -n <namespace> get secret htr-batch-s3 -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d`.
+
+### Check resume
+
+Once a few ALTO files exist under `<namespace>/<pipeline>/<volume>/alto/` in
+the bucket, force-delete the running campaign pod:
+
+```bash
+kubectl -n <namespace> delete pod <pod> --force --grace-period=0
+```
+
+The retry pod's log says `[<volume>] resume: <n> done, <m> to process`. It
+does not redo the published pages, and the index still reaches `Complete`.
 
 ## `.env`
 
@@ -126,8 +197,8 @@ make e2e DIR=<campaigns-repo>                       # validate, apply, wait for 
 ```
 
 `campaigns-apply` runs `htrflow-campaigns apply <campaigns-repo> --out
-<campaigns-repo>/rendered` ([CLI](../reference/cli.md)); it is safe to
-re-run. Repeat after every commit to that branch — nothing watches it for
+<campaigns-repo>/rendered --namespace <namespace>`
+([CLI](../reference/cli.md)); it is safe to re-run. Repeat after every commit to that branch — nothing watches it for
 you. `PRUNE=1` cancels everything the checkout does not contain, so only run
 it against the whole repo. `make e2e` waits for the warm-up Jobs, then polls every campaign Job
 until it is Complete or Failed (`CAMPAIGN_TIMEOUT` seconds, default 3600).
@@ -189,7 +260,7 @@ front without a tunnel is covered in
 A model-cache PVC, `nvidia` RuntimeClass or device-plugin DaemonSet applied
 by hand must be adopted into the release or left outside it
 (`modelCache.create`, and `nvidiaDevicePlugin.enabled` in the devstack chart;
-[Deploy → Model cache](../getting-started/deploy.md#model-cache); the
+[Deploy → Options](../getting-started/deploy.md#options); the
 commands are in each chart's README). A cache PVC root-running pods wrote to
 needs a one-time `chown -R 1000:1000` before the first warm-up.
 
