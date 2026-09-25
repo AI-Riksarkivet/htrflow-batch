@@ -727,3 +727,71 @@ def test_a_failed_download_stores_nothing(tmp_path, page):
             cache=cache,
         )
     assert result.error and cache.report()["stored"] == 0
+
+
+class _Raising:
+    """An S3 client failing in a way no specific branch names: the cache
+    must still never fail a page."""
+
+    def __init__(self, get: Exception | None = None, put: Exception | None = None):
+        self._get, self._put = get, put
+
+    def get_object(self, **kw):
+        if self._get:
+            raise self._get
+        raise AssertionError("not reached")
+
+    def put_object(self, **kw):
+        if self._put:
+            raise self._put
+
+
+def test_a_cache_get_that_raises_anything_is_a_miss_and_the_page_downloads(
+    tmp_path, page, caplog
+):
+    cache = _cache(_Raising(get=RuntimeError("boom")))
+    with caplog.at_level("WARNING"):
+        for _ in range(2):
+            result = fetch_page(
+                page,
+                tmp_path,
+                _client(lambda r: httpx.Response(200, content=JPEG)),
+                cache=cache,
+            )
+            assert result.error is None and not result.from_cache
+    assert cache.report()["misses"] == 2
+    assert sum("boom" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_a_cache_get_that_raises_mid_body_leaves_no_file(tmp_path, page):
+    class Body:
+        def iter_chunks(self, n):
+            yield JPEG
+            raise RuntimeError("connection reset, unwrapped")
+
+    class Client:
+        def get_object(self, **kw):
+            return {
+                "Body": Body(),
+                "Metadata": {"source": source_identity(page.image_url)},
+            }
+
+    cache = _cache(Client())
+    path = tmp_path / f"{page.name}.jpg"
+    assert cache.get(page, path) is False
+    assert not path.exists()
+    assert cache.report()["misses"] == 1
+
+
+def test_a_cache_put_that_raises_anything_leaves_the_page_ok(tmp_path, page, caplog):
+    cache = _cache(_Raising(get=KeyError("miss"), put=RuntimeError("bang")))
+    with caplog.at_level("WARNING"):
+        result = fetch_page(
+            page,
+            tmp_path,
+            _client(lambda r: httpx.Response(200, content=JPEG)),
+            cache=cache,
+        )
+    assert result.error is None and result.path is not None
+    assert cache.report()["stored"] == 0
+    assert any("bang" in r.getMessage() for r in caplog.records)

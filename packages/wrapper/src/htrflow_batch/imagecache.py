@@ -140,20 +140,39 @@ class ImageCache:
 
     def get(self, page: PageRef, path: Path) -> bool:
         """Write the cached image to ``path`` and say so, or leave no file
-        and return False. The object is checked as a download is."""
+        and return False. The object is checked as a download is.
+
+        Never raises: the branches in ``_lookup`` name the failures S3 and
+        botocore are known to raise, and anything else -- a client error
+        nobody listed, a bug -- is still a miss, said once, with no partial
+        file left behind."""
+        try:
+            hit = self._lookup(page, path)
+        except Exception as e:
+            path.unlink(missing_ok=True)
+            self._once(
+                "unexpected-get",
+                "image cache lookup in %s failed (%s: %s); pages are downloaded",
+                self.bucket,
+                type(e).__name__,
+                e,
+            )
+            hit = False
+        self._count("hits" if hit else "misses")
+        return hit
+
+    def _lookup(self, page: PageRef, path: Path) -> bool:
         key = self.key(page)
         try:
             obj = self.client.get_object(Bucket=self.bucket, Key=key)
         except ClientError as e:
             if e.response.get("Error", {}).get("Code") not in _NOT_FOUND:
                 self._unreadable(e)
-            self._count("misses")
             return False
         except (BotoCoreError, OSError) as e:
             self._unreadable(e)
-            self._count("misses")
             return False
-        if obj.get("Metadata", {}).get("source") != source_identity(page.image_url):
+        if (obj.get("Metadata") or {}).get("source") != source_identity(page.image_url):
             obj["Body"].close()
             self._once(
                 "source",
@@ -161,7 +180,6 @@ class ImageCache:
                 "say which); refetching, and the download replaces it",
                 key,
             )
-            self._count("misses")
             return False
         try:
             self._save(obj["Body"], path, key)
@@ -170,9 +188,7 @@ class ImageCache:
             log.warning(
                 "image cache object %s is not a usable image (%s); refetching", key, e
             )
-            self._count("misses")
             return False
-        self._count("hits")
         return True
 
     def _save(self, body, path: Path, key: str) -> None:
@@ -212,6 +228,15 @@ class ImageCache:
                     self.bucket,
                     e,
                 )
+            return
+        except Exception as e:  # never into the page, whatever it was
+            self._once(
+                "unexpected-put",
+                "image cache store in %s failed (%s: %s); pages are not cached",
+                self.bucket,
+                type(e).__name__,
+                e,
+            )
             return
         self._count("stored")
 
