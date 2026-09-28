@@ -647,7 +647,7 @@ def _synthetic_source(cfg: Config, store: ResultStore) -> tuple[dict, str]:
     for u in urls:
         check_http_url(u, "IMAGES URL")
     key = f"sources/{cfg.pipeline_id}/{cfg.volume_ref}/manifest.json"
-    manifest_id = f"{cfg.public_results_base.rstrip('/')}/{cfg.root_key(key)}"
+    manifest_id = f"{cfg.results_url.rstrip('/')}/{cfg.root_key(key)}"
     doc = build_manifest(cfg.volume_ref, urls, manifest_id)
     store.put_json_at(key, doc)
     return doc, manifest_id

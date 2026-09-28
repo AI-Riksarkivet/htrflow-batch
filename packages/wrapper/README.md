@@ -60,7 +60,7 @@ Exit codes: `0` success, `13` permanent (do not retry), `1` transient,
 | `PIPELINE_PATH` | Mounted pipeline YAML (`/config/pipeline.yaml` in Jobs) |
 | `PIPELINE_ID` | Pipeline id, first segment of the S3 result prefix |
 | `S3_BUCKET` | Results bucket |
-| `PUBLIC_RESULTS_BASE` | Browser-reachable base URL for `iiif.json` ids and `viewer_url` |
+| `RESULTS_URL` | Browser-reachable base URL for `iiif.json` ids and `viewer_url` |
 
 Optional, with defaults: `S3_ENDPOINT` (provider chain), `S3_PREFIX` (`""`),
 `MAX_IMAGE_WIDTH` (2500), `RESUME` (true), `LOOKAHEAD_PAGES` (64),

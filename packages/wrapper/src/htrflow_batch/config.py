@@ -46,7 +46,7 @@ class Config(BaseModel):
     pipeline_id: str = Field(alias="PIPELINE_ID")
     s3_endpoint: str = Field("", alias="S3_ENDPOINT")
     s3_bucket: str = Field(alias="S3_BUCKET")
-    public_results_base: str = Field(alias="PUBLIC_RESULTS_BASE")
+    results_url: str = Field(alias="RESULTS_URL")
     # Exactly one of these is set (docs: wrapper, IMAGES) — see from_env.
     manifest_url: str = Field("", alias="IIIF_MANIFEST_URL")
     images: str = Field("", alias="IMAGES")

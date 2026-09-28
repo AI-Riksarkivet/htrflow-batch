@@ -121,7 +121,7 @@ def _cfg(tmp_path, pipeline=PIPELINE):
             "PIPELINE_PATH": str(tmp_path / "pipeline.yaml"),
             "PIPELINE_ID": "demo-v1",
             "S3_BUCKET": "htr-results",
-            "PUBLIC_RESULTS_BASE": "http://public/htr-results",
+            "RESULTS_URL": "http://public/htr-results",
             "WORKDIR_PATH": str(tmp_path / "work"),
         }
     )

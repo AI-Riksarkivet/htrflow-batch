@@ -165,8 +165,7 @@ def run_manifest(
         "wall_seconds": round(wall, 1),
         "gpu_stall_seconds": round(stats.stall_seconds, 1),
         "pages_per_second": round(len(ok_pages) / wall, 3) if wall else 0,
-        "viewer_url": f"{cfg.public_results_base.rstrip('/')}"
-        f"/{cfg.volume_prefix}/iiif.json",
+        "viewer_url": f"{cfg.results_url.rstrip('/')}/{cfg.volume_prefix}/iiif.json",
     }
     block = (
         qp.summary(scores, pipeline_text, canvases)
