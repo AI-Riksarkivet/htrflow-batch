@@ -20,7 +20,7 @@ see [Dev cluster](../development/dev-cluster.md).
   and a RuntimeClass for GPU pods (`nvidia`, or whatever the campaigns
   repo's `runtime_class` names).
 - **An S3-compatible bucket** that browsers can reach at a stable URL,
-  the *results base URL*. It is written into every published manifest.
+  the *results URL*. It is written into every published manifest.
 - **A IIIF source** (Presentation 2 or 3 manifests, or plain image URLs)
   that campaign pods can reach, and its address range.
 - **Public egress for the warm-up pods**, which download models from
@@ -100,7 +100,7 @@ And a CORS rule that allows `GET` and `HEAD` from the web front's origin:
 ```bash
 helm install htr charts/htrflow-batch -n <namespace> \
   -f charts/htrflow-batch/values-prod.yaml \
-  --set publicResultsBase=<results-base-url> \
+  --set resultsUrl=<results-url> \
   --set network.apiServer.cidr=<apiserver-address>/32 \
   --set network.iiifCidrs='{<iiif-source-cidr>}' \
   --set network.s3Cidrs='{<s3-endpoint-cidr>}' \
@@ -111,7 +111,7 @@ make psa-labels HTR_RELEASE=htr HTR_NAMESPACE=<namespace>
 
 | Value | What to set it to |
 |---|---|
-| `publicResultsBase` | The results base URL: where browsers reach the bucket, with the bucket in the path. |
+| `resultsUrl` | The results URL: where browsers reach the bucket, with the bucket in the path. |
 | `network.apiServer.cidr` | The kube-apiserver address as pods reach it. Further HA API servers go in `network.apiServer.cidrs`; with both empty, it is looked up from the cluster. |
 | `network.iiifCidrs` | Your IIIF source, and any host `images:` volumes point at. |
 | `network.s3Cidrs` | The S3 endpoint, on `network.s3Ports` (default 443). |
@@ -123,7 +123,7 @@ the Kyverno policies, the image allow-list (the published images only),
 revision-pinned models, signature verification, and Pod Security
 `restricted`. An install that misses a value fails asking for it. Every
 other value, and its default, is in [Chart values](../reference/chart.md).
-If `publicResultsBase` does not resolve from inside the cluster, also set
+If `resultsUrl` does not resolve from inside the cluster, also set
 `web.internalResultsBase` to an address that does
 ([View results](viewing.md#exposing-the-web-front)).
 
@@ -155,7 +155,7 @@ this chart created, and they must agree:
 | `queue` | `queue.name` | `htr-batch` |
 | `s3_secret` | `s3.existingSecret` | `htr-batch-s3` |
 | `data_pvc` | `modelCache.name` | `htr-test-data` |
-| `public_results_base` | `publicResultsBase` | none |
+| `results_url` | `resultsUrl` | none |
 
 ## Web front access
 

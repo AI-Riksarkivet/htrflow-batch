@@ -125,7 +125,7 @@ matches `KEY|TOKEN|PASSWORD|SECRET_ACCESS`.
 | `PIPELINE_PATH` | fixed, `/config/pipeline.yaml` | Path to the mounted pipeline YAML |
 | `PIPELINE_ID` | the pipeline id | First segment of the S3 result prefix after `S3_PREFIX` |
 | `S3_BUCKET` | the S3 Secret's `S3_BUCKET` key | Results bucket |
-| `PUBLIC_RESULTS_BASE` | `converter.yaml`'s `public_results_base` | Browser-reachable base URL, used to build `iiif.json` ids, `viewer_url` and the `IMAGES` synthetic manifest id |
+| `RESULTS_URL` | `converter.yaml`'s `results_url` | Browser-reachable base URL, used to build `iiif.json` ids, `viewer_url` and the `IMAGES` synthetic manifest id |
 
 **Optional:**
 
