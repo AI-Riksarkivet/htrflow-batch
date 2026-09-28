@@ -321,6 +321,12 @@ order is the one the images need:
    entry.
 4. **Tag that commit** and push the tag.
 
+Between steps 1 and 3 the Argo CD hook names the converter by the new
+version's tag, since no digest of that release exists yet. `verify-published`
+and `scan-published` check the images that are pinned and report that one as
+not yet published, instead of failing; the release commit's pin brings it
+back under both checks.
+
 The workflow then writes the notes in two parts:
 
 - **`.github/release-notes.md`**, the same for every release: the not-for-use
