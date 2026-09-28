@@ -79,7 +79,7 @@ def _manifest(work: Path) -> dict:
             "PIPELINE_PATH": str(work / "pipeline.yaml"),
             "PIPELINE_ID": "demo-v1",
             "S3_BUCKET": "htr-results",
-            "PUBLIC_RESULTS_BASE": "https://results.example.org/htr-test",
+            "RESULTS_URL": "https://results.example.org/htr-test",
             "WORKDIR_PATH": str(work / "work"),
             "IMAGE_DIGEST": "sha256:" + "0" * 64,
         }
@@ -120,7 +120,7 @@ def _manifest_scored(work: Path) -> dict:
             "PIPELINE_PATH": str(work / "pipeline-qp.yaml"),
             "PIPELINE_ID": "demo-v1",
             "S3_BUCKET": "htr-results",
-            "PUBLIC_RESULTS_BASE": "https://results.example.org/htr-test",
+            "RESULTS_URL": "https://results.example.org/htr-test",
             "WORKDIR_PATH": str(work / "work-qp"),
             "IMAGE_DIGEST": "sha256:" + "0" * 64,
         }
