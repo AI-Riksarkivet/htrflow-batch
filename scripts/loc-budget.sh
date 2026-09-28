@@ -805,7 +805,11 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 4732
 # comment saying absent is off. render.py +7: appended after `dynamic_env`,
 # not a skeleton entry, so a converter.yaml without the block renders
 # byte-for-byte what it always did.
-check converter "$(count packages/converter/src -name '*.py')" 5060
+# 5060 -> 5074 (resultsUrl rename): models.py +14 -- _RENAMED and its
+# comment, and _reject_moved_settings collecting the moved and the renamed
+# keys into one error, so converter.yaml's old public_results_base is
+# refused naming results_url instead of as a spelling mistake.
+check converter "$(count packages/converter/src -name '*.py')" 5074
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
@@ -1633,5 +1637,7 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5984
 # and the comment explaining it is conditional on converter.yaml's
 # `image_cache` like LOOKAHEAD_BYTES is on a named size, and that the
 # warm-up Job never gets it.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2059
+# 2059 -> 2062 (resultsUrl rename): _helpers.tpl +3 -- the old
+# publicResultsBase key refused in words that name resultsUrl.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2062
 exit $fail

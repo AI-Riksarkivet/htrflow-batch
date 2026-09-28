@@ -1363,7 +1363,7 @@ def images_env(tmp_path, cfg, monkeypatch):
         "PIPELINE_ID": "demo-v1",
         "S3_ENDPOINT": "",
         "S3_BUCKET": "htr-results",
-        "PUBLIC_RESULTS_BASE": "http://public/htr-results",
+        "RESULTS_URL": "http://public/htr-results",
         "WORKDIR_PATH": str(tmp_path / "work"),
         "TERMINATION_LOG_PATH": str(tmp_path / "term.log"),
     }

@@ -96,7 +96,7 @@ services:
       S3_BUCKET: ${HTR_BUCKET:-htr-results}
       AWS_ACCESS_KEY_ID: ${HTR_DEV_S3_ACCESS_KEY:-rustfsadmin}
       AWS_SECRET_ACCESS_KEY: ${HTR_DEV_S3_SECRET_KEY:-rustfsadmin}
-      PUBLIC_RESULTS_BASE: http://localhost:${HTR_COMPOSE_S3_PORT:-19000}/${HTR_BUCKET:-htr-results}
+      RESULTS_URL: http://localhost:${HTR_COMPOSE_S3_PORT:-19000}/${HTR_BUCKET:-htr-results}
       IMAGE_CACHE_BUCKET: ${HTR_IMAGE_CACHE_BUCKET:-}  # empty: no image cache
       MAX_PAGES: "1"          # CPU is ~41x slower than GPU; full volume ≈ 13 min
       WORKDIR_PATH: /work

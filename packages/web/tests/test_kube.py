@@ -35,7 +35,7 @@ from htrflow_web.kube import (
 
 
 def test_missing_results_base_raises():
-    with pytest.raises(RuntimeError, match="HTRFLOW_PUBLIC_RESULTS_BASE is required"):
+    with pytest.raises(RuntimeError, match="HTRFLOW_RESULTS_URL is required"):
         Config.from_env({})
 
 
@@ -44,7 +44,7 @@ def test_site_only_does_not_require_a_results_base():
     result URLs from is not a setting it has to carry."""
     cfg = Config.from_env({"HTRFLOW_WEB_SITE_ONLY": "1"})
     assert cfg.site_only is True
-    assert cfg.public_results_base == ""
+    assert cfg.results_url == ""
 
 
 def test_site_only_zero_still_counts_as_true():
@@ -54,20 +54,20 @@ def test_site_only_zero_still_counts_as_true():
 
 
 def test_results_base_trailing_slash_is_stripped():
-    cfg = Config.from_env({"HTRFLOW_PUBLIC_RESULTS_BASE": "http://x/results/"})
-    assert cfg.public_results_base == "http://x/results"
+    cfg = Config.from_env({"HTRFLOW_RESULTS_URL": "http://x/results/"})
+    assert cfg.results_url == "http://x/results"
 
 
 def test_namespaces_splits_on_comma_and_strips():
     cfg = Config.from_env(
-        {"HTRFLOW_PUBLIC_RESULTS_BASE": "http://x", "HTRFLOW_NAMESPACES": "a, b"}
+        {"HTRFLOW_RESULTS_URL": "http://x", "HTRFLOW_NAMESPACES": "a, b"}
     )
     assert cfg.namespaces == ("a", "b")
 
 
 def test_static_dir_passes_through():
     cfg = Config.from_env(
-        {"HTRFLOW_PUBLIC_RESULTS_BASE": "http://x", "HTRFLOW_WEB_STATIC": "/site"}
+        {"HTRFLOW_RESULTS_URL": "http://x", "HTRFLOW_WEB_STATIC": "/site"}
     )
     assert cfg.static_dir == "/site"
 
@@ -75,13 +75,13 @@ def test_static_dir_passes_through():
 def test_batch_version_defaults_to_the_dockerfile_default():
     """The image bakes HTRFLOW_BATCH_VERSION; a process started without one
     (a laptop, a source checkout) says the same thing the image would."""
-    cfg = Config.from_env({"HTRFLOW_PUBLIC_RESULTS_BASE": "http://x"})
+    cfg = Config.from_env({"HTRFLOW_RESULTS_URL": "http://x"})
     assert cfg.batch_version == "dev"
 
 
 def test_batch_version_is_the_deployed_tag():
     cfg = Config.from_env(
-        {"HTRFLOW_PUBLIC_RESULTS_BASE": "http://x", "HTRFLOW_BATCH_VERSION": "v0.2.0"}
+        {"HTRFLOW_RESULTS_URL": "http://x", "HTRFLOW_BATCH_VERSION": "v0.2.0"}
     )
     assert cfg.batch_version == "v0.2.0"
 
@@ -90,16 +90,16 @@ def test_internal_results_base_defaults_to_the_public_one():
     """The API pod's own ProgressReader must reach the bucket even when
     nobody set HTRFLOW_INTERNAL_RESULTS_BASE -- true on real AWS, where the
     same URL really does work from inside the cluster."""
-    cfg = Config.from_env({"HTRFLOW_PUBLIC_RESULTS_BASE": "http://x/results"})
+    cfg = Config.from_env({"HTRFLOW_RESULTS_URL": "http://x/results"})
     assert cfg.internal_results_base == "http://x/results"
 
 
 def test_internal_results_base_can_differ_from_the_public_one():
-    """The PoC: publicResultsBase is a localhost URL reached through an SSH
+    """The PoC: resultsUrl is a localhost URL reached through an SSH
     forward, which the pod itself cannot resolve to anything but itself."""
     cfg = Config.from_env(
         {
-            "HTRFLOW_PUBLIC_RESULTS_BASE": "http://localhost:30900/htr-results",
+            "HTRFLOW_RESULTS_URL": "http://localhost:30900/htr-results",
             "HTRFLOW_INTERNAL_RESULTS_BASE": (
                 "http://rustfs.htr-batch.svc.cluster.local:9000/htr-results/"
             ),
@@ -170,7 +170,7 @@ def reader(monkeypatch) -> Reader:
     r = Reader(
         Config.from_env(
             {
-                "HTRFLOW_PUBLIC_RESULTS_BASE": "http://x",
+                "HTRFLOW_RESULTS_URL": "http://x",
                 "HTRFLOW_NAMESPACES": "htr-a,htr-b",
             }
         )

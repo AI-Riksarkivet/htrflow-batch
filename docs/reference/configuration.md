@@ -22,7 +22,7 @@ so.
 unset, it uses the OS user ([htrflow-campaigns CLI](cli.md#the-hook-manifest)).
 
 **What the browser is told** comes from `/config.js`, which the web front
-writes from `HTRFLOW_PUBLIC_RESULTS_BASE`; there is no second copy to keep in
+writes from `HTRFLOW_RESULTS_URL`; there is no second copy to keep in
 step ([Web front & read API](web.md#configuration)).
 
 **Two caps.** `FETCH_MAX_BYTES` bounds an image on the wire and
@@ -59,7 +59,7 @@ without a retry.
   exactly that. With `security.policies.enabled`, a Kyverno rule also holds
   its ConfigMap writes to names of the form `campaign-<name>-status`.
 - **The results bucket is public-read**: everything under
-  `publicResultsBase` — with the devstack's store, except `status/logs/*`
+  `resultsUrl` — with the devstack's store, except `status/logs/*`
   when `rustfs.publicLogs` is off. The run log is the only key anything
   writes under `status/`, so there is nothing else to exclude. See
   [the bucket policy](../how-it-works/security.md#the-bucket-policy).
@@ -89,7 +89,7 @@ Each key is an environment variable of the container.
 | `PIPELINE_ID` | the pipeline file's `id` | **required** | — | no secret — nobody |
 | `S3_ENDPOINT` | the S3 Secret (`s3_secret`), its `S3_ENDPOINT` key | *(empty)* | — | from the S3 Secret (`secretKeyRef`) — cluster |
 | `S3_BUCKET` | the S3 Secret (`s3_secret`), its `S3_BUCKET` key | **required** | — | from the S3 Secret (`secretKeyRef`) — cluster |
-| `PUBLIC_RESULTS_BASE` | `converter.yaml` `public_results_base` | **required** | chart `publicResultsBase`, converter `public_results_base`, web `HTRFLOW_PUBLIC_RESULTS_BASE` | the public-read results base — nobody |
+| `RESULTS_URL` | `converter.yaml` `results_url` | **required** | chart `resultsUrl`, converter `results_url`, web `HTRFLOW_RESULTS_URL` | the results URL — nobody |
 | `IIIF_MANIFEST_URL` | the campaign file: its volume list, one entry per index | *(empty)* | — | no secret — nobody |
 | `IMAGES` | the campaign file: its volume list, one entry per index | *(empty)* | — | no secret — nobody |
 | `S3_PREFIX` | `converter.yaml` `namespace` | *(empty)* | — | no secret — nobody |
@@ -133,8 +133,8 @@ Each key is an environment variable of the container.
 
 | Key | Set by | Default | Must agree with | Security |
 |---|---|---|---|---|
-| `HTRFLOW_PUBLIC_RESULTS_BASE` | the chart: `publicResultsBase` | required unless `HTRFLOW_WEB_SITE_ONLY` | chart `publicResultsBase`, converter `public_results_base`, wrapper `PUBLIC_RESULTS_BASE` | the public-read results base — nobody |
-| `HTRFLOW_INTERNAL_RESULTS_BASE` | the chart: `web.internalResultsBase`, else `publicResultsBase` | `HTRFLOW_PUBLIC_RESULTS_BASE` | — | no secret — nobody |
+| `HTRFLOW_RESULTS_URL` | the chart: `resultsUrl` | required unless `HTRFLOW_WEB_SITE_ONLY` | chart `resultsUrl`, converter `results_url`, wrapper `RESULTS_URL` | the results URL — nobody |
+| `HTRFLOW_INTERNAL_RESULTS_BASE` | the chart: `web.internalResultsBase`, else `resultsUrl` | `HTRFLOW_RESULTS_URL` | — | no secret — nobody |
 | `HTRFLOW_NAMESPACES` | the chart, fixed: the release namespace (no value sets it) | the pod's own namespace, else `htr-batch` | — | no secret — nobody |
 | `HTRFLOW_WEB_STATIC` | the image build (`ENV`): where the image puts the site | `/app/static` | — | no secret — nobody |
 | `HTRFLOW_WEB_SITE_ONLY` | **a local run only** (the compose stack sets it); no chart value | `false` | — | no secret — nobody |
@@ -154,7 +154,7 @@ Each key is a key of `converter.yaml`.
 | `runtime_class` | `converter.yaml` | `nvidia` | — | no secret — nobody |
 | `node_selector` | `converter.yaml` | *(empty)* | — | no secret — nobody |
 | `tolerations` | `converter.yaml` | *(empty)* | — | no secret — nobody |
-| `public_results_base` | `converter.yaml` | **required** | chart `publicResultsBase`, web `HTRFLOW_PUBLIC_RESULTS_BASE`, wrapper `PUBLIC_RESULTS_BASE` | the public-read results base — nobody |
+| `results_url` | `converter.yaml` | **required** | chart `resultsUrl`, web `HTRFLOW_RESULTS_URL`, wrapper `RESULTS_URL` | the results URL — nobody |
 | `source_template` | `converter.yaml` | *(empty)* | — | no secret — nobody |
 | `max_seconds` | `converter.yaml`; a pipeline's own `max_seconds:` overrides it | `21600` | — | no secret — nobody |
 | `warmup_wait_seconds` | `converter.yaml` | `900` | — | no secret — nobody |
@@ -176,7 +176,7 @@ Each key is a key of its `values.yaml`.
 |---|---|---|---|---|
 | `s3.existingSecret` | `values.yaml` | `htr-batch-s3` | converter `s3_secret` | names that Secret; no template creates it — nobody |
 | `hfToken.existingSecret` | `values.yaml` | *(empty)* | converter `hf_token_secret` | the one Secret a warm-up may read (job-shape) — cluster |
-| `publicResultsBase` | `values.yaml` | *(empty)* | converter `public_results_base`, web `HTRFLOW_PUBLIC_RESULTS_BASE`, wrapper `PUBLIC_RESULTS_BASE` | the public-read results base; `required` — render |
+| `resultsUrl` | `values.yaml` | *(empty)* | converter `results_url`, web `HTRFLOW_RESULTS_URL`, wrapper `RESULTS_URL` | the results URL; `required` — render |
 | `modelCache.create` | `values.yaml` | `true` | — | no secret — nobody |
 | `modelCache.name` | `values.yaml` | `htr-test-data` | converter `data_pvc` | no secret — nobody |
 | `modelCache.size` | `values.yaml` | `30Gi` | — | no secret — nobody |

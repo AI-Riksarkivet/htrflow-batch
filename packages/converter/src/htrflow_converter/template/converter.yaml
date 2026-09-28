@@ -27,9 +27,9 @@ data_pvc: htr-test-data
 runtime_class: nvidia
 
 # Must be a browser-reachable URL base that serves the results bucket
-# (htrflow-batch's `publicResultsBase` chart value, same value). Swap for a
+# (htrflow-batch's `resultsUrl` chart value, same value). Swap for a
 # real one before applying anywhere but the PoC.
-public_results_base: "http://localhost:30900/htr-results"
+results_url: "http://localhost:30900/htr-results"
 
 # How a campaign's bare reference code (`- R0001203`) becomes a IIIF
 # manifest URL: {ref} is the code. Unset, only `manifest:` and `images:`

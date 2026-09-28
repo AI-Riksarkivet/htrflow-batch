@@ -41,7 +41,7 @@ export function resolveApiBase(
 }
 
 /**
- * Where this deployment's results live — the same `publicResultsBase` the
+ * Where this deployment's results live — the same `resultsUrl` the
  * read API builds every result URL from. Served in /config.js by the read
  * API itself (packages/web), so it cannot drift from what the API says.
  * Empty when nobody said (a `bun run dev` with no /config.js, a site-only

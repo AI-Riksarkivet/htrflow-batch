@@ -1,3 +1,3 @@
 window: not-an-int
 bogus_field: true
-public_results_base: https://results.example.org
+results_url: https://results.example.org

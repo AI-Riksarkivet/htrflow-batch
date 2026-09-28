@@ -42,7 +42,7 @@ from htrflow_web.kube import FIELD_MANAGER, ClusterUnavailable  # noqa: E402
 FIXTURE = ROOT / "frontend" / "src" / "lib" / "fixtures" / "api-contract.json"
 
 CFG = SimpleNamespace(
-    public_results_base="https://results.example.org",
+    results_url="https://results.example.org",
     internal_results_base="http://rustfs.htr-batch.svc:9000/htr-results",
     namespaces=("htr-test",),
 )

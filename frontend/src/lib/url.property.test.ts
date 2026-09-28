@@ -11,7 +11,7 @@ import { fetchJob, isHttpUrl, isResultUrl } from "./api.js";
 import { HF_BASE, modelUrl } from "./pipeline.js";
 import { RUNS } from "./fixtures/property.js";
 
-/** Bases the read API could be configured with (publicResultsBase). */
+/** Bases the read API could be configured with (resultsUrl). */
 const base = fc.constantFrom(
   "https://results.example.org/htr-test",
   "https://results.example.org/htr-test/",

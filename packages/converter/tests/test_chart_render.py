@@ -69,7 +69,13 @@ IIIF_NOWHERE_REFUSAL = (
     " reaches no cluster or private address)"
 )
 RESULTS_BASE_REFUSAL = (
-    "publicResultsBase is required (the read API serves S3 links built from it)"
+    "resultsUrl is required (the read API serves S3 links built from it)"
+)
+#: publicResultsBase was renamed; the schema lets the old key through so
+#: this sentence, not an unknown-key error, is what its author reads.
+RESULTS_BASE_RENAMED_REFUSAL = (
+    "publicResultsBase is now resultsUrl (chart 0.14.0): rename the key in"
+    " your values; the value stays the same"
 )
 API_SERVER_REFUSAL = (
     "network.apiServer.cidr or network.apiServer.cidrs is required when the"
@@ -1042,7 +1048,7 @@ def _without(tmp_path: Path, name: str, dotted: str) -> str:
 @pytest.mark.parametrize(
     "file,left_out,reason",
     [
-        ("default-values.yaml", "publicResultsBase", RESULTS_BASE_REFUSAL),
+        ("default-values.yaml", "resultsUrl", RESULTS_BASE_REFUSAL),
         ("default-values.yaml", "network.apiServer.cidr", API_SERVER_REFUSAL),
         (
             "prod-values.yaml",
@@ -1449,8 +1455,13 @@ BATCH_GUARDS = {
     ),
     "results-base": (
         None,
-        DEFAULT_SETS + ("publicResultsBase=",),
+        DEFAULT_SETS + ("resultsUrl=",),
         RESULTS_BASE_REFUSAL,
+    ),
+    "results-base-renamed": (
+        None,
+        DEFAULT_SETS + ("publicResultsBase=https://results.example.org/r",),
+        RESULTS_BASE_RENAMED_REFUSAL,
     ),
     "s3-nowhere": (
         None,
