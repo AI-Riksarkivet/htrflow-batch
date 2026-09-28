@@ -4,7 +4,7 @@
 # (packages/web). Everything is computed live from the Kubernetes API —
 # there is no status document written anywhere any more.
 # Open a volume directly with:
-#   http://<node>:{{ .Values.web.nodePort }}/uv.html#?manifest=<PUBLIC_RESULTS_BASE>/<pipeline>/<volume>/iiif.json
+#   http://<node>:{{ .Values.web.nodePort }}/uv.html#?manifest=<RESULTS_URL>/<pipeline>/<volume>/iiif.json
 # Until Task 17 a separate nginx image served the site and proxied /api/
 # here; that image, its ConfigMap and the proxy are gone.
 apiVersion: v1
@@ -89,16 +89,16 @@ spec:
           env:
             - name: HOME
               value: /tmp
-            - name: HTRFLOW_PUBLIC_RESULTS_BASE
-              value: {{ .Values.publicResultsBase | required "publicResultsBase is required (the read API serves S3 links built from it)" | quote }}
+            - name: HTRFLOW_RESULTS_URL
+              value: {{ .Values.resultsUrl | required "resultsUrl is required (the read API serves S3 links built from it)" | quote }}
             # Where THIS POD reaches the bucket for progress.json -- not
             # necessarily the same address as the one above: on the PoC,
-            # publicResultsBase is a `localhost` URL reached through an SSH
+            # resultsUrl is a `localhost` URL reached through an SSH
             # forward, which the pod itself cannot resolve to anything but
             # itself (docs: development/local-k3s, "Two S3 endpoints").
-            # Defaults to publicResultsBase, which is correct on real AWS.
+            # Defaults to resultsUrl, which is correct on real AWS.
             - name: HTRFLOW_INTERNAL_RESULTS_BASE
-              value: {{ .Values.web.internalResultsBase | default .Values.publicResultsBase | quote }}
+              value: {{ .Values.web.internalResultsBase | default .Values.resultsUrl | quote }}
             # The API acts on its own namespace; the downward API keeps it
             # correct whatever --namespace the release uses. Deliberately
             # single-valued today (one namespace, this release's) — the

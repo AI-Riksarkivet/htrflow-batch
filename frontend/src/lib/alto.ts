@@ -67,8 +67,8 @@ export function parseAlto(xml: string): AltoPage {
 
 /**
  * A page's ALTO URL from the manifest's `viewer_url`
- * (`<public_results_base>/<volume>/iiif.json`, publish.py) and its id: ALTO
- * lives at `<public_results_base>/<volume>/alto/<page>.xml`, a sibling
+ * (`<results_url>/<volume>/iiif.json`, publish.py) and its id: ALTO
+ * lives at `<results_url>/<volume>/alto/<page>.xml`, a sibling
  * directory of the manifest — see `viewer.py`'s `seeAlso`.
  */
 export function altoUrl(viewerUrl: string, page: string): string {

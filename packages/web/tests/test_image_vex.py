@@ -502,7 +502,7 @@ class _SiteReader(NoCluster):
     every API call is refused, which is all this test asks of it."""
 
     cfg = SimpleNamespace(
-        public_results_base="https://results.example.org", namespaces=("htr-a",)
+        results_url="https://results.example.org", namespaces=("htr-a",)
     )
 
 

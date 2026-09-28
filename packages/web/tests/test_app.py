@@ -90,7 +90,7 @@ PIPELINE_CONFIGMAP = {
 
 class FakeReader:
     cfg = SimpleNamespace(
-        public_results_base="https://results.example.org",
+        results_url="https://results.example.org",
         namespaces=("htr-test",),
     )
 

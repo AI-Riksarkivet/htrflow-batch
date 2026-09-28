@@ -12,7 +12,7 @@
 window.API_BASE = "/api/v1";
 
 // Where this deployment's results live — the read API's own
-// HTRFLOW_PUBLIC_RESULTS_BASE. The service SERVES this file (packages/web
+// HTRFLOW_RESULTS_URL. The service SERVES this file (packages/web
 // builds it from its own environment), so what a browser gets is always
 // the API's answer and never this line; the file is here for `bun run dev`
 // and for a site-only build, where there is no API to ask. Empty means

@@ -110,7 +110,7 @@ def _counts(job: dict) -> dict:
 
 
 def _results_base(namespace: str, pipeline: str, cfg) -> str:
-    return f"{cfg.public_results_base}/{namespace}/{pipeline}"
+    return f"{cfg.results_url}/{namespace}/{pipeline}"
 
 
 def _internal_results_base(namespace: str, pipeline: str, cfg) -> str:
@@ -120,7 +120,7 @@ def _internal_results_base(namespace: str, pipeline: str, cfg) -> str:
     Used only for ``ProgressReader.fetch`` below: every URL a browser follows
     (manifestUrl, iiifUrl, logUrl, ``resultsBase`` itself) stays built from
     ``_results_base``, the public one."""
-    base = getattr(cfg, "internal_results_base", "") or cfg.public_results_base
+    base = getattr(cfg, "internal_results_base", "") or cfg.results_url
     return f"{base}/{namespace}/{pipeline}"
 
 
@@ -976,7 +976,7 @@ def _log_url(pipeline: str, volume_id: str, cfg) -> str:
     ``resultsBase``. Absolute (not a bare key) because the browser has no
     bucket base URL to resolve a key against."""
     return (
-        f"{cfg.public_results_base}/status/logs/"
+        f"{cfg.results_url}/status/logs/"
         f"{quote(pipeline, safe='')}/{quote(volume_id, safe='')}.txt"
     )
 
