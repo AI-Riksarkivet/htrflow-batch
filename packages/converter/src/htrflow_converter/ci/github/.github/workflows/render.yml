@@ -140,7 +140,7 @@ jobs:
           while read -r name; do sets+=(--set "$name"); done <<< "$names"
           helm template htrflow-batch .htrflow-batch/charts/htrflow-batch \
             -n "$POLICY_NAMESPACE" \
-            --set publicResultsBase=http://ci.invalid/ \
+            --set resultsUrl=http://ci.invalid/ \
             --set network.enabled=false \
             --set security.policies.enabled=true \
             --set "security.allowedImageRepos=$POLICY_ALLOWED_IMAGE_REPOS" \
