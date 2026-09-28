@@ -78,7 +78,7 @@ services:
               "python", "/scripts/compose_init.py"]
 
   wrapper:
-    image: ${HTR_WRAPPER_IMAGE:-riksarkivet/htrflow-batch@sha256:637fbe4a2d66001b8e37966fc1e9f443b2a80809ce6b76c0dd72e9a31e3883f1}  # v0.5.0
+    image: ${HTR_WRAPPER_IMAGE:-riksarkivet/htrflow-batch@sha256:f62e1e64847438e065679060c40b841cea84f5c0d4b9d561882d490d1c8fcbf8}  # v0.6.0
     # RustFS's network namespace: `localhost:<port>` is RustFS here, as it
     # is to the browser (see the note at the top).
     network_mode: "service:rustfs"
@@ -118,7 +118,7 @@ services:
     # only this directory as the compose project, so a build context of `..`
     # could not resolve anyway. The pinned release, or HTR_WEB_IMAGE — which
     # is what `make compose-smoke` sets.
-    image: ${HTR_WEB_IMAGE:-riksarkivet/htrflow-web@sha256:1fbabef550593f6d77da71bb7b9470fce5e8fdd41ccd494b6cb41b7cd5042bbb}  # v0.5.0
+    image: ${HTR_WEB_IMAGE:-riksarkivet/htrflow-web@sha256:3514451821ed8abdedce522d3bd222ee4aaaeb82347c28f79832b34a73be27b0}  # v0.6.0
     # Site only: a compose stack has no apiserver, so the read API would have
     # nothing to read and the console script would exit on a missing
     # kubeconfig. In this mode /, /log and /uv.html are served and /api/v1/…
