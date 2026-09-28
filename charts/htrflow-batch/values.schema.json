@@ -6,7 +6,7 @@
   "required": [
     "s3",
     "hfToken",
-    "publicResultsBase",
+    "resultsUrl",
     "modelCache",
     "queue",
     "web",
@@ -124,9 +124,12 @@
         }
       }
     },
-    "publicResultsBase": {
+    "resultsUrl": {
       "type": "string",
       "pattern": "^(https?://.+)?$"
+    },
+    "publicResultsBase": {
+      "description": "Renamed to resultsUrl in chart 0.14.0. Admitted here only so htrflow-batch.validate can refuse it naming the new key; an unknown-key error would not."
     },
     "modelCache": {
       "type": "object",

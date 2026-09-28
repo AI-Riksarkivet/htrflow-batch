@@ -77,7 +77,7 @@ def build_viewer_manifest(
     quality: "Mapping[str, float] | None" = None,
     summary: dict | None = None,
 ) -> dict:
-    base = cfg.public_results_base.rstrip("/")
+    base = cfg.results_url.rstrip("/")
     vol = f"{base}/{cfg.volume_prefix}"
     canvases = []
     for page in pages:

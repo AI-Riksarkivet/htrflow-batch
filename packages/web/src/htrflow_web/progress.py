@@ -269,7 +269,7 @@ class ProgressReader:
 
     def fetch(self, results_base: str, volume_id: str, state: str) -> dict | None:
         """This volume's progress, or ``None``. ``results_base`` is the row's
-        own (``<public_results_base>/<namespace>/<pipeline>``)."""
+        own (``<results_url>/<namespace>/<pipeline>``)."""
         return self._read(results_base, volume_id, state, network=True)[1]
 
     def cached(

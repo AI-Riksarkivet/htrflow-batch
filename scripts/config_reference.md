@@ -22,7 +22,7 @@ so.
 unset, it uses the OS user ([htrflow-campaigns CLI](cli.md#the-hook-manifest)).
 
 **What the browser is told** comes from `/config.js`, which the web front
-writes from `HTRFLOW_PUBLIC_RESULTS_BASE`; there is no second copy to keep in
+writes from `HTRFLOW_RESULTS_URL`; there is no second copy to keep in
 step ([Web front & read API](web.md#configuration)).
 
 **Two caps.** `FETCH_MAX_BYTES` bounds an image on the wire and
@@ -59,7 +59,7 @@ without a retry.
   exactly that. With `security.policies.enabled`, a Kyverno rule also holds
   its ConfigMap writes to names of the form `campaign-<name>-status`.
 - **The results bucket is public-read**: everything under
-  `publicResultsBase` — with the devstack's store, except `status/logs/*`
+  `resultsUrl` — with the devstack's store, except `status/logs/*`
   when `rustfs.publicLogs` is off. The run log is the only key anything
   writes under `status/`, so there is nothing else to exclude. See
   [the bucket policy](../how-it-works/security.md#the-bucket-policy).

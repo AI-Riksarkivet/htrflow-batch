@@ -29,7 +29,7 @@ cluster that already has the device plugin ([Gotchas](#gotchas)).
 
 ```bash
 helm upgrade --install htr charts/htrflow-batch -n <namespace> \
-  --set publicResultsBase=http://<node-address>:30900/htr-results \
+  --set resultsUrl=http://<node-address>:30900/htr-results \
   --set web.internalResultsBase=http://rustfs.<namespace>.svc.cluster.local:9000/htr-results \
   --set network.apiServer.cidr=<apiserver-address>/32 \
   --set network.iiifCidrs='{<iiif-source-cidr>}' \
@@ -59,8 +59,8 @@ Then write a campaigns repo and apply it:
 uv run htrflow-campaigns init my-campaigns
 ```
 
-In `my-campaigns/converter.yaml` set `public_results_base` to the same URL
-as `publicResultsBase`, and list your volumes in `campaigns/demo.yaml`
+In `my-campaigns/converter.yaml` set `results_url` to the same URL
+as `resultsUrl`, and list your volumes in `campaigns/demo.yaml`
 ([Run a campaign](../getting-started/campaigns.md#3-list-the-volumes)). Then:
 
 ```bash
@@ -211,7 +211,7 @@ place hits the append-only rule
 ## Two S3 endpoints, two results bases
 
 On a dev cluster the browser and the pods reach the same RustFS at different
-addresses. `publicResultsBase` is the forwarded address a browser on your
+addresses. `resultsUrl` is the forwarded address a browser on your
 workstation uses ([View results](../getting-started/viewing.md#exposing-the-web-front));
 the pods cannot resolve it. The wrapper writes through the S3 Secret's
 in-cluster endpoint anyway, but the read API needs the in-cluster address
@@ -248,7 +248,7 @@ kubectl -n <namespace> port-forward svc/rustfs <s3-port>:9000
 ```
 
 Then `http://<workstation>:<web-port>/` is the campaign browser, and
-`publicResultsBase` must be `http://<workstation>:<s3-port>/<bucket>` — the
+`resultsUrl` must be `http://<workstation>:<s3-port>/<bucket>` — the
 address the browser uses for the S3 forward, which is why it differs from
 the in-cluster one above. `<ssh-host>` is any machine you can reach that
 reaches the node; the `-L` targets resolve on its side. Exposing the web

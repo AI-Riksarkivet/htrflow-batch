@@ -78,7 +78,7 @@ def test_host_ports_are_settable_and_every_url_follows_them() -> None:
     env = wrapper["environment"]
     assert env["S3_ENDPOINT"] == local
     assert env["IIIF_MANIFEST_URL"].startswith(f"{local}/")
-    assert env["PUBLIC_RESULTS_BASE"].startswith(f"{local}/")
+    assert env["RESULTS_URL"].startswith(f"{local}/")
     # The page images the mock manifest names are the ones the browser loads.
     assert SERVICES["fixtures-init"]["environment"]["MOCK_BASE"].startswith(f"{local}/")
 

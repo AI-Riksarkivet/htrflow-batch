@@ -13,7 +13,7 @@ from htrflow_web import projection
 from htrflow_web.progress import MAX_SCORED
 from htrflow_web.projection import _campaign_quality
 
-CFG = SimpleNamespace(public_results_base="https://results.example.org")
+CFG = SimpleNamespace(results_url="https://results.example.org")
 #: `warmup` is required (Task 28 fix round item 4) -- this is what every
 #: pre-existing test that does not care about it passes explicitly.
 MISSING_WARMUP = {"phase": "missing"}
@@ -799,7 +799,7 @@ class TestVolumeProgress:
 
     def test_progress_is_fetched_from_the_internal_base_not_the_public_one(self):
         """The API pod's own way to the bucket can differ from the one it
-        hands the browser (the PoC's localhost publicResultsBase, docs:
+        hands the browser (the PoC's localhost resultsUrl, docs:
         development/local-k3s) -- ProgressReader.fetch must never be asked to
         resolve the public one itself."""
         bases = []
@@ -809,7 +809,7 @@ class TestVolumeProgress:
             return None
 
         cfg = SimpleNamespace(
-            public_results_base="http://localhost:30900/htr-results",
+            results_url="http://localhost:30900/htr-results",
             internal_results_base=(
                 "http://rustfs.htr-batch.svc.cluster.local:9000/htr-results"
             ),
@@ -819,7 +819,7 @@ class TestVolumeProgress:
         )
         assert bases and all(b.startswith(cfg.internal_results_base) for b in bases)
         # The browser-facing URLs are unaffected -- still the public base.
-        assert d["volumes"][0]["manifestUrl"].startswith(cfg.public_results_base)
+        assert d["volumes"][0]["manifestUrl"].startswith(cfg.results_url)
 
     def test_each_returned_row_carries_its_progress_or_null(self):
         fetch, _ = self._fetch({"vol0": _progress(done=3, total=4)})
@@ -1170,9 +1170,7 @@ def test_status_record_field_names_are_the_ones_apply_reads():
     job["metadata"]["uid"] = "uid-kyrk"
     row = projection.summarize(job, CFG, {"phase": "succeeded"})
     data = projection.status_record(row, job_uid="uid-kyrk")
-    theirs = render.status_configmap(
-        job, ConverterConfig(public_results_base=CFG.public_results_base)
-    )
+    theirs = render.status_configmap(job, ConverterConfig(results_url=CFG.results_url))
     assert theirs is not None
     assert data == theirs["data"]
     assert set(data) == STATUS_FIELDS

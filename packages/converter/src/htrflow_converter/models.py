@@ -1187,6 +1187,12 @@ _MOVED_TO_THE_CHART = {
     "require_model_revision": "security.requireModelRevision",
 }
 
+#: Settings renamed in converter.yaml -> their new name. Same reason as
+#: above: "is not a setting this file has" would hide the new name.
+_RENAMED = {
+    "public_results_base": "results_url",
+}
+
 
 class ConverterConfig(BaseModel):
     """``converter.yaml`` in the campaigns repo; unknown keys rejected."""
@@ -1198,6 +1204,7 @@ class ConverterConfig(BaseModel):
     def _reject_moved_settings(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
+        problems = []
         moved = [key for key in _MOVED_TO_THE_CHART if key in data]
         if moved:
             said = "; ".join(
@@ -1206,7 +1213,14 @@ class ConverterConfig(BaseModel):
                 for key in moved
             )
             it = "them" if len(moved) > 1 else "it"
-            raise ValueError(f"{said} — remove {it} from converter.yaml")
+            problems.append(f"{said} — remove {it} from converter.yaml")
+        problems += [
+            f"{old} is now {new} — rename the key in converter.yaml"
+            for old, new in _RENAMED.items()
+            if old in data
+        ]
+        if problems:
+            raise ValueError("; ".join(problems))
         return data
 
     namespace: str = "htr-batch"
@@ -1219,7 +1233,7 @@ class ConverterConfig(BaseModel):
     tolerations: list[Toleration] = Field(default_factory=list)
     #: Required: without it every campaign pod exits 13 on every volume,
     #: after its GPU wait (hard-coded audit B10).
-    public_results_base: str
+    results_url: str
     #: How a campaign's bare reference code becomes a manifest URL: ``{ref}``
     #: is the code. No archive's IIIF host is built in, so empty (the
     #: default) allows only ``manifest:`` and ``images:`` volumes.
@@ -1368,13 +1382,13 @@ class ConverterConfig(BaseModel):
                     )
         return self
 
-    @field_validator("public_results_base")
+    @field_validator("results_url")
     @classmethod
-    def _check_public_results_base(cls, v: str) -> str:
+    def _check_results_url(cls, v: str) -> str:
         if why := _unopenable(v) if _http_url(v) else "it is not an http(s) URL":
             raise ValueError(
                 "must be the URL browsers read the results bucket at, the "
-                f'chart\'s publicResultsBase (got "{_shown_url(v)}": {why}) — '
+                f'chart\'s resultsUrl (got "{_shown_url(v)}": {why}) — '
                 "write the whole URL, e.g. https://results.example.org/htr-results"
             )
         return v

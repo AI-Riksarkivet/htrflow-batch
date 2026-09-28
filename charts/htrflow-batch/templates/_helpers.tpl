@@ -13,6 +13,9 @@ NetworkPolicy away (audit O6). values.schema.json rejects the same shape,
 but only when the schema is evaluated; this fires from any template.
 */}}
 {{- define "htrflow-batch.validate" -}}
+{{- if hasKey .Values "publicResultsBase" }}
+{{- fail "publicResultsBase is now resultsUrl (chart 0.14.0): rename the key in your values; the value stays the same" }}
+{{- end }}
 {{- if not .Values.network }}
 {{- fail "`.Values.network` is missing: upgrade with --reset-then-reuse-values (or a full values file), never plain --reuse-values" }}
 {{- end }}

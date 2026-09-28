@@ -7,7 +7,7 @@ projects them, together with their `volumes.txt` ConfigMap and Pods, onto
 included, on everything else. It is the only source the browser reads: the
 Job's `completedIndexes` and `failedIndexes` are the progress, the Pod
 termination messages are the failure reasons, and every result link is built
-from the public results base; how far each volume has got is read from its
+from the results URL; how far each volume has got is read from its
 `progress.json` in the results bucket. Read-only but for one write: every call
 is a get or a list against Jobs, Pods and ConfigMaps, except the server-side
 apply of each campaign's status ConfigMap (`campaign-<name>-status`), which
@@ -32,7 +32,7 @@ this directory prunes the shared venv down to the root.
 ```bash
 make install                                    # uv sync --all-packages
 uv run --all-packages pytest -q packages/web    # this package's unit tests
-HTRFLOW_PUBLIC_RESULTS_BASE=https://results.example.org uv run htrflow-web   # :8081, uses your kubeconfig
+HTRFLOW_RESULTS_URL=https://results.example.org uv run htrflow-web   # :8081, uses your kubeconfig
 make build-web                                  # the image, .docker/htrflow-web.dockerfile
 make scan-web                                   # Trivy, HIGH/CRITICAL with a fix fail
 ```
@@ -125,7 +125,7 @@ last apply, frozen once the campaign has finished) are stamped by `apply`.
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `HTRFLOW_PUBLIC_RESULTS_BASE` | required | Browser-reachable base every result URL is built from |
+| `HTRFLOW_RESULTS_URL` | required | Browser-reachable base every result URL is built from |
 | `HTRFLOW_INTERNAL_RESULTS_BASE` | the public base | Where this pod reaches the results bucket to read progress files, when the browser's address does not work from inside the cluster (a `localhost` forward, say) |
 | `HTRFLOW_NAMESPACES` | own namespace in-cluster, else `htr-batch` | Comma-separated namespaces to list; the chart leaves it unset |
 | `HTRFLOW_WEB_STATIC` | `/app/static` | The built site. Missing directory = API only, which is what a local run gets |
@@ -135,13 +135,13 @@ last apply, frozen once the campaign has finished) are stamped by `apply`.
 All six are read in one place — `kube.Config`, a frozen pydantic model whose
 fields carry their own env name (`Field(alias=...)`), the same idiom the
 wrapper and the converter use. `app.py` and `__main__.py` read no environment
-of their own. The chart sets the first from `publicResultsBase` and the second
+of their own. The chart sets the first from `resultsUrl` and the second
 from `web.internalResultsBase`; `HTRFLOW_WEB_STATIC` empty means the directory
 the image bakes in.
 
 **Why the `HTRFLOW_` prefix here and bare names in the wrapper.** These are
 an operator's settings for a long-lived service, so they are namespaced. The
-wrapper's (`PUBLIC_RESULTS_BASE`, `S3_BUCKET`, …) are an in-pod contract
+wrapper's (`RESULTS_URL`, `S3_BUCKET`, …) are an in-pod contract
 written by the rendered Job itself
 (`packages/converter/src/htrflow_converter/manifests/campaign-job.yaml`),
 and renaming them would break every campaign Job in flight. Neither surface

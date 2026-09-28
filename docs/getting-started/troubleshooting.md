@@ -1,8 +1,8 @@
 # Troubleshooting
 
 Symptom first, then what to run, then the fix. `<namespace>` is the release
-namespace, `<campaign>` a campaign Job's name, `<results-base-url>` the
-release's `publicResultsBase`. Why each mechanism behaves as it does is in
+namespace, `<campaign>` a campaign Job's name, `<results-url>` the
+release's `resultsUrl`. Why each mechanism behaves as it does is in
 [How it Works](../how-it-works/architecture.md).
 
 ## Quick lookups
@@ -13,9 +13,9 @@ release's `publicResultsBase`. Why each mechanism behaves as it does is in
 | Which volume is on the GPU right now? | `kubectl -n <namespace> get pods -L batch.kubernetes.io/job-completion-index` |
 | How far has this campaign got? | `kubectl -n <namespace> get job <campaign> -o jsonpath='{.status.completedIndexes} {.status.failedIndexes}'` |
 | Why did an index fail? | `kubectl -n <namespace> get pods -l batch.kubernetes.io/job-name=<campaign> -o jsonpath='{.items[*].status.containerStatuses[*].state.terminated.message}'` |
-| …and the pod is already gone? | `curl <results-base-url>/status/logs/<pipeline>/<volume>.txt` |
-| How far is this volume right now? | `curl <results-base-url>/<namespace>/<pipeline>/<volume>/progress.json` |
-| Is this volume actually finished? | `curl -I <results-base-url>/<namespace>/<pipeline>/<volume>/manifest.json` (only `manifest.json` means done) |
+| …and the pod is already gone? | `curl <results-url>/status/logs/<pipeline>/<volume>.txt` |
+| How far is this volume right now? | `curl <results-url>/<namespace>/<pipeline>/<volume>/progress.json` |
+| Is this volume actually finished? | `curl -I <results-url>/<namespace>/<pipeline>/<volume>/manifest.json` (only `manifest.json` means done) |
 | Which image and models produced this ALTO? | Read the file: its `Processing ID="htrflow-batch"` block names them |
 
 ## The Quickstart stack
@@ -147,7 +147,7 @@ new pipeline id it starts at once.
 ## The campaign browser shows no progress for a running volume
 
 The read API reads each running volume's `progress.json` from the bucket
-itself. When `publicResultsBase` does not resolve from inside the cluster,
+itself. When `resultsUrl` does not resolve from inside the cluster,
 that read fails silently.
 
 **Check**: `curl` the volume's `progress.json` from your machine. If it
@@ -159,8 +159,8 @@ bucket ([View results](viewing.md#exposing-the-web-front)).
 ## Logs or ALTO views are refused
 
 The run viewer and `/alto` only read addresses under the chart's
-`publicResultsBase`. Runs published under a different base (a changed
-chart value, or a `converter.yaml` `public_results_base` that does not
+`resultsUrl`. Runs published under a different base (a changed
+chart value, or a `converter.yaml` `results_url` that does not
 match) are refused. Make the two equal
 ([View results](viewing.md#exposing-the-web-front)).
 

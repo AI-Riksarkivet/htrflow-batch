@@ -133,22 +133,22 @@ def _rendered(kind: str, name: str, *sets: str) -> dict:
 
 
 def test_the_results_base_reaches_both_of_its_consumers():
-    """One value under four names: `publicResultsBase` (chart) reaches the web
-    front as `HTRFLOW_PUBLIC_RESULTS_BASE` and the wrapper as
-    `PUBLIC_RESULTS_BASE`, which the converter fills from `converter.yaml`'s
-    `public_results_base`. Renaming any one of the four strands a consumer,
+    """One value under four names: `resultsUrl` (chart) reaches the web
+    front as `HTRFLOW_RESULTS_URL` and the wrapper as
+    `RESULTS_URL`, which the converter fills from `converter.yaml`'s
+    `results_url`. Renaming any one of the four strands a consumer,
     so both renders are read, not their source (test audit TA-infra-3)."""
     from htrflow_converter import render as render_objects
     from htrflow_converter.parse import load
 
     base = yaml.safe_load((CHART / "ci" / "default-values.yaml").read_text())[
-        "publicResultsBase"
+        "resultsUrl"
     ]
     fixture = ROOT / "packages" / "converter" / "tests" / "fixtures" / "good"
     campaigns, pipelines, cfg = load(
         fixture / "campaigns", fixture / "pipelines", fixture / "converter.yaml"
     )
-    cfg = cfg.model_copy(update={"public_results_base": base})
+    cfg = cfg.model_copy(update={"results_url": base})
     job = next(
         o
         for o in render_objects.campaign_objects(
@@ -160,13 +160,13 @@ def test_the_results_base_reaches_both_of_its_consumers():
         e["name"]: e.get("value")
         for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
     }
-    assert env["PUBLIC_RESULTS_BASE"] == base
+    assert env["RESULTS_URL"] == base
     web = _rendered("Deployment", "htrflow-web")
     web_env = {
         e["name"]: e.get("value")
         for e in web["spec"]["template"]["spec"]["containers"][0]["env"]
     }
-    assert web_env["HTRFLOW_PUBLIC_RESULTS_BASE"] == base
+    assert web_env["HTRFLOW_RESULTS_URL"] == base
 
 
 def test_security_names_only_keys_the_generator_emits():
@@ -702,7 +702,7 @@ def _job_env(job: dict) -> dict[str, str | None]:
 #: fixture uses, so a render with it shows where it lands.
 _CHANGED = {
     "namespace": "changed-ns",
-    "public_results_base": "https://changed.example.org/results",
+    "results_url": "https://changed.example.org/results",
     "manifest_max_bytes": 1234567,
     "fetch_max_bytes": 7654321,
     "id": "changed-v9",

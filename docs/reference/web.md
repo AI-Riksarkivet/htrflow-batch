@@ -53,7 +53,7 @@ Each row is a `JobSummary`:
 | `counts` | `total` (= `completions`), `active`, `done` (= completed indexes), `failed` (= failed indexes). |
 | `suspended` | The Job's `spec.suspend`. |
 | `createdAt`, `startedAt`, `finishedAt` | Timestamps; `finishedAt` is set once the campaign has ended. |
-| `resultsBase` | `<public results base>/<namespace>/<pipeline>`. |
+| `resultsBase` | `<results URL>/<namespace>/<pipeline>`. |
 | `warmup` | `{phase, reason?}` from the pipeline's warm-up Job: `missing`, `pending`, `running`, `succeeded` or `failed` (with a `reason`). |
 | `jobGone` | `true` for a campaign whose Job is past its TTL. The row comes from the campaign's two ConfigMaps. |
 | `qualityPrediction` | `true` when the campaign's `htr-pipeline-<id>` ConfigMap has a `QualityPrediction` step. `false` when it has none, or when that ConfigMap is gone or unreadable. |
@@ -85,7 +85,7 @@ Each volume row (`VolumeView`):
 | `state` | See [Phases](#phases-and-volume-states). |
 | `manifestUrl`, `iiifUrl`, `altoPrefix` | Result URLs under `resultsBase`. |
 | `sourceUrl` | The URL half of the `volumes.txt` line. `null` for an `images:` volume, or for a URL a browser could not open. |
-| `logUrl` | `<public results base>/status/logs/<pipeline>/<id>.txt`, always present. |
+| `logUrl` | `<results URL>/status/logs/<pipeline>/<id>.txt`, always present. |
 | `reason` | `{stage, permanent, error}` from a failed pod's termination message, while a pod for that index still exists. |
 | `progress` | From the volume's `progress.json` (below), or `null`. |
 
@@ -226,13 +226,13 @@ The page and component internals are in the
 
 The browser has no environment of its own. It reads `window.API_BASE` and
 `window.RESULTS_BASE` from `/config.js`, which the API writes from its own
-environment on each request: `/api/v1`, and `HTRFLOW_PUBLIC_RESULTS_BASE`.
-Set `publicResultsBase` on the chart and the page follows; there is no
+environment on each request: `/api/v1`, and `HTRFLOW_RESULTS_URL`.
+Set `resultsUrl` on the chart and the page follows; there is no
 second copy to keep in step.
 
 | API env var | Default | Meaning |
 |---|---|---|
-| `HTRFLOW_PUBLIC_RESULTS_BASE` | required | The browser-reachable base every result URL is built from. The chart sets it from `publicResultsBase`. |
+| `HTRFLOW_RESULTS_URL` | required | The browser-reachable base every result URL is built from. The chart sets it from `resultsUrl`. |
 | `HTRFLOW_INTERNAL_RESULTS_BASE` | the public base | Where the pod reads progress files, when the browser's address does not work from inside the cluster. Chart `web.internalResultsBase`. |
 | `HTRFLOW_NAMESPACES` | the pod's own namespace (`htr-batch` outside a cluster) | Comma-separated namespaces to list. |
 | `HTRFLOW_WEB_STATIC` | `/app/static` | The built site; missing means API only. |

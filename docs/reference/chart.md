@@ -25,7 +25,7 @@ generated table of every key is [Configuration](configuration.md). Source:
 |-----|---------|-------------|
 | `s3.existingSecret` | `htr-batch-s3` | The S3 Secret you create in the release namespace: key `credentials` (AWS ini), mounted as a file, plus `S3_BUCKET` (the bucket's name: the chart has no value for it) and optional `S3_ENDPOINT`. Must match `converter.yaml`'s `s3_secret` ([Deploy](../getting-started/deploy.md)) |
 | `hfToken.existingSecret` | `""` | The Hugging Face token Secret (key `token`) a warm-up may read, for a private or gated model. Must match `converter.yaml`'s `hf_token_secret`. Empty = none |
-| `publicResultsBase` | `""` | **Required.** The browser-reachable base of the results bucket. Must match `converter.yaml`'s `public_results_base` ([View Results](../getting-started/viewing.md)) |
+| `resultsUrl` | `""` | **Required.** The browser-reachable base of the results bucket. Must match `converter.yaml`'s `results_url` ([View Results](../getting-started/viewing.md)) |
 
 ## Model cache (`modelCache.*`)
 
@@ -79,7 +79,7 @@ egress rule. Always rendered. What it serves is in
 | `web.ingress.tlsSecretName` | `""` | TLS Secret for `web.ingress.host`, terminated at the Ingress; `""` = no `tls` block |
 | `web.ingress.annotations` | `{}` | Annotations on the Ingress, e.g. the controller's source-range allow-list (`nginx.ingress.kubernetes.io/whitelist-source-range`) |
 | `web.resources` | requests cpu 50m / 128Mi, limits cpu 500m / 256Mi | |
-| `web.internalResultsBase` | `""` | Where this pod reaches the bucket to read progress. Empty = `publicResultsBase`. Set it when that address does not work from inside the cluster, or the page shows no progress ([View Results](../getting-started/viewing.md)) |
+| `web.internalResultsBase` | `""` | Where this pod reaches the bucket to read progress. Empty = `resultsUrl`. Set it when that address does not work from inside the cluster, or the page shows no progress ([View Results](../getting-started/viewing.md)) |
 
 Its security headers and `/config.js` are described in
 [Web front & read API](web.md#content-security-policy).

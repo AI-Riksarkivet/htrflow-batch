@@ -312,6 +312,22 @@ def test_both_moved_policy_keys_left_in_converter_yaml_are_one_problem(tmp_path)
     ]
 
 
+def test_the_old_results_base_key_names_its_new_name(tmp_path):
+    """public_results_base was renamed to results_url. `extra="forbid"`
+    would call it a spelling mistake and leave its author guessing the new
+    name; the problem names it instead."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    cfg = root / "converter.yaml"
+    cfg.write_text(cfg.read_text().replace("results_url:", "public_results_base:"))
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert exc_info.value.problems == [
+        "converter.yaml: public_results_base is now results_url — rename "
+        "the key in converter.yaml"
+    ]
+
+
 def test_a_stale_pipeline_model_revision_is_one_line(tmp_path):
     """Fix round 2 #4: `Pipeline.model_revision` was deleted (nothing read
     it — B63 Task 22 moved the revision rule to Kyverno's own field path).
@@ -453,8 +469,8 @@ def test_hf_token_secret_must_be_a_secret_name(tmp_path):
     ), exc_info.value.problems
 
 
-def test_public_results_base_is_required(tmp_path):
-    """Every campaign pod gets it as PUBLIC_RESULTS_BASE and exits 13 on
+def test_results_url_is_required(tmp_path):
+    """Every campaign pod gets it as RESULTS_URL and exits 13 on
     every volume without it, after its GPU wait (hard-coded audit B10) --
     so a converter.yaml that leaves it out is refused before any render."""
     root = tmp_path / "repo"
@@ -464,12 +480,12 @@ def test_public_results_base_is_required(tmp_path):
         "".join(
             line
             for line in cfg.read_text().splitlines(keepends=True)
-            if not line.startswith("public_results_base:")
+            if not line.startswith("results_url:")
         )
     )
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
-    assert 'converter.yaml: "public_results_base" is missing' in "\n".join(
+    assert 'converter.yaml: "results_url" is missing' in "\n".join(
         exc_info.value.problems
     )
 
@@ -477,25 +493,25 @@ def test_public_results_base_is_required(tmp_path):
 @pytest.mark.parametrize(
     "base", ['""', "results.example.org/htr-results", "s3://htr-results", "https://"]
 )
-def test_public_results_base_must_be_an_http_url(tmp_path, base):
+def test_results_url_must_be_an_http_url(tmp_path, base):
     """A browser follows it: anything but an http(s) URL with a host gives
     every result link and viewer a dead address (hard-coded audit B10)."""
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
-    _setting(root / "converter.yaml", f"public_results_base: {base}")
+    _setting(root / "converter.yaml", f"results_url: {base}")
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     assert any(
-        'converter.yaml: "public_results_base"' in p and "http" in p
+        'converter.yaml: "results_url"' in p and "http" in p
         for p in exc_info.value.problems
     ), exc_info.value.problems
 
 
-def test_public_results_base_takes_an_http_url(tmp_path):
+def test_results_url_takes_an_http_url(tmp_path):
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
-    _setting(root / "converter.yaml", "public_results_base: http://localhost:30900/r")
-    assert _load(root)[2].public_results_base == "http://localhost:30900/r"
+    _setting(root / "converter.yaml", "results_url: http://localhost:30900/r")
+    assert _load(root)[2].results_url == "http://localhost:30900/r"
 
 
 @pytest.mark.parametrize(

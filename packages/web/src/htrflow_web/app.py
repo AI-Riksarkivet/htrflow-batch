@@ -411,11 +411,11 @@ def create_app(
         environment rather than read off a file in the image (2026-09-14
         audit). `RESULTS_BASE` is what the run-log route checks its `?log=`
         and `?manifest=` against, and a copy of it that an operator had to
-        keep in step with HTRFLOW_PUBLIC_RESULTS_BASE would be wrong exactly
+        keep in step with HTRFLOW_RESULTS_URL would be wrong exactly
         when it mattered. Site-only mode has no cfg and says so with an
         empty base. The API is always same-origin: this file is served by
         the service that answers /api/v1."""
-        base = getattr(reader.cfg, "public_results_base", "") or ""
+        base = getattr(reader.cfg, "results_url", "") or ""
         return Response(
             CONFIG_JS.format(results_base=json.dumps(base)),
             media_type="text/javascript",
@@ -716,7 +716,7 @@ def create_app(
             directory=static,
             html=True,
             viewer_csp=viewer_csp,
-            page_csp=spa_csp(getattr(reader.cfg, "public_results_base", "") or ""),
+            page_csp=spa_csp(getattr(reader.cfg, "results_url", "") or ""),
         )
         app.mount("/", site, name="site")
 
