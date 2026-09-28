@@ -938,7 +938,7 @@ wrapper-image = [
 
 [[package]]
 name = "htrflow-batch-wrapper"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "packages/wrapper" }
 dependencies = [
     { name = "boto3" },
@@ -963,7 +963,7 @@ requires-dist = [
 
 [[package]]
 name = "htrflow-converter"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "packages/converter" }
 dependencies = [
     { name = "kubernetes" },
@@ -987,7 +987,7 @@ provides-extras = ["hook"]
 
 [[package]]
 name = "htrflow-web"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "packages/web" }
 dependencies = [
     { name = "fastapi" },
