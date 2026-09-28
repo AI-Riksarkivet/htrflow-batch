@@ -209,7 +209,7 @@ value keys **as they were at that version** — `api.*`, `viewer.*`,
 here would make the upgrade notes wrong for anyone actually on that
 version.
 
-### 0.13.0 — unreleased (deployment audit fixes)
+### 0.13.0 — 2026-09-28 (v0.6.0: deployment audit fixes, image cache)
 
 **Breaking at render time for the production profile, on purpose** — see
 *From 0.12.0 to 0.13.0* above.
@@ -249,6 +249,10 @@ Changed:
 - **`values-prod.yaml`**: `allowedImageRepos` names the three published
   repositories instead of the organisation; the network lists are emptied
   and required; `network.s3InNamespace: false`.
+- **`job-shape`** admits `IMAGE_CACHE_BUCKET` on a campaign Job (never on a
+  warm-up Job): the converter renders it when `converter.yaml` sets
+  `image_cache`, and a Job without it is admitted as before.
+- **`web.image`** is the v0.6.0 web image.
 
 ### 0.12.0 — 2026-09-22 (v0.5.0)
 
