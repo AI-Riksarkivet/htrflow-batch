@@ -57,14 +57,14 @@ PAIRS |= dict([FLAVORS_PAIR, (("chart", "queue.flavors"), "converter `flavors`")
 
 #: The results base: one value, four names, three consumers.
 RESULTS_BASE = {
-    "chart": "publicResultsBase",
-    "converter": "public_results_base",
-    "web": "HTRFLOW_PUBLIC_RESULTS_BASE",
-    "wrapper": "PUBLIC_RESULTS_BASE",
+    "chart": "resultsUrl",
+    "converter": "results_url",
+    "web": "HTRFLOW_RESULTS_URL",
+    "wrapper": "RESULTS_URL",
 }
 
 #: What a key exposes — who enforces it. Unnamed keys get the honest default.
-NONE, PUBLIC = "no secret — nobody", "the public-read results base — nobody"
+NONE, PUBLIC = "no secret — nobody", "the results URL — nobody"
 SECURITY = {
     "S3_BUCKET": "from the S3 Secret (`secretKeyRef`) — cluster",
     "S3_ENDPOINT": "from the S3 Secret (`secretKeyRef`) — cluster",
@@ -77,7 +77,7 @@ SECURITY = {
     "s3.existingSecret": "names that Secret; no template creates it — nobody",
     "hfToken.existingSecret": "the one Secret a warm-up may read (job-shape) — cluster",
     "security.jobImageRepos": "what a campaign or warm-up Job may run — cluster",
-    "publicResultsBase": "the public-read results base; `required` — render",
+    "resultsUrl": "the results URL; `required` — render",
     "web.image": "digest-pinned unless `security.allowTagImages` — render",
     "security.allowTagImages": "opens that digest gate — render",
     "security.psaEnforce": "Pod Security Admission label — cluster",
@@ -93,8 +93,8 @@ SECURITY = {
 #: like SECURITY, rather than as a Field kwarg: it costs nothing against
 #: packages/web's LOC budget here.
 WEB_DEFAULT_DOC = {
-    "HTRFLOW_PUBLIC_RESULTS_BASE": "required unless `HTRFLOW_WEB_SITE_ONLY`",
-    "HTRFLOW_INTERNAL_RESULTS_BASE": "`HTRFLOW_PUBLIC_RESULTS_BASE`",
+    "HTRFLOW_RESULTS_URL": "required unless `HTRFLOW_WEB_SITE_ONLY`",
+    "HTRFLOW_INTERNAL_RESULTS_BASE": "`HTRFLOW_RESULTS_URL`",
     "HTRFLOW_NAMESPACES": "the pod's own namespace, else `htr-batch`",
     "HTRFLOW_WEB_STATIC": "`/app/static`",
 }
@@ -120,7 +120,7 @@ FREE_ENV = {
     "PIPELINE_ID": ("pipeline", "id"),
     "IMAGE_DIGEST": ("pipeline", "image"),
     "S3_PREFIX": ("converter", "namespace"),
-    "PUBLIC_RESULTS_BASE": ("converter", "public_results_base"),
+    "RESULTS_URL": ("converter", "results_url"),
     "MANIFEST_MAX_BYTES": ("converter", "manifest_max_bytes"),
     "FETCH_MAX_BYTES": ("converter", "fetch_max_bytes"),
     "BACKOFF_LIMIT_PER_INDEX": ("fixed", "the Job's `backoffLimitPerIndex`"),

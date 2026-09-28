@@ -226,7 +226,7 @@ came out:
 - **Search service.** A stub `SearchService1` entry, because the viewer
   shows the text panel only when one is present.
 
-Publishing `iiif.json` needs `PUBLIC_RESULTS_BASE`, the browser-reachable URL
+Publishing `iiif.json` needs `RESULTS_URL`, the browser-reachable URL
 base, which is not the in-cluster S3 endpoint. The viewer manifest is written
 after verify, under the same `<pipeline-id>/<volume-ref>/` prefix, and
 during the run every tenth page ([From image to transcription](page-flow.md)).

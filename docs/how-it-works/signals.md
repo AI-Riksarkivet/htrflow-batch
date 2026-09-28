@@ -116,7 +116,7 @@ or set `LOG_SHIP_SECONDS=0`.
 
 - **`logUrl`.** `GET /api/v1/jobs/{namespace}/{name}` returns a
   deterministic, **absolute** `logUrl`,
-  `<results-base-url>/status/logs/<pipeline>/<volume>.txt`, for every volume
+  `<results-url>/status/logs/<pipeline>/<volume>.txt`, for every volume
   row regardless of state. There is no existence check and nothing is cached.
   The URL is absolute because the browser has no bucket base URL of its own:
   the API is the component that knows the results base. The browser fetches

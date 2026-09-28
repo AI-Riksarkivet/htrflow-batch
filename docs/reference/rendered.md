@@ -4,7 +4,7 @@ This page runs `htrflow-campaigns render` on a small two-volume campaign and
 walks through the output field by field. The blocks are abridged from a
 real render (the full objects are the converter's golden files,
 `packages/converter/tests/golden/`). Three kinds of value are replaced with
-placeholders: the image digest, the manifest URL and the results base.
+placeholders: the image digest, the manifest URL and the results URL.
 `<label-domain>` stands for the converter's label domain
 (`_MANAGED_BY_LABEL` in `render.py`).
 
@@ -58,7 +58,7 @@ These values from `converter.yaml` show up below:
 - `s3_secret: htr-batch-s3`
 - `data_pvc: htr-test-data`
 - `runtime_class: nvidia`
-- `public_results_base: <results-base-url>`
+- `results_url: <results-url>`
 
 It sets nothing else, so the rest are the defaults:
 
@@ -187,8 +187,8 @@ spec:
           value: demo-v1
         - name: S3_PREFIX
           value: htr-batch/
-        - name: PUBLIC_RESULTS_BASE
-          value: <results-base-url>
+        - name: RESULTS_URL
+          value: <results-url>
         - name: IMAGE_DIGEST
           value: <registry>/htrflow-batch@sha256:<digest>
         - name: HF_HUB_OFFLINE

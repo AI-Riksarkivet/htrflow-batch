@@ -24,7 +24,7 @@ the same.
 [`examples/campaigns/`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/examples/campaigns):
 
 ```
-converter.yaml                 # where campaigns run: namespace, queue, S3 secret, results base
+converter.yaml                 # where campaigns run: namespace, queue, S3 secret, results URL
 campaigns/demo.yaml            # a campaign: a pipeline and a list of volumes
 pipelines/demo-v1.yaml         # a pipeline: the wrapper image by digest, and htrflow's steps
 .github/workflows/render.yml   # CI: validate and policy-check on PR, render on main
@@ -39,8 +39,8 @@ credentials, so guard it like that
 
 ## 2. Point it at your install
 
-In `converter.yaml`, set `public_results_base` to the chart's
-`publicResultsBase`. `namespace`, `queue`, `s3_secret` and `data_pvc` must
+In `converter.yaml`, set `results_url` to the chart's
+`resultsUrl`. `namespace`, `queue`, `s3_secret` and `data_pvc` must
 name what the chart created; the defaults match the chart's defaults
 ([Deploy → Check it](deploy.md#5-check-it)).
 
