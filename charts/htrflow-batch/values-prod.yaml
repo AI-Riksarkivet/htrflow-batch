@@ -7,7 +7,7 @@
 # installation enforces it" was the whole of it.
 #
 # This file is only the switches. What it deliberately does NOT set is
-# everything one cluster cannot know for another — `publicResultsBase`,
+# everything one cluster cannot know for another — `resultsUrl`,
 # `network.apiServer.cidr`, `network.clusterCidrs`, `network.iiifCidrs`,
 # `network.s3Cidrs` and who may reach the web front — and it empties the
 # network lists values.yaml fills with one distribution's defaults. A render

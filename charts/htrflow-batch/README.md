@@ -76,6 +76,20 @@ ConfigMap the nginx viewer mounted, is describing the version it names — `api.
 here would make the upgrade notes wrong for anyone actually on that
 version.
 
+### From 0.13.0 to 0.14.0 — one renamed key
+
+**`publicResultsBase` is now `resultsUrl`**, with the same meaning and the
+same value: the URL browsers read the results bucket at. The converter's
+`public_results_base` is now `results_url`, and the env vars the chart and
+the converter render are `HTRFLOW_RESULTS_URL` (web front) and
+`RESULTS_URL` (campaign pods).
+
+| Change | What to do |
+|---|---|
+| **`publicResultsBase` is refused**, in a message that names `resultsUrl`. | Rename the key in your values file (or `--set resultsUrl=…`); keep the value. |
+| **`job-shape` admits `RESULTS_URL`, not `PUBLIC_RESULTS_BASE`**, on a campaign Job. A campaigns repo still on the previous converter renders the old name, and its apply is refused. | Upgrade the chart first. In the same window, in every campaigns repo: bump the hook image and `CONVERTER_REF`, rename `public_results_base` to `results_url` in `converter.yaml` (the new converter refuses the old key by name), and pin the new wrapper image in `pipelines/*.yaml` — a previous wrapper reads only `PUBLIC_RESULTS_BASE` and exits at start. |
+| **Published results are unaffected.** The value is what every published manifest was built from, and it does not change. | Nothing. |
+
 ### From 0.12.0 to 0.13.0 — what can stop an upgrade
 
 **Chart and converter versions.** The `job-shape` policy compares a
@@ -196,8 +210,8 @@ namespace, never a ClusterRole. It is the one pod in this chart with
 controller named by `network.web.ingressFrom` instead) and lets it out to DNS, the apiserver and the
 results bucket. The pod also **serves `/config.js` itself**, written from its
 own environment: `window.API_BASE = "/api/v1"` (same-origin, no proxy) and
-`window.RESULTS_BASE` from `publicResultsBase`. There is nothing for an
-operator to overwrite — set `publicResultsBase` and the campaign browser
+`window.RESULTS_BASE` from `resultsUrl`. There is nothing for an
+operator to overwrite — set `resultsUrl` and the campaign browser
 follows.
 
 ## Changelog
@@ -208,6 +222,17 @@ value keys **as they were at that version** — `api.*`, `viewer.*`,
 `htrflow-web` / `templates/web.yaml` they became in 0.4.0. Renaming them
 here would make the upgrade notes wrong for anyone actually on that
 version.
+
+### 0.14.0 — unreleased (resultsUrl)
+
+**Breaking, on purpose** — see *From 0.13.0 to 0.14.0* above.
+
+Changed:
+- **`publicResultsBase`** is renamed **`resultsUrl`**; the old key is
+  refused in words that name the new one. The web front's env var is
+  **`HTRFLOW_RESULTS_URL`**.
+- **`job-shape`** admits **`RESULTS_URL`** on a campaign Job in place of
+  `PUBLIC_RESULTS_BASE`.
 
 ### 0.13.0 — 2026-09-28 (v0.6.0: deployment audit fixes, image cache)
 

@@ -56,9 +56,9 @@ All of it lives in [`src/lib/config.ts`](src/lib/config.ts).
 `/config.js` is **served by the read API**, not read out of a file: the same
 process that answers `/api/v1` writes it from its own environment
 (`packages/web`, `CONFIG_JS`), so `window.RESULTS_BASE` is always the
-`HTRFLOW_PUBLIC_RESULTS_BASE` the API builds its result URLs from and cannot
+`HTRFLOW_RESULTS_URL` the API builds its result URLs from and cannot
 drift from it. There is nothing for a deployment to overwrite: set
-`publicResultsBase` on the chart and the page follows. `static/config.js` is
+`resultsUrl` on the chart and the page follows. `static/config.js` is
 the same file for a `bun run dev`, which has no service to ask; it ships an
 empty `RESULTS_BASE`, which the run-log route reads as "nobody said" and
 falls back to accepting any absolute http(s) URL.

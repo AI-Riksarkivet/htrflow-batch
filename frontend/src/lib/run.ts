@@ -30,7 +30,7 @@ export const runManifestSchema = z
     // Newer wrappers: the image each page was fetched from; older runs have
     // none.
     page_sources: z.record(z.string(), z.string()).optional(),
-    // publish.py: "<public_results_base>/<volume>/iiif.json" — the ALTO
+    // publish.py: "<results_url>/<volume>/iiif.json" — the ALTO
     // viewer derives each page's ALTO URL from it (altoUrl). Absent on a
     // volume whose ALTO would not parse (build_viewer_manifest skipped).
     viewer_url: z.string().optional(),

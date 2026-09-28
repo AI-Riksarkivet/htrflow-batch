@@ -58,7 +58,7 @@ def _sha256(body: str) -> str:
 
 
 class EmptyReader:
-    cfg = SimpleNamespace(public_results_base="https://results.example.org")
+    cfg = SimpleNamespace(results_url="https://results.example.org")
 
     def list_jobs(self) -> list[dict]:
         return []
@@ -395,7 +395,7 @@ def test_the_spas_pages_may_fetch_only_the_api_and_the_results_bucket(
 )
 def test_the_results_base_is_one_well_formed_source(static_dir, base, source):
     reader = EmptyReader()
-    reader.cfg = SimpleNamespace(public_results_base=base)
+    reader.cfg = SimpleNamespace(results_url=base)
     client = TestClient(create_app(reader, static_dir=static_dir))
     csp = client.get("/log").headers["Content-Security-Policy"]
     assert csp == f"frame-ancestors 'none'; connect-src 'self' {source}"
@@ -418,7 +418,7 @@ def test_a_results_base_no_csp_source_can_name_does_not_narrow_the_spa(
     browser drops a source it cannot parse -- leaving `'self'` alone, and
     every result the page reads blocked. The page is left un-narrowed."""
     reader = EmptyReader()
-    reader.cfg = SimpleNamespace(public_results_base=base)
+    reader.cfg = SimpleNamespace(results_url=base)
     client = TestClient(create_app(reader, static_dir=static_dir))
     assert client.get("/log").headers["Content-Security-Policy"] == (
         "frame-ancestors 'none'"
