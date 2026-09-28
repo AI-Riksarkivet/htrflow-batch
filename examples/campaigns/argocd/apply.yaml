@@ -34,7 +34,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       initContainers:
         - name: clone
-          image: docker.io/riksarkivet/htrflow-campaigns@sha256:6aba67eb6796cebed0540125682ff52278920bed9a07b5b0630b88615ca2a12a  # v0.6.0
+          image: docker.io/riksarkivet/htrflow-campaigns:v0.7.0
           command: ["/app/.venv/bin/python", "-c"]
           args:
             - |
@@ -70,7 +70,7 @@ spec:
         # rendered/ is not its own render, and the apply never starts; CI's
         # render commit for that push starts the next sync.
         - name: check
-          image: docker.io/riksarkivet/htrflow-campaigns@sha256:6aba67eb6796cebed0540125682ff52278920bed9a07b5b0630b88615ca2a12a  # v0.6.0
+          image: docker.io/riksarkivet/htrflow-campaigns:v0.7.0
           args: ["validate", "--rendered", "/repo"]
           env:
             - {name: HOME, value: /tmp}
@@ -81,7 +81,7 @@ spec:
           resources: *small
       containers:
         - name: apply
-          image: docker.io/riksarkivet/htrflow-campaigns@sha256:6aba67eb6796cebed0540125682ff52278920bed9a07b5b0630b88615ca2a12a  # v0.6.0
+          image: docker.io/riksarkivet/htrflow-campaigns:v0.7.0
           args: ["apply", "--prune", "--namespace", "$(POD_NAMESPACE)", "/repo"]
           env:
             - {name: HOME, value: /tmp}
