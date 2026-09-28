@@ -3,7 +3,7 @@ name: htrflow-devstack
 description: PoC-only in-cluster support infrastructure for charts/htrflow-batch — RustFS (S3), an image registry and the NVIDIA device plugin. Not for production; every component is off by default.
 type: application
 # Bump on every template/values change.
-version: 0.3.0
+version: 0.4.0
 appVersion: "0.1.0"
 annotations:
   artifacthub.io/license: EUPL-1.2

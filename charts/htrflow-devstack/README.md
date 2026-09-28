@@ -154,6 +154,14 @@ kubectl -n kube-system label daemonset nvidia-device-plugin app.kubernetes.io/ma
 Everything below this line is history: each entry names the objects and
 value keys as they were at that version.
 
+### 0.4.0 — 2026-09-28 (v0.6.0: an optional image cache bucket)
+
+Added, not breaking: **`s3.imageCacheBucket`** (empty by default: none)
+names a second bucket for the converter's `image_cache.bucket`. The
+`rustfs-init` hook creates it the same idempotent way as `s3.bucket`, but
+with no bucket policy or CORS: the image cache is never public. Left empty,
+the chart renders as 0.3.0.
+
 ### 0.3.0 — 2026-09-04 (B63 Task 12: the bucket policy names only live keys)
 
 Changed, not breaking: `htrflow-devstack.bucketPolicy` no longer excludes
