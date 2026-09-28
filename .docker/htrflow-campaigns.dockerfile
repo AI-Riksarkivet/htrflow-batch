@@ -2,7 +2,7 @@
 # (docs: reference/campaign-yaml.md, "With Argo CD"). Distroless like the web
 # image: no shell, no package manager; the hook's clone uses dulwich from the
 # same venv, so there is no git binary either.
-FROM debian:13-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS venv
+FROM debian:13-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a AS venv
 RUN apt-get update && apt-get install -y --no-install-recommends python3.13 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=ghcr.io/astral-sh/uv:0.12.6@sha256:88bc6eb1ccd4b82efd0e1b530caffabddf50dc2bf612e66c14ea25b8ee8a4d3d /uv /bin/uv
