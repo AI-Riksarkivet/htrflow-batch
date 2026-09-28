@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"dagger/htrflow-batch/internal/dagger"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -27,6 +28,14 @@ var publishedRepos = map[string]string{
 	"campaigns": DefaultRegistry + "/" + DefaultCampaignsRepo,
 }
 
+// errUnpublished is a file naming its image by a version tag and pinning no
+// digest: the window between the version bump and the release commit
+// (docs/development/releasing.md), when the hook already runs the new
+// release's converter by its tag and no digest of that release exists yet.
+// There is nothing published to check for that image until the release
+// commit pins it, and the checks below say so instead of failing.
+var errUnpublished = errors.New("named by its release tag, no digest pinned yet")
+
 // publishedImage is the one digest-pinned reference to an image's
 // repository in the file that pins it. More than one distinct digest is an
 // error, not a choice: a half-applied release pin would otherwise be
@@ -50,6 +59,10 @@ func publishedImage(ctx context.Context, source *dagger.Directory, image string)
 		refs = append(refs, ref)
 	}
 	sort.Strings(refs)
+	tagged := regexp.MustCompile(regexp.QuoteMeta(publishedRepos[image]) + `:v[0-9]+\.[0-9]+\.[0-9]+\b`)
+	if len(refs) == 0 && tagged.MatchString(text) {
+		return "", fmt.Errorf("%s: %s %w", path, tagged.FindString(text), errUnpublished)
+	}
 	if len(refs) != 1 {
 		return "", fmt.Errorf("%s pins %d digests of %s, want exactly one: %v", path, len(refs), publishedRepos[image], refs)
 	}
@@ -87,6 +100,9 @@ func (m *HtrflowBatch) ScanPublished(
 	caBundle *dagger.File,
 ) (string, error) {
 	ref, err := publishedImage(ctx, source, image)
+	if errors.Is(err, errUnpublished) {
+		return fmt.Sprintf("not scanned: %v\n", err), nil
+	}
 	if err != nil {
 		return "", err
 	}
@@ -126,14 +142,23 @@ func (m *HtrflowBatch) VerifyPublished(
 	// +optional
 	caBundle *dagger.File,
 ) (string, error) {
-	var pods strings.Builder
+	var pods, skipped strings.Builder
+	pinned := 0
 	for _, image := range []string{"web", "wrapper", "campaigns"} {
 		ref, err := publishedImage(ctx, source, image)
+		if errors.Is(err, errUnpublished) {
+			fmt.Fprintf(&skipped, "not verified: %v\n", err)
+			continue
+		}
 		if err != nil {
 			return "", err
 		}
+		pinned++
 		fmt.Fprintf(&pods, "---\napiVersion: v1\nkind: Pod\nmetadata: {name: %s, namespace: htr-batch}\n"+
 			"spec: {containers: [{name: main, image: %q}]}\n", image, ref)
+	}
+	if pinned == 0 {
+		return skipped.String(), nil
 	}
 	container := dag.Container().
 		From(helmImage).
@@ -141,15 +166,16 @@ func (m *HtrflowBatch) VerifyPublished(
 		WithDirectory("/chart", source.Directory("charts/htrflow-batch")).
 		WithNewFile("/pods.yaml", pods.String())
 	container = m.withCaBundle(container, caBundle)
-	// A pass per image and no failure: `kyverno apply` exits non-zero on a
-	// failed rule, and the count guards against a policy that matched
+	// A pass per pinned image and no failure: `kyverno apply` exits non-zero
+	// on a failed rule, and the count guards against a policy that matched
 	// nothing (a Pod outside its namespace, say) reading as a pass.
-	return container.
-		WithExec([]string{"sh", "-c", `set -eu
+	out, err := container.
+		WithExec([]string{"sh", "-c", fmt.Sprintf(`set -eu
 helm template htr /chart -n htr-batch -f /chart/values-prod.yaml \
   --set publicResultsBase=https://ci.invalid/ --set network.enabled=false \
   --show-only templates/policies/verify-images.yaml > /policy.yaml
 kyverno apply /policy.yaml --resource /pods.yaml --remove-color | tee /out.txt
-grep -Eq 'pass: ([3-9]|[1-9][0-9]+), fail: 0, warn: 0, error: 0' /out.txt`}).
+grep -Eq 'pass: ([%d-9]|[1-9][0-9]+), fail: 0, warn: 0, error: 0' /out.txt`, pinned)}).
 		Stdout(ctx)
+	return skipped.String() + out, err
 }
