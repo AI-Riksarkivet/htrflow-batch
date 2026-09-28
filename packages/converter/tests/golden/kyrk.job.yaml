@@ -71,7 +71,7 @@ spec:
           value: demo-v1
         - name: S3_PREFIX
           value: htr-test/
-        - name: PUBLIC_RESULTS_BASE
+        - name: RESULTS_URL
           value: https://results.example.org
         - name: IMAGE_DIGEST
           value: ghcr.io/riksarkivet/htrflow-batch@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

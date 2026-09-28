@@ -111,7 +111,7 @@ spec:
           value: PIPELINE
         - name: S3_PREFIX
           value: ""
-        - name: PUBLIC_RESULTS_BASE
+        - name: RESULTS_URL
           value: ""
         - name: IMAGE_DIGEST
           value: IMAGE

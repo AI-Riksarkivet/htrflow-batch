@@ -343,7 +343,7 @@ def _campaign_job(
     dynamic_env = {
         "PIPELINE_ID": p.id,
         "S3_PREFIX": f"{cfg.namespace}/",
-        "PUBLIC_RESULTS_BASE": cfg.public_results_base,
+        "RESULTS_URL": cfg.results_url,
         "IMAGE_DIGEST": p.image,
         "MANIFEST_MAX_BYTES": str(cfg.manifest_max_bytes),
         "FETCH_MAX_BYTES": str(cfg.fetch_max_bytes),
@@ -526,7 +526,7 @@ def status_configmap(live: dict, cfg: ConverterConfig) -> dict | None:
         ),
         None,
     )
-    base = cfg.public_results_base
+    base = cfg.results_url
     cm = _load("configmap.yaml")
     _set(cm, "metadata.name", f"campaign-{meta.get('name', '')}{STATUS_SUFFIX}")
     _set(cm, "metadata.namespace", namespace)

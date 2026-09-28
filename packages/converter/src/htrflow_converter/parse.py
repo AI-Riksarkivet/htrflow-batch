@@ -118,8 +118,8 @@ def _not_a_mapping(rel: str, what: str) -> str:
 
 #: The config campaigns are still checked against when converter.yaml did
 #: not load (its problem is listed, nothing renders) or is not there (the CLI
-#: refuses that first). Unvalidated: ``public_results_base`` has no default.
-_UNLOADED = ConverterConfig.model_construct(public_results_base="")
+#: refuses that first). Unvalidated: ``results_url`` has no default.
+_UNLOADED = ConverterConfig.model_construct(results_url="")
 
 
 def _load_config(path: Path, problems: list[str]) -> tuple[ConverterConfig, str | None]:
