@@ -303,6 +303,11 @@ def _main(
         state.stage = "config"
         cfg = Config.from_env(env)
         state.stage = "setup"
+        if not cfg.s3_verify_tls:
+            log.warning(
+                "S3_VERIFY_TLS=false: the certificate of %s is not checked",
+                cfg.s3_endpoint or "the default S3 endpoint",
+            )
         store = ResultStore(cfg)
         capture.start_shipping(store.put_run_log, cfg.log_ship_seconds)
         # From here on every stage change and every page outcome is published

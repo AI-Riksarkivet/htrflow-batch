@@ -112,6 +112,19 @@ def test_s3_endpoint_optional():
     assert cfg.s3_endpoint == ""
 
 
+def test_s3_tls_verified_unless_the_secret_says_false():
+    """S3_VERIFY_TLS is an optional key of the S3 Secret, beside
+    S3_ENDPOINT: absent, the S3 certificate is verified."""
+    assert Config.from_env(REQUIRED).s3_verify_tls is True
+    cfg = Config.from_env(dict(REQUIRED, S3_VERIFY_TLS="false"))
+    assert cfg.s3_verify_tls is False
+
+
+def test_s3_verify_tls_takes_only_a_boolean():
+    with pytest.raises(ValueError):
+        Config.from_env(dict(REQUIRED, S3_VERIFY_TLS="maybe"))
+
+
 def test_byte_caps_default_and_override():
     cfg = Config.from_env(REQUIRED)
     assert cfg.manifest_max_bytes == 16777216
