@@ -352,3 +352,28 @@ def test_upload_of_an_unscored_page_records_no_score(cfg, s3, tmp_path):
     page.write_text("<PcGts/>")
     store.upload_page("0001", {"alto": alto, "page": page})
     assert store.page_quality == {}
+
+
+def test_the_s3_clients_verify_tls_by_default(cfg, monkeypatch):
+    seen = []
+    real = __import__("boto3").client
+    monkeypatch.setattr(
+        "htrflow_batch.store.boto3.client",
+        lambda *a, **kw: seen.append(kw.get("verify")) or real(*a, **kw),
+    )
+    ResultStore(cfg)
+    assert seen and all(v is None for v in seen)
+
+
+def test_s3_verify_tls_false_skips_the_check_on_every_s3_client(cfg, monkeypatch):
+    """The results client and the run-log client both go to the same
+    endpoint, so both skip the check; nothing else is affected (page images
+    are fetched with httpx, not these clients)."""
+    seen = []
+    real = __import__("boto3").client
+    monkeypatch.setattr(
+        "htrflow_batch.store.boto3.client",
+        lambda *a, **kw: seen.append(kw.get("verify")) or real(*a, **kw),
+    )
+    ResultStore(cfg.model_copy(update={"s3_verify_tls": False}))
+    assert len(seen) == 2 and all(v is False for v in seen)
