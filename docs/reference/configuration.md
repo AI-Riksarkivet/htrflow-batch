@@ -88,6 +88,7 @@ Each key is an environment variable of the container.
 | `PIPELINE_PATH` | the converter, fixed: `/config/pipeline.yaml` | **required** | — | no secret — nobody |
 | `PIPELINE_ID` | the pipeline file's `id` | **required** | — | no secret — nobody |
 | `S3_ENDPOINT` | the S3 Secret (`s3_secret`), its `S3_ENDPOINT` key | *(empty)* | — | from the S3 Secret (`secretKeyRef`) — cluster |
+| `S3_VERIFY_TLS` | the S3 Secret (`s3_secret`), its `S3_VERIFY_TLS` key | `true` | — | `false` skips the S3 certificate check, so the pod would send the bucket's credentials to whatever answers at `S3_ENDPOINT`; set by whoever writes the S3 Secret — cluster |
 | `S3_BUCKET` | the S3 Secret (`s3_secret`), its `S3_BUCKET` key | **required** | — | from the S3 Secret (`secretKeyRef`) — cluster |
 | `RESULTS_URL` | `converter.yaml` `results_url` | **required** | chart `resultsUrl`, converter `results_url`, web `HTRFLOW_RESULTS_URL` | the results URL — nobody |
 | `IIIF_MANIFEST_URL` | the campaign file: its volume list, one entry per index | *(empty)* | — | no secret — nobody |
@@ -135,6 +136,7 @@ Each key is an environment variable of the container.
 |---|---|---|---|---|
 | `HTRFLOW_RESULTS_URL` | the chart: `resultsUrl` | required unless `HTRFLOW_WEB_SITE_ONLY` | chart `resultsUrl`, converter `results_url`, wrapper `RESULTS_URL` | the results URL — nobody |
 | `HTRFLOW_INTERNAL_RESULTS_BASE` | the chart: `web.internalResultsBase`, else `resultsUrl` | `HTRFLOW_RESULTS_URL` | — | no secret — nobody |
+| `HTRFLOW_S3_VERIFY_TLS` | the chart: the S3 Secret (`s3.existingSecret`), its `S3_VERIFY_TLS` key | `true` | — | `false` skips the certificate check on the bucket's progress reads; the S3 Secret's `S3_VERIFY_TLS` key — cluster |
 | `HTRFLOW_NAMESPACES` | the chart, fixed: the release namespace (no value sets it) | the pod's own namespace, else `htr-batch` | — | no secret — nobody |
 | `HTRFLOW_WEB_STATIC` | the image build (`ENV`): where the image puts the site | `/app/static` | — | no secret — nobody |
 | `HTRFLOW_WEB_SITE_ONLY` | **a local run only** (the compose stack sets it); no chart value | `false` | — | no secret — nobody |
