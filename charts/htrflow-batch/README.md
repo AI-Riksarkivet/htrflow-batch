@@ -223,7 +223,7 @@ value keys **as they were at that version** — `api.*`, `viewer.*`,
 here would make the upgrade notes wrong for anyone actually on that
 version.
 
-### 0.14.0 — unreleased (resultsUrl)
+### 0.14.0 — 2026-09-29 (v0.7.0: resultsUrl)
 
 **Breaking, on purpose** — see *From 0.13.0 to 0.14.0* above.
 
@@ -233,6 +233,8 @@ Changed:
   **`HTRFLOW_RESULTS_URL`**.
 - **`job-shape`** admits **`RESULTS_URL`** on a campaign Job in place of
   `PUBLIC_RESULTS_BASE`.
+- **`web.image`** is the v0.7.0 web image, which reads
+  `HTRFLOW_RESULTS_URL`.
 
 ### 0.13.0 — 2026-09-28 (v0.6.0: deployment audit fixes, image cache)
 

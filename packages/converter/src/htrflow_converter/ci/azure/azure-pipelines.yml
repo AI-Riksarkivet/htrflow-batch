@@ -78,7 +78,7 @@ variables:
   # be moved to other code, and the Render stage pushes to main. The Policy
   # stage checks the chart out at this same commit, so the policies CI runs
   # are the ones that shipped with the converter that rendered.
-  CONVERTER_REF: 7bcf155dd4b9d7b8f9b323ce076af4795cd158b5   # v0.6.0
+  CONVERTER_REF: 112da91499253ce1f4bc0002cfcdba01e89acda0   # v0.7.0
   KYVERNO_VERSION: v1.19.0
   # The cluster's own htrflow-batch values, repeated here because CI has no
   # cluster to read them from (`helm get values <release> -n <namespace>`).
