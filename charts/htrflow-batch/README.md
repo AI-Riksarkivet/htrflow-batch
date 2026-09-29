@@ -37,7 +37,8 @@ device plugin) is a separate chart:
   `security.psaEnforce`).
 - An S3 Secret (`s3.existingSecret`, default `htr-batch-s3`) with a
   `credentials` key in AWS ini format plus `S3_BUCKET` (and `S3_ENDPOINT`
-  unless real AWS) — this chart documents the convention but never creates
+  unless real AWS; optional `S3_VERIFY_TLS: "false"` skips the endpoint's
+  certificate check) — this chart documents the convention but never creates
   it. The batch/warm-up Jobs the converter renders read it; for the PoC,
   `charts/htrflow-devstack`'s RustFS renders it instead (keep
   `s3.existingSecret` here in step with that chart's `s3.secretName`; the
@@ -75,6 +76,19 @@ ConfigMap the nginx viewer mounted, is describing the version it names — `api.
 `htrflow-web` / `templates/web.yaml` they became in 0.4.0. Renaming them
 here would make the upgrade notes wrong for anyone actually on that
 version.
+
+### From 0.14.0 to 0.15.0 — chart first, then the converter
+
+Every new key is optional: an S3 Secret without `S3_VERIFY_TLS` behaves as
+before. `job-shape` in 0.15.0 admits campaign Jobs from the previous
+converter and from the new one. The reverse does not hold: a Job the new
+converter renders carries `S3_VERIFY_TLS`, which 0.14.0's `job-shape`
+refuses. Upgrade the chart first, then bump the hook image and
+`CONVERTER_REF` in every campaigns repo.
+
+| Change | What to do |
+|---|---|
+| **The S3 Secret takes an optional `S3_VERIFY_TLS` key.** `"false"` skips the S3 endpoint's certificate check in campaign pods (the converter passes the key on) and in the web front's progress reads (the chart does). | Nothing, unless your store's certificate cannot be verified: then add the key, as a stopgap. |
 
 ### From 0.13.0 to 0.14.0 — one renamed key
 
@@ -222,6 +236,15 @@ value keys **as they were at that version** — `api.*`, `viewer.*`,
 `htrflow-web` / `templates/web.yaml` they became in 0.4.0. Renaming them
 here would make the upgrade notes wrong for anyone actually on that
 version.
+
+### 0.15.0 — unreleased (S3_VERIFY_TLS)
+
+Added:
+- **`S3_VERIFY_TLS`**, an optional key of the S3 Secret: `"false"` skips
+  the S3 endpoint's certificate check. The web front reads it as
+  `HTRFLOW_S3_VERIFY_TLS`, straight from the Secret key.
+- **`job-shape`** admits `S3_VERIFY_TLS` on a campaign Job, from the S3
+  Secret only.
 
 ### 0.14.0 — 2026-09-29 (v0.7.0: resultsUrl)
 
