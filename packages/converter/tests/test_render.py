@@ -1019,6 +1019,7 @@ def test_every_wrapper_variable_the_job_sets_is_one_the_wrapper_reads(tmp_path):
     secret = {  # the chart's S3 Secret, by the keys the Job reads from it
         "S3_BUCKET": "htr-results",
         "S3_ENDPOINT": "https://s3.example.org",
+        "S3_VERIFY_TLS": "false",
     }
     from_secret = {
         k: secret[k] for k, e in env.items() if "secretKeyRef" in e.get("valueFrom", {})
@@ -1058,3 +1059,14 @@ def test_without_the_image_cache_the_pod_has_no_such_env():
     kyrk, demo, cfg = _kyrk()
     job = render.campaign_objects(kyrk, demo, cfg)[1]
     assert "IMAGE_CACHE_BUCKET" not in _env(job)
+
+
+def test_s3_verify_tls_comes_from_the_s3_secret_and_is_optional():
+    """The S3 certificate switch is a key of the S3 Secret, beside
+    S3_ENDPOINT, never a converter.yaml setting: every campaign on the
+    namespace reaches the same store. Optional, so a Secret without it is
+    verified as before."""
+    kyrk, demo, cfg = _kyrk()
+    job = render.campaign_objects(kyrk, demo, cfg)[1]
+    ref = _wrapper_env(job)["S3_VERIFY_TLS"]["valueFrom"]["secretKeyRef"]
+    assert ref == {"name": cfg.s3_secret, "key": "S3_VERIFY_TLS", "optional": True}

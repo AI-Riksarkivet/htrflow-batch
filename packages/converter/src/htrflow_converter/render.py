@@ -353,7 +353,7 @@ def _campaign_job(
     for e in job["spec"]["template"]["spec"]["containers"][0]["env"]:
         if e["name"] in dynamic_env:
             e["value"] = dynamic_env[e["name"]]
-        elif e["name"] in ("S3_ENDPOINT", "S3_BUCKET"):
+        elif e["name"] in ("S3_ENDPOINT", "S3_BUCKET", "S3_VERIFY_TLS"):
             e["valueFrom"]["secretKeyRef"]["name"] = cfg.s3_secret
 
     if cfg.image_cache is not None:

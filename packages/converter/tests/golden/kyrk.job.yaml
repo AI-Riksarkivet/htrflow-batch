@@ -110,6 +110,12 @@ spec:
             secretKeyRef:
               name: htr-batch-s3
               key: S3_BUCKET
+        - name: S3_VERIFY_TLS
+          valueFrom:
+            secretKeyRef:
+              name: htr-batch-s3
+              key: S3_VERIFY_TLS
+              optional: true
         volumeMounts:
         - name: campaign
           mountPath: /campaign
