@@ -237,7 +237,7 @@ value keys **as they were at that version** — `api.*`, `viewer.*`,
 here would make the upgrade notes wrong for anyone actually on that
 version.
 
-### 0.15.0 — unreleased (S3_VERIFY_TLS)
+### 0.15.0 — 2026-09-29 (v0.8.0: S3_VERIFY_TLS)
 
 Added:
 - **`S3_VERIFY_TLS`**, an optional key of the S3 Secret: `"false"` skips
@@ -245,6 +245,8 @@ Added:
   `HTRFLOW_S3_VERIFY_TLS`, straight from the Secret key.
 - **`job-shape`** admits `S3_VERIFY_TLS` on a campaign Job, from the S3
   Secret only.
+- **`web.image`** is the v0.8.0 web image, which reads
+  `HTRFLOW_S3_VERIFY_TLS`.
 
 ### 0.14.0 — 2026-09-29 (v0.7.0: resultsUrl)
 
