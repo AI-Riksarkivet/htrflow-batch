@@ -45,6 +45,10 @@ class Config(BaseModel):
     pipeline_path: str = Field(alias="PIPELINE_PATH")
     pipeline_id: str = Field(alias="PIPELINE_ID")
     s3_endpoint: str = Field("", alias="S3_ENDPOINT")
+    #: false skips the certificate check on S3_ENDPOINT, for a store whose
+    #: certificate no client can verify yet. An optional key of the S3
+    #: Secret, beside S3_ENDPOINT; page-image fetches are always verified.
+    s3_verify_tls: bool = Field(True, alias="S3_VERIFY_TLS")
     s3_bucket: str = Field(alias="S3_BUCKET")
     results_url: str = Field(alias="RESULTS_URL")
     # Exactly one of these is set (docs: wrapper, IMAGES) — see from_env.

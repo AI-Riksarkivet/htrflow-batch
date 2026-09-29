@@ -59,6 +59,11 @@ that you create; no chart does. It has three keys:
 
 - `S3_BUCKET`: the bucket name.
 - `S3_ENDPOINT`: the endpoint URL, for anything but AWS itself.
+- `S3_VERIFY_TLS` (optional): `false` skips the check of the endpoint's
+  TLS certificate, for a store whose certificate no client can verify yet.
+  Campaign pods and the web front then send the bucket's credentials to
+  whatever answers at that address, so treat it as a stopgap until the
+  certificate can be verified. Absent, the certificate is checked.
 
 ```bash
 kubectl create namespace <namespace>

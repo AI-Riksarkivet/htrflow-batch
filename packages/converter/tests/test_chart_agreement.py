@@ -52,6 +52,7 @@ from config_reference import (  # noqa: E402
     _chart_rows,
     _model_rows,
     chart_web_env,
+    chart_web_secret_env,
     frontend_rows,
     image_env,
     job_shape,
@@ -807,7 +808,8 @@ def test_lookahead_bytes_and_image_cache_bucket_are_admitted_when_rendered():
 
 def test_a_web_setting_the_page_says_the_chart_sets_is_set_by_that_value():
     """Each chart value the page names for a web env var, set to a sentinel,
-    is what the rendered Deployment carries; the namespace comes from the
+    is what the rendered Deployment carries; a Secret key the page names is
+    read from `s3.existingSecret`, optionally; the namespace comes from the
     downward API; a local-run setting is not in the Deployment at all."""
     names = [n for n, _ in _model_rows(SURFACES[1][3])]
     plain = _rendered("Deployment", "htrflow-web")
@@ -815,6 +817,15 @@ def test_a_web_setting_the_page_says_the_chart_sets_is_set_by_that_value():
     by_name = {e["name"]: e for e in env}
     for name, paths in chart_web_env().items():
         assert name in names, name
+        if name in chart_web_secret_env():
+            assert by_name[name]["valueFrom"] == {
+                "secretKeyRef": {
+                    "name": "htr-batch-s3",
+                    "key": chart_web_secret_env()[name],
+                    "optional": True,
+                }
+            }
+            continue
         if not paths:
             assert by_name[name]["valueFrom"] == {
                 "fieldRef": {"fieldPath": "metadata.namespace"}

@@ -99,6 +99,15 @@ spec:
             # Defaults to resultsUrl, which is correct on real AWS.
             - name: HTRFLOW_INTERNAL_RESULTS_BASE
               value: {{ .Values.web.internalResultsBase | default .Values.resultsUrl | quote }}
+            # The S3 Secret's optional S3_VERIFY_TLS key, the one the
+            # campaign pods read: "false" skips the certificate check on the
+            # bucket for this pod's progress reads too. Absent: verified.
+            - name: HTRFLOW_S3_VERIFY_TLS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.s3.existingSecret }}
+                  key: S3_VERIFY_TLS
+                  optional: true
             # The API acts on its own namespace; the downward API keeps it
             # correct whatever --namespace the release uses. Deliberately
             # single-valued today (one namespace, this release's) — the
