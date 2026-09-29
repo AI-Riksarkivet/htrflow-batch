@@ -110,6 +110,11 @@ class Config(BaseModel):
     #: cluster); the chart sets it explicitly for the PoC
     #: (`web.internalResultsBase`).
     internal_results_base: str = Field("", alias="HTRFLOW_INTERNAL_RESULTS_BASE")
+    #: false skips the certificate check on the bucket this pod reads
+    #: progress from -- for a store whose certificate no client can verify
+    #: yet. The chart fills it from the S3 Secret's optional S3_VERIFY_TLS
+    #: key, the same key the campaign pods read.
+    s3_verify_tls: bool = Field(True, alias="HTRFLOW_S3_VERIFY_TLS")
     namespaces: tuple[str, ...] = Field((), alias="HTRFLOW_NAMESPACES")
     static_dir: str = Field("", alias="HTRFLOW_WEB_STATIC")
     site_only: bool = Field(False, alias="HTRFLOW_WEB_SITE_ONLY")
@@ -129,6 +134,7 @@ class Config(BaseModel):
         return cls(
             HTRFLOW_RESULTS_URL=base,
             HTRFLOW_INTERNAL_RESULTS_BASE=internal_base,
+            HTRFLOW_S3_VERIFY_TLS=get("HTRFLOW_S3_VERIFY_TLS") or "true",
             HTRFLOW_NAMESPACES=tuple(filter(None, names)) or (_own_namespace(),),
             HTRFLOW_WEB_STATIC=get("HTRFLOW_WEB_STATIC") or "",
             HTRFLOW_WEB_SITE_ONLY=site_only,

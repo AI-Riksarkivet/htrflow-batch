@@ -585,3 +585,14 @@ def test_the_route_writes_the_record_through_the_real_adapter(reader: Reader):
     assert patch["path"] == "/api/v1/namespaces/htr-a/configmaps/campaign-kyrk-status"
     assert patch["query"]["fieldManager"] == "htrflow-web"
     assert patch["body"]["data"]["phase"] == "Running"
+
+
+def test_the_bucket_certificate_is_verified_unless_the_secret_says_false():
+    """HTRFLOW_S3_VERIFY_TLS comes from the S3 Secret's optional
+    S3_VERIFY_TLS key, the one the campaign pods read."""
+    base = {"HTRFLOW_RESULTS_URL": "https://x"}
+    assert Config.from_env(base).s3_verify_tls is True
+    off = Config.from_env({**base, "HTRFLOW_S3_VERIFY_TLS": "false"})
+    assert off.s3_verify_tls is False
+    with pytest.raises(ValueError):
+        Config.from_env({**base, "HTRFLOW_S3_VERIFY_TLS": "maybe"})
