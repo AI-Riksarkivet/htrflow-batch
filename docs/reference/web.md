@@ -234,6 +234,7 @@ second copy to keep in step.
 |---|---|---|
 | `HTRFLOW_RESULTS_URL` | required | The browser-reachable base every result URL is built from. The chart sets it from `resultsUrl`. |
 | `HTRFLOW_INTERNAL_RESULTS_BASE` | the public base | Where the pod reads progress files, when the browser's address does not work from inside the cluster. Chart `web.internalResultsBase`. |
+| `HTRFLOW_S3_VERIFY_TLS` | `true` | `false` skips the certificate check on those progress reads. The chart takes it from the S3 Secret's optional `S3_VERIFY_TLS` key, the one campaign pods read. |
 | `HTRFLOW_NAMESPACES` | the pod's own namespace (`htr-batch` outside a cluster) | Comma-separated namespaces to list. |
 | `HTRFLOW_WEB_STATIC` | `/app/static` | The built site; missing means API only. |
 | `HTRFLOW_WEB_SITE_ONLY` | unset | Serve the site with no cluster: `/api/v1/…` answers `503`. |

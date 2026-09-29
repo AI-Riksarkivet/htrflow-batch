@@ -23,7 +23,7 @@ generated table of every key is [Configuration](configuration.md). Source:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `s3.existingSecret` | `htr-batch-s3` | The S3 Secret you create in the release namespace: key `credentials` (AWS ini), mounted as a file, plus `S3_BUCKET` (the bucket's name: the chart has no value for it) and optional `S3_ENDPOINT`. Must match `converter.yaml`'s `s3_secret` ([Deploy](../getting-started/deploy.md)) |
+| `s3.existingSecret` | `htr-batch-s3` | The S3 Secret you create in the release namespace: key `credentials` (AWS ini), mounted as a file, plus `S3_BUCKET` (the bucket's name: the chart has no value for it), optional `S3_ENDPOINT` and optional `S3_VERIFY_TLS` (`false` skips the endpoint's certificate check in campaign pods and the web front). Must match `converter.yaml`'s `s3_secret` ([Deploy](../getting-started/deploy.md)) |
 | `hfToken.existingSecret` | `""` | The Hugging Face token Secret (key `token`) a warm-up may read, for a private or gated model. Must match `converter.yaml`'s `hf_token_secret`. Empty = none |
 | `resultsUrl` | `""` | **Required.** The browser-reachable base of the results bucket. Must match `converter.yaml`'s `results_url` ([View Results](../getting-started/viewing.md)) |
 

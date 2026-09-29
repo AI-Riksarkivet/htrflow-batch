@@ -50,7 +50,7 @@ batch:
     AWS_SHARED_CREDENTIALS_FILE: /secrets/s3/credentials
   free: [PIPELINE_ID, S3_PREFIX, RESULTS_URL, IMAGE_DIGEST, BACKOFF_LIMIT_PER_INDEX, MANIFEST_MAX_BYTES, FETCH_MAX_BYTES, LOOKAHEAD_BYTES, IMAGE_CACHE_BUCKET]
   bytes: [MANIFEST_MAX_BYTES, FETCH_MAX_BYTES, LOOKAHEAD_BYTES]
-  secretEnv: [S3_ENDPOINT, S3_BUCKET]
+  secretEnv: [S3_ENDPOINT, S3_BUCKET, S3_VERIFY_TLS]
   fieldEnv:
     INDEX_FAILURE_COUNT: metadata.annotations['batch.kubernetes.io/job-index-failure-count']
   mounts: [[campaign, /campaign], [pipeline, /config], [data, /data], [work, /work], [s3, /secrets/s3]]

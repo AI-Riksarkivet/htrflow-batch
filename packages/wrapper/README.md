@@ -62,7 +62,8 @@ Exit codes: `0` success, `13` permanent (do not retry), `1` transient,
 | `S3_BUCKET` | Results bucket |
 | `RESULTS_URL` | Browser-reachable base URL for `iiif.json` ids and `viewer_url` |
 
-Optional, with defaults: `S3_ENDPOINT` (provider chain), `S3_PREFIX` (`""`),
+Optional, with defaults: `S3_ENDPOINT` (provider chain), `S3_VERIFY_TLS`
+(true; `false` skips the S3 endpoint's certificate check), `S3_PREFIX` (`""`),
 `MAX_IMAGE_WIDTH` (2500), `RESUME` (true), `LOOKAHEAD_PAGES` (64),
 `LOOKAHEAD_BYTES` (1 GiB), `MAX_PAGES` (0 = all), `WORKDIR_PATH` (`/work`),
 `DOWNLOAD_CONCURRENCY` (12), `LOG_SHIP_SECONDS` (15), `MANIFEST_MAX_BYTES`

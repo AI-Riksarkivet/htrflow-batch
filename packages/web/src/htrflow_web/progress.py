@@ -257,8 +257,12 @@ class _NoAnswer(Exception):
 class ProgressReader:
     """One HTTP client and one small cache for the life of the app."""
 
-    def __init__(self, client: httpx.Client | None = None) -> None:
-        self._client = client or httpx.Client(timeout=TIMEOUT)
+    def __init__(
+        self, client: httpx.Client | None = None, *, verify: bool = True
+    ) -> None:
+        # verify=False: the bucket's certificate is not checked
+        # (HTRFLOW_S3_VERIFY_TLS); only this reader's requests are affected.
+        self._client = client or httpx.Client(timeout=TIMEOUT, verify=verify)
         #: url -> (expiry, progress, whether the bucket answered at all)
         self._cache: dict[str, tuple[float, dict | None, bool]] = {}
         #: Held around every touch of the cache, never across a GET. The

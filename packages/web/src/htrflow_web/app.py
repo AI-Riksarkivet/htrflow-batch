@@ -371,7 +371,13 @@ def create_app(
     app = FastAPI()
     site_only = reader.cfg is None
     if progress is None and not site_only:
-        progress = ProgressReader()
+        verify = getattr(reader.cfg, "s3_verify_tls", True)
+        if not verify:
+            _LOG.warning(
+                "HTRFLOW_S3_VERIFY_TLS=false: "
+                "the results bucket's certificate is not checked"
+            )
+        progress = ProgressReader(verify=verify)
 
     viewer_csp = uv_csp(Path(static_dir or DEFAULT_STATIC_DIR))
 

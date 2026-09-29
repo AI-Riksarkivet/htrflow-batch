@@ -561,3 +561,15 @@ def test_progress_and_manifest_both_carry_it():
     assert _from_progress({"pages_total": 3}, 0.0)["quality"] is None
     manifest = {"pages": 3, "results": {"0001": {"status": "ok"}}, "quality": GOOD}
     assert _from_manifest(manifest, 0.0)["quality"]["scored"] == 3
+
+
+def test_the_reader_verifies_the_bucket_certificate_unless_told_not_to(monkeypatch):
+    seen = []
+    real = httpx.Client
+    monkeypatch.setattr(
+        "htrflow_web.progress.httpx.Client",
+        lambda **kw: seen.append(kw.get("verify", True)) or real(**kw),
+    )
+    ProgressReader()
+    ProgressReader(verify=False)
+    assert seen == [True, False]

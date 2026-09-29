@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import boto3
+import urllib3
 from botocore.config import Config as BotoConfig
 
 from .config import Config
@@ -52,10 +53,16 @@ def _content_md5(params, **_) -> None:
 def _s3_client(cfg: Config, **settings):
     """An S3 client that sends a checksum only where an operation requires
     one (W-10): botocore's default streams every PutObject `aws-chunked` with
-    a CRC32 trailer, which HCP and older MinIO or Ceph refuse."""
+    a CRC32 trailer, which HCP and older MinIO or Ceph refuse.
+
+    ``S3_VERIFY_TLS=false`` skips the certificate check for this endpoint
+    only. urllib3 would warn on every request; main logs it once instead."""
+    if not cfg.s3_verify_tls:
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     client = boto3.client(
         "s3",
         endpoint_url=cfg.s3_endpoint or None,
+        verify=None if cfg.s3_verify_tls else False,
         config=BotoConfig(
             request_checksum_calculation="when_required",
             response_checksum_validation="when_required",

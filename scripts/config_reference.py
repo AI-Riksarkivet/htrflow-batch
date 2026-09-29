@@ -68,6 +68,11 @@ NONE, PUBLIC = "no secret — nobody", "the results URL — nobody"
 SECURITY = {
     "S3_BUCKET": "from the S3 Secret (`secretKeyRef`) — cluster",
     "S3_ENDPOINT": "from the S3 Secret (`secretKeyRef`) — cluster",
+    "S3_VERIFY_TLS": "`false` skips the S3 certificate check, so the pod would "
+    "send the bucket's credentials to whatever answers at `S3_ENDPOINT`; set by "
+    "whoever writes the S3 Secret — cluster",
+    "HTRFLOW_S3_VERIFY_TLS": "`false` skips the certificate check on the "
+    "bucket's progress reads; the S3 Secret's `S3_VERIFY_TLS` key — cluster",
     "s3_secret": "names the Secret mounted at `/secrets/s3`; job-shape admits "
     "only `s3.existingSecret` — cluster",
     "hf_token_secret": "names the Secret the warm-up reads `HF_TOKEN` from; job-shape "
@@ -181,6 +186,18 @@ def chart_web_env() -> dict[str, list[str]]:
     return {n: re.findall(r"\.Values\.([\w.]+)", how) for n, how in found}
 
 
+def chart_web_secret_env() -> dict[str, str]:
+    """Each HTRFLOW_ env var the web Deployment reads from a Secret key ->
+    that key."""
+    text = WEB_TEMPLATE.read_text(encoding="utf-8")
+    found = re.findall(
+        r"- name: (HTRFLOW_\w+)\n\s+valueFrom:\n\s+secretKeyRef:\n"
+        r"\s+name: [^\n]*\n\s+key: (\w+)",
+        text,
+    )
+    return dict(found)
+
+
 def _image(name: str) -> str:
     return f"the image build (`ENV`): {IMAGE_ENV_DOC[name]}"
 
@@ -212,6 +229,9 @@ def wrapper_set_by(name: str) -> str:
 
 def web_set_by(name: str) -> str:
     chart = chart_web_env()
+    if name in chart_web_secret_env():
+        key = chart_web_secret_env()[name]
+        return f"the chart: the S3 Secret (`s3.existingSecret`), its `{key}` key"
     if name in chart and chart[name]:
         return "the chart: " + ", else ".join(f"`{v}`" for v in chart[name])
     if name in chart:

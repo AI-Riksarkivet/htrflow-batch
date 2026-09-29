@@ -372,7 +372,10 @@ fail=0
 # the uploader. main.py +1: the results bucket passed to for_volume. Most of
 # it is the docstrings saying why the object must name its source and why
 # nothing here may raise into a page.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 4732
+# 4732 -> 4747 (S3_VERIFY_TLS: config.py +4 (the field and its comment), store.py +6
+# (verify on both S3 clients, urllib3's per-request warning silenced),
+# main.py +5 (the one warning at start).)
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 4747
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
@@ -1083,7 +1086,10 @@ check converter "$(count packages/converter/src -name '*.py')" 5074
 # that cannot raise because it runs on every list request. app + kube +52: the
 # list reads the label-selected pipeline ConfigMaps, one call per namespace,
 # so a scoring campaign's column is there from the first paint.
-check web       "$(count packages/web/src -name '*.py')" 2797
+# 2797 -> 2813 (HTRFLOW_S3_VERIFY_TLS: kube.py +6 (the field, its comment, from_env),
+# progress.py +3 (verify on the reader's client), app.py +7 (read it, warn
+# once).)
+check web       "$(count packages/web/src -name '*.py')" 2813
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
@@ -1639,5 +1645,7 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5984
 # warm-up Job never gets it.
 # 2059 -> 2062 (resultsUrl rename): _helpers.tpl +3 -- the old
 # publicResultsBase key refused in words that name resultsUrl.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2062
+# 2062 -> 2071 (S3_VERIFY_TLS: web.yaml +9 (the web front reads the S3 Secret's
+# optional key), job-shape.yaml unchanged in lines (one more secretEnv name).)
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2071
 exit $fail

@@ -132,6 +132,7 @@ matches `KEY|TOKEN|PASSWORD|SECRET_ACCESS`.
 | Env var | Default | Description |
 |---------|---------|-------------|
 | `S3_ENDPOINT` | `""` | From the S3 Secret's optional `S3_ENDPOINT` key. Empty = the boto3 provider default chain |
+| `S3_VERIFY_TLS` | `true` | From the S3 Secret's optional `S3_VERIFY_TLS` key. `false` skips the certificate check on the S3 endpoint only (page images are always verified), and the run log says so once at start |
 | `AWS_SHARED_CREDENTIALS_FILE` | *(boto3 default)* | Read by boto3, not `Config`. Jobs set `/secrets/s3/credentials` — the mounted Secret file; credentials are never env |
 | `S3_PREFIX` | `""` | Extra prefix before `<pipeline>/<volume>/` (and before `sources/`); leading and trailing `/` are stripped. The converter always sets it to `<namespace>/`; empty only when the wrapper is run by hand |
 | `MAX_IMAGE_WIDTH` | `2500` | Width asked of the IIIF Image API (`/full/{w},/`). A 400 falls back to the largest size the image's `info.json` offers within the cap, and to `max` only when it offers none. Service-less canvases are fetched at native size |

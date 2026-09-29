@@ -202,8 +202,8 @@ data volume.
 - **Secrets are files, not environment variables.** The S3 Secret's
   `credentials` key (AWS ini format) is mounted at `/secrets/s3` (mode `0440`)
   and reaches boto3 through `AWS_SHARED_CREDENTIALS_FILE`. Only the non-secret
-  `S3_ENDPOINT` and `S3_BUCKET` are passed as env. Nothing uses `envFrom` on a
-  Secret. The one credential that does travel as env is the optional
+  `S3_ENDPOINT`, `S3_BUCKET` and the optional `S3_VERIFY_TLS` are passed as
+  env. Nothing uses `envFrom` on a Secret. The one credential that does travel as env is the optional
   `HF_TOKEN`, because `huggingface_hub` reads its token from the environment;
   it is confined to the warm-up pod, which mounts no S3 Secret, holds no
   campaign data and exits when its download is done.

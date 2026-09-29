@@ -156,6 +156,12 @@ spec:
             secretKeyRef:
               name: S3_SECRET
               key: S3_BUCKET
+        - name: S3_VERIFY_TLS
+          valueFrom:
+            secretKeyRef:
+              name: S3_SECRET
+              key: S3_VERIFY_TLS
+              optional: true
         volumeMounts:
         - name: campaign
           mountPath: /campaign
