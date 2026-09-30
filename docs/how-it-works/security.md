@@ -128,8 +128,15 @@ what, key by key, and listing is never offered.
   chart's hop count selects. A login also needs the site's own `Origin`, or
   it is `403` even with valid credentials, and the web front forwards only
   the `htr_session` cookie and caps the posted body.
-- **A revoked account stops at once.** When the store refuses the keys
-  mid-session, the next file read is `401` and clears the cookie.
+- **What revoking ends, and what it does not.** File reads use the user's
+  own keys, so a store account that is revoked or disabled stops reading at
+  once: the next file read is `401` and clears the cookie. The session
+  itself is a stateless cookie, and nothing server-side records it. The
+  campaign browser's API asks the proxy only whether a cookie decrypts and
+  is unexpired, so `/api/v1` accepts any such cookie, a copied one
+  included, until it expires (`results.sessionHours`). Logging out clears
+  the browser's copy and nothing else. Rotating the session Secret ends
+  every session.
 - **Only allowed keys are asked for.** A key must start with the release's
   namespace or `status/logs/`, and is refused before the store is asked when
   a segment is empty, `.` or `..`, contains a backslash, or the path held an
