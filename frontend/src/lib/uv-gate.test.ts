@@ -35,7 +35,9 @@ function applyHunks(patch: string, file: string, pre: string): string {
       const text = line.slice(1);
       if (mark === " " || mark === "-") {
         if (src[at] !== text) {
-          throw new Error(`hunk context at line ${at + 1}: ${JSON.stringify(text)}`);
+          throw new Error(
+            `hunk context at line ${at + 1}: ${JSON.stringify(text)}`,
+          );
         }
         at += 1;
         if (mark === " ") out.push(text);
@@ -49,9 +51,14 @@ function applyHunks(patch: string, file: string, pre: string): string {
 }
 
 function patchedScript(): string {
-  const patch = lf(readFileSync(resolve(ROOT, ".docker/uv4-uv-html.patch"), "utf8"));
+  const patch = lf(
+    readFileSync(resolve(ROOT, ".docker/uv4-uv-html.patch"), "utf8"),
+  );
   const pre = lf(
-    readFileSync(resolve(ROOT, "frontend/src/lib/fixtures/uv4-uv.html"), "utf8"),
+    readFileSync(
+      resolve(ROOT, "frontend/src/lib/fixtures/uv4-uv.html"),
+      "utf8",
+    ),
   );
   const page = applyHunks(patch, "src/uv.html", pre);
   const scripts = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)];
@@ -135,14 +142,17 @@ describe("uv.html's login gate", () => {
     expect(document.querySelector("#uv a")).toBeNull();
   });
 
-  test.each([200, 404, 502])("a %i loads the viewer as before", async (status) => {
-    const { init } = runViewer(
-      location.origin + MANIFEST_PATH,
-      async () => new Response("{}", { status }),
-    );
-    await settle();
-    expect(init).toHaveBeenCalledTimes(1);
-  });
+  test.each([200, 404, 502])(
+    "a %i loads the viewer as before",
+    async (status) => {
+      const { init } = runViewer(
+        location.origin + MANIFEST_PATH,
+        async () => new Response("{}", { status }),
+      );
+      await settle();
+      expect(init).toHaveBeenCalledTimes(1);
+    },
+  );
 
   test("a network failure loads the viewer as before", async () => {
     const { init } = runViewer(location.origin + MANIFEST_PATH, async () => {

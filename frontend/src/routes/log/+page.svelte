@@ -267,7 +267,9 @@
   <section class="log" aria-label="run log">
     {#if logError !== null}
       <p class="error" role="alert">
-        {logError === FORBIDDEN_FILE ? logError : `Cannot load log: ${logError}`}
+        {logError === FORBIDDEN_FILE
+          ? logError
+          : `Cannot load log: ${logError}`}
       </p>
     {:else if parsed === null}
       <p>Loading…</p>
