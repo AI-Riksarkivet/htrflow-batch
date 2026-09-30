@@ -70,7 +70,6 @@ RULES: dict[str, tuple[str, tuple[str, ...]]] = {
 JUSTIFICATIONS = {
     ABSENT: {"vulnerable_code_not_present", "vulnerable_code_not_in_execute_path"},
     STATIC_ONLY: {"vulnerable_code_cannot_be_controlled_by_adversary"},
-    AFFECTED: {"web image parses S3 store XML responses"},
 }
 
 #: Locked dependencies that do import tarfile, and why that is not the
