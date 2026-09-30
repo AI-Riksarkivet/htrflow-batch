@@ -61,14 +61,36 @@ source. Who may reach the address is set in
 
 ## Logging in
 
-Opening the campaign browser, the viewer or any result URL without a session
-shows the login page. Log in with an account on the results store; the
+Log in with an account on the results store; the
 [deploy page](deploy.md#the-results-bucket-stays-private) says which fields
 your store takes. The session lasts `results.sessionHours` (8 by default).
-What you see is what the store lets your account read: a volume it refuses
-shows "your account may not read this volume". Log out from the link in the
-header. A login that is refused says whether the account, the store or the
-number of attempts is the reason.
+**Log out** in the header ends it in this browser.
+
+Without a session, or once it has expired:
+
+- The **campaign browser**, the **run viewer** (`/log`) and `/alto` go to
+  the login page, and back to where you were after you log in.
+- The **viewer** (`/uv.html`) asks for a manifest under the site's own
+  `/results/` before it loads it, and shows **Log in to open this volume.**
+  with a link to the login page that comes back to the same volume. A
+  manifest from anywhere else loads as before.
+- A result URL opened directly answers `401` with a short JSON body.
+
+What you see is what the store lets your account read:
+
+- A volume on a campaign card whose progress file the store refuses your
+  account shows **Your account may not read this volume.** where its
+  progress would be, and its id does not open the viewer. The card asks
+  again every few seconds, so a permission granted on the store shows on a
+  later refresh.
+- The viewer shows **Your account may not read this volume.** instead of
+  loading a refused manifest.
+- The run viewer and `/alto` show **Your account may not read this file.**
+  for a log or ALTO file the store refuses.
+
+A login the proxy refuses says why: the store did not accept the user name
+or password; too many failed attempts; the user name or password is too
+long or malformed; or the store could not be reached.
 
 Keep these in mind:
 
