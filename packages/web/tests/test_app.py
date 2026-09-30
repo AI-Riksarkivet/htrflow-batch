@@ -150,6 +150,47 @@ def client() -> TestClient:
     return TestClient(create_app(FakeReader(), progress=FakeProgress()))
 
 
+class FakeSessions:
+    def __init__(self, users=None):
+        self.users = users if users is not None else {"tok": "anna"}
+
+    def check(self, cookie):
+        from htrflow_web.sessions import Session
+
+        user = self.users.get(cookie or "")
+        return Session(user, cookie) if user else None
+
+
+def test_the_api_is_401_without_a_session():
+    c = TestClient(
+        create_app(FakeReader(), progress=FakeProgress(), sessions=FakeSessions())
+    )
+    assert c.get("/api/v1/jobs").status_code == 401
+    assert c.get("/api/v1/version").status_code == 401
+    c.cookies.set("htr_session", "tok")
+    assert c.get("/api/v1/jobs").status_code == 200
+
+
+def test_the_site_itself_needs_no_session():
+    c = TestClient(
+        create_app(FakeReader(), progress=FakeProgress(), sessions=FakeSessions())
+    )
+    assert c.get("/healthz").status_code == 200
+    assert c.get("/config.js").status_code == 200
+
+
+def test_a_session_check_that_cannot_be_made_is_502():
+    from htrflow_web.sessions import SessionsUnavailable
+
+    class Down:
+        def check(self, cookie):
+            raise SessionsUnavailable("proxy down")
+
+    c = TestClient(create_app(FakeReader(), progress=FakeProgress(), sessions=Down()))
+    c.cookies.set("htr_session", "tok")
+    assert c.get("/api/v1/jobs").status_code == 502
+
+
 class _Hung(FakeReader):
     """A reader whose API server has stopped answering mid-request."""
 
