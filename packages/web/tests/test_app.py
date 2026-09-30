@@ -144,6 +144,9 @@ class FakeProgress:
     ) -> tuple[bool, dict | None]:
         return False, None
 
+    def for_session(self, session):
+        return self
+
 
 @pytest.fixture
 def client() -> TestClient:
