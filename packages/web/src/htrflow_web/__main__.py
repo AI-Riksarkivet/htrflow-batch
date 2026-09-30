@@ -3,7 +3,8 @@
 ``HTRFLOW_WEB_SITE_ONLY`` serves the built site without a cluster (the local
 compose stack, `.docker/docker-compose.yml`): the API routes stay registered
 and answer 503 instead of the process failing at startup on a missing
-kubeconfig.
+kubeconfig. ``HTRFLOW_RESULTS_PROXY`` still passes /results through there
+when it is set: the compose stack runs a results proxy beside the site.
 """
 
 from __future__ import annotations
@@ -17,7 +18,9 @@ from .kube import Config, Reader
 def main() -> None:
     cfg = Config.from_env()
     reader = NoCluster() if cfg.site_only else Reader(cfg)
-    app = create_app(reader, cfg.static_dir, cfg.batch_version)
+    app = create_app(
+        reader, cfg.static_dir, cfg.batch_version, results_proxy=cfg.results_proxy
+    )
     uvicorn.run(app, host="0.0.0.0", port=8081)
 
 

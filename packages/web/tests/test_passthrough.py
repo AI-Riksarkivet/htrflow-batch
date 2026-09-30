@@ -330,3 +330,45 @@ def test_route_absent_in_site_only_mode():
 
     app = create_app(SimpleNamespace(cfg=None), static_dir="/nonexistent")
     assert TestClient(app).get("/results/ns/x").status_code in (404, 503)
+
+
+def test_site_only_mode_passes_results_through_when_given_a_proxy(monkeypatch):
+    """The compose stack runs the web front site-only (no apiserver) next to
+    a results proxy: the viewer there reads /results on the site's own
+    origin like anywhere else. /api/v1 still answers 503, not 401."""
+    import htrflow_web.app as app_mod  # noqa: PLC0415
+    from htrflow_web.app import NoCluster  # noqa: PLC0415
+
+    seen = []
+
+    def handler(req):
+        seen.append(str(req.url))
+        return _streaming(httpx.Response(200, content=b"{}"))
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(
+        app_mod, "results_route", lambda app, base: results_route(app, base, client)
+    )
+    app = create_app(
+        NoCluster(),
+        static_dir="/nonexistent",
+        results_proxy="http://results:8082/results",
+    )
+    c = TestClient(app)
+    assert c.get("/results/ns/x").status_code == 200
+    assert seen == ["http://results:8082/results/ns/x"]
+    assert c.get("/api/v1/jobs").status_code == 503
+
+
+def test_the_entrypoint_hands_the_proxy_to_the_app_in_site_only_mode(monkeypatch):
+    import htrflow_web.__main__ as main_mod  # noqa: PLC0415
+
+    monkeypatch.setenv("HTRFLOW_WEB_SITE_ONLY", "1")
+    monkeypatch.setenv("HTRFLOW_RESULTS_PROXY", "http://results:8082/results")
+    got = {}
+    monkeypatch.setattr(
+        main_mod, "create_app", lambda *a, **k: got.update(k) or FastAPI()
+    )
+    monkeypatch.setattr(main_mod.uvicorn, "run", lambda *a, **k: None)
+    main_mod.main()
+    assert got["results_proxy"] == "http://results:8082/results"

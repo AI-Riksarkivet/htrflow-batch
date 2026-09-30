@@ -358,6 +358,7 @@ def create_app(
     batch_version: str = DEV_VERSION,
     progress=None,
     sessions=None,
+    results_proxy: str = "",
 ) -> FastAPI:
     """``batch_version`` is the deployed image's tag, passed in by
     ``__main__`` from ``kube.Config`` -- this module reads no environment of
@@ -370,7 +371,11 @@ def create_app(
     Not built at all in site-only mode (``reader.cfg is None``, ``NoCluster``
     below): every route that would use it 503s before reaching
     ``progress.fetch`` (``reader.get_job`` raises first), so the HTTP client
-    it would open has nothing to ever ask."""
+    it would open has nothing to ever ask.
+
+    ``results_proxy`` is where /results is passed through to: the reader's
+    ``cfg.results_proxy`` when it has one, else this (site-only mode has no
+    ``cfg``, and the compose stack still runs a results proxy beside it)."""
     app = FastAPI()
     site_only = reader.cfg is None
     if progress is None and not site_only:
@@ -740,8 +745,9 @@ def create_app(
         reason = reasons[namespace, name]
         return {"phase": phase, "reason": reason} if reason else {"phase": phase}
 
-    if not site_only and getattr(reader.cfg, "results_proxy", ""):
-        results_route(app, reader.cfg.results_proxy)
+    proxy = getattr(reader.cfg, "results_proxy", "") or results_proxy
+    if proxy:
+        results_route(app, proxy)
 
     # Last, so the routes above win over any file of the same name. Absent
     # outside the image (a local `uv run htrflow-web` builds no site), which
