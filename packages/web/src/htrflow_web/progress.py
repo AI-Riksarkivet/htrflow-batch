@@ -29,6 +29,8 @@ from urllib.parse import quote
 
 import httpx
 
+from .sessions import no_cookie_jar
+
 if TYPE_CHECKING:
     from .sessions import Session
 
@@ -285,7 +287,7 @@ class ProgressReader:
     """One HTTP client and one small cache for the life of the app."""
 
     def __init__(self, client: httpx.Client | None = None) -> None:
-        self._client = client or httpx.Client(timeout=TIMEOUT)
+        self._client = client or httpx.Client(timeout=TIMEOUT, cookies=no_cookie_jar())
         #: (user, url) -> (expiry, progress, whether the proxy answered at all)
         self._cache: dict[tuple[str, str], tuple[float, dict | None, bool]] = {}
         #: Held around every touch of the cache, never across a GET. The
