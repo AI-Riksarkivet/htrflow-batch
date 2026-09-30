@@ -52,6 +52,7 @@ from config_reference import (  # noqa: E402
     _chart_rows,
     _model_rows,
     chart_web_env,
+    chart_web_fixed_env,
     chart_web_secret_env,
     frontend_rows,
     image_env,
@@ -815,6 +816,9 @@ def test_a_web_setting_the_page_says_the_chart_sets_is_set_by_that_value():
     plain = _rendered("Deployment", "htrflow-web")
     env = plain["spec"]["template"]["spec"]["containers"][0]["env"]
     by_name = {e["name"]: e for e in env}
+    for name, literal in chart_web_fixed_env().items():
+        assert name in names, name
+        assert by_name[name]["value"] == literal, name
     for name, paths in chart_web_env().items():
         assert name in names, name
         if name in chart_web_secret_env():

@@ -18,6 +18,7 @@ Three renders, each the same command an operator would run:
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -45,7 +46,10 @@ PUBLIC_INGRESS = "network.web.allowPublicIngress=true"
 #: So is an install that enforces nothing: the chart defaults leave the
 #: Kyverno policies off, and a render that keeps them off says so.
 POLICIES_OFF = "security.policies.allowDisabled=true"
-DEFAULT_SETS = REQUIRED_SETS + (PUBLIC_INGRESS, POLICIES_OFF)
+#: The results proxy seals login sessions with a Secret the chart cannot
+#: invent: the install names one.
+SESSION_SECRET = "results.sessionSecret=htr-session"
+DEFAULT_SETS = REQUIRED_SETS + (PUBLIC_INGRESS, POLICIES_OFF, SESSION_SECRET)
 
 #: Two refusals several tests look for, verbatim: the chart's own sentence
 #: is what an operator reads, so a test that only saw a non-zero exit could
@@ -485,7 +489,7 @@ def _blocks(policy: dict) -> dict[str, list[str]]:
     }
 
 
-@pytest.mark.parametrize("policy_name", ["htr-batch-job", "htr-web"])
+@pytest.mark.parametrize("policy_name", ["htr-batch-job", "htr-results"])
 def test_a_catch_all_s3_range_is_carved_out_like_any_other(policy_name: str):
     """The carve-out applied to a literal `0.0.0.0/0` in iiifCidrs only, so
     `s3Cidrs: [0.0.0.0/0]` -- realistic for S3 on AWS, whose ranges move --
@@ -559,7 +563,7 @@ def test_a_named_range_inside_a_private_block_is_left_whole():
     assert set(blocks["10.0.0.0/8"]) == {"10.42.0.0/16", "10.43.0.0/16"}
 
 
-@pytest.mark.parametrize("policy_name", ["htr-batch-job", "htr-web"])
+@pytest.mark.parametrize("policy_name", ["htr-batch-job", "htr-results"])
 def test_without_in_namespace_s3_no_pod_labelled_rustfs_is_a_route(policy_name: str):
     """The in-namespace `app: rustfs` rule is the dev stack's bucket. Off
     it, any pod that carries the label is a destination the batch Job and
@@ -602,7 +606,7 @@ def test_the_schema_takes_every_real_address_range():
 # --- D4: all-port egress to the S3 range ----------------------------------
 
 
-@pytest.mark.parametrize("policy_name", ["htr-batch-job", "htr-web"])
+@pytest.mark.parametrize("policy_name", ["htr-batch-job", "htr-results"])
 def test_s3_egress_names_the_ports_it_needs(policy_name: str):
     """The CIDR half of the S3 rule carried no `ports` at all, so both pods
     that reach S3 had egress to EVERY port of that range -- which for a
@@ -1463,6 +1467,18 @@ BATCH_GUARDS = {
         DEFAULT_SETS + ("publicResultsBase=https://results.example.org/r",),
         RESULTS_BASE_RENAMED_REFUSAL,
     ),
+    "session-secret": (
+        None,
+        DEFAULT_SETS + ("results.sessionSecret=",),
+        "results.sessionSecret is required: the name of a Secret with key `key` "
+        "(32 random bytes, base64) that seals login sessions",
+    ),
+    "internal-results-base-gone": (
+        None,
+        DEFAULT_SETS + ("web.internalResultsBase=http://x",),
+        "web.internalResultsBase is gone (chart 0.16.0): the web front reads "
+        "the bucket through the results proxy; remove the key",
+    ),
     "s3-nowhere": (
         None,
         DEFAULT_SETS + ("network.s3InNamespace=false",),
@@ -1808,3 +1824,82 @@ def test_the_schema_refuses_a_short_image_cache_bucket_name(tmp_path: Path):
     result = helm_template(values=str(path), chart=DEVSTACK_CHART)
     assert result.returncode != 0
     assert "s3/imageCacheBucket" in result.stderr
+
+
+def test_the_results_proxy_holds_no_token_and_no_bucket_credential():
+    objs = render(sets=DEFAULT_SETS)
+    dep = named(objs, "Deployment", "htrflow-results")
+    spec = dep["spec"]["template"]["spec"]
+    assert spec["automountServiceAccountToken"] is False
+    assert [v["secret"]["secretName"] for v in spec["volumes"] if "secret" in v] == [
+        "htr-session"
+    ]
+    env = {e["name"]: e for e in spec["containers"][0]["env"]}
+    for key in ("S3_ENDPOINT", "S3_BUCKET", "S3_VERIFY_TLS"):
+        assert env[key]["valueFrom"]["secretKeyRef"]["key"] == key
+    assert "credentials" not in json.dumps(spec)
+    assert (
+        env["HTRFLOW_RESULTS_NAMESPACE"]["valueFrom"]["fieldRef"]["fieldPath"]
+        == "metadata.namespace"
+    )
+    assert spec["containers"][0]["command"] == ["/app/.venv/bin/htrflow-results"]
+    assert "serviceAccountName" not in spec
+    assert not any(
+        o["kind"] in ("Role", "RoleBinding") and "results" in o["metadata"]["name"]
+        for o in objs
+    )
+
+
+@pytest.mark.parametrize(
+    "extra,hops",
+    [
+        ((), "1"),
+        (
+            (
+                "web.service.type=ClusterIP",
+                "web.ingress.enabled=true",
+                "web.ingress.host=htr.example.org",
+                "network.web.ingressFrom[0].podSelector.matchLabels.app=ingress",
+            ),
+            "2",
+        ),
+    ],
+    ids=["direct", "behind-ingress"],
+)
+def test_the_proxy_trusts_as_many_forwarding_hops_as_sit_in_front_of_it(extra, hops):
+    """The Ingress controller and the web front each append to
+    X-Forwarded-For; the login's rate limit reads the client from the right."""
+    objs = render(sets=DEFAULT_SETS + extra)
+    env = {
+        e["name"]: e.get("value")
+        for e in named(objs, "Deployment", "htrflow-results")["spec"]["template"][
+            "spec"
+        ]["containers"][0]["env"]
+    }
+    assert env["HTRFLOW_TRUSTED_HOPS"] == hops
+
+
+def test_the_web_front_no_longer_touches_the_s3_secret():
+    objs = render(sets=DEFAULT_SETS)
+    web = named(objs, "Deployment", "htrflow-web")
+    text = json.dumps(web)
+    assert "htr-batch-s3" not in text and "S3_VERIFY_TLS" not in text
+    env = {
+        e["name"]: e.get("value")
+        for e in web["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env["HTRFLOW_RESULTS_PROXY"] == "http://htrflow-results:8082/results"
+    assert env["HTRFLOW_INTERNAL_RESULTS_BASE"] == "http://htrflow-results:8082/results"
+
+
+def test_the_network_policies_route_web_to_proxy_and_proxy_to_s3():
+    objs = render(sets=DEFAULT_SETS + ("network.enabled=true",))
+    web = named(objs, "NetworkPolicy", "htr-web")
+    res = named(objs, "NetworkPolicy", "htr-results")
+    assert {"podSelector": {"matchLabels": {"app": "htrflow-results"}}} in [
+        t for r in web["spec"]["egress"] for t in r.get("to", [])
+    ]
+    assert res["spec"]["ingress"][0]["from"] == [
+        {"podSelector": {"matchLabels": {"app": "htrflow-web"}}}
+    ]
+    assert res["spec"]["ingress"][0]["ports"] == [{"port": 8082}]

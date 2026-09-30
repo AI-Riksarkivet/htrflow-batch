@@ -3,6 +3,8 @@
 # defaults). Rendered on top of ci/default-values.yaml and values-prod.yaml
 # by test_chart_render.py, the Makefile and `dagger call check-chart`, the
 # way an operator's `--set` lines complete the profile. Never an install.
+results:
+  sessionSecret: htr-session
 network:
   web:
     ingressCidrs: ["198.51.100.0/24"]

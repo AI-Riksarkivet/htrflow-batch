@@ -7,6 +7,9 @@ modelCache:
   create: true
   storageClass: local-path
 
+results:
+  sessionSecret: htr-session
+
 web:
   image: 127.0.0.1:30500/htrflow-web@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
   nodePort: 30800
