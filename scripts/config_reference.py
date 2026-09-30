@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Generate docs/reference/configuration.md: every setting of the wrapper,
-the web front, the converter, the `htrflow-batch` chart and the frontend
-build.
+the web front, the results proxy, the converter, the `htrflow-batch` chart
+and the frontend build.
 
-Tables from the three pydantic models and the chart's values.yaml, prose
+Tables from the pydantic models and the chart's values.yaml, prose
 from config_reference.md beside this file (split on its `<!-- TABLES -->`
 line). `make config-reference` writes the page; it cannot drift, because
 test_chart_agreement.py fails when the committed page is not what it prints.
@@ -16,6 +16,7 @@ deployment can reach says so, and test_chart_agreement.py holds every
 """
 
 import re
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ import yaml
 from htrflow_batch.config import Config as WrapperConfig
 from htrflow_converter.models import Campaign, ConverterConfig, Pipeline
 from htrflow_web.kube import Config as WebConfig
+from htrflow_web.results import ResultsConfig
 from pydantic import BaseModel
 
 ROOT = Path(__file__).parents[1]
@@ -69,8 +71,14 @@ SECURITY = {
     "S3_BUCKET": "from the S3 Secret (`secretKeyRef`) — cluster",
     "S3_ENDPOINT": "from the S3 Secret (`secretKeyRef`) — cluster",
     "S3_VERIFY_TLS": "`false` skips the S3 certificate check, so the pod would "
-    "send the bucket's credentials to whatever answers at `S3_ENDPOINT`; set by "
-    "whoever writes the S3 Secret — cluster",
+    "send its S3 keys (a logged-in user's own, for the results proxy) to whatever "
+    "answers at `S3_ENDPOINT`; set by whoever writes the S3 Secret — cluster",
+    "HTRFLOW_SESSION_KEY_FILE": "the file holding the key that seals every login "
+    "session; whoever reads it can forge a session — cluster",
+    "HTRFLOW_KEY_DERIVATION": "how a login's password becomes S3 keys; a wrong "
+    "value only makes every login fail — nobody",
+    "results.sessionSecret": "names the Secret that seals login sessions; "
+    "`required` — render",
     "s3_secret": "names the Secret mounted at `/secrets/s3`; job-shape admits "
     "only `s3.existingSecret` — cluster",
     "hf_token_secret": "names the Secret the warm-up reads `HF_TOKEN` from; job-shape "
@@ -107,6 +115,7 @@ _ENV = "an environment variable of the container"
 SURFACES = [
     ("wrapper", "the batch Job's container", _ENV, WrapperConfig, None),
     ("web", "the read API and campaign browser", _ENV, WebConfig, WEB_DEFAULT_DOC),
+    ("results", "the results proxy (`htrflow-results`)", _ENV, ResultsConfig, None),
     (
         "converter",
         "a campaigns repo",
@@ -189,6 +198,7 @@ def chart_web_env() -> dict[str, list[str]]:
     }
 
 
+@cache
 def chart_web_fixed_env() -> dict[str, str]:
     """Each HTRFLOW_ env var the web Deployment sets to a literal, no value
     and no template involved -> that literal."""
@@ -197,6 +207,7 @@ def chart_web_fixed_env() -> dict[str, str]:
     return {n: v.strip() for n, v in found}
 
 
+@cache
 def chart_web_secret_env() -> dict[str, str]:
     """Each HTRFLOW_ env var the web Deployment reads from a Secret key ->
     that key."""
@@ -254,6 +265,29 @@ def web_set_by(name: str) -> str:
     return _local(name, "web") + "; no chart value"
 
 
+#: How the chart's results Deployment (templates/results.yaml) sets each
+#: setting of `ResultsConfig`. A literal, not parsed out of the template, so
+#: test_chart_agreement.py renders the Deployment and holds every line to it.
+RESULTS_SET_BY = {
+    "HTRFLOW_RESULTS_NAMESPACE": "the chart, fixed: the release namespace "
+    "(downward API)",
+    "S3_ENDPOINT": "the chart: the S3 Secret (`s3.existingSecret`), its "
+    "`S3_ENDPOINT` key",
+    "S3_BUCKET": "the chart: the S3 Secret (`s3.existingSecret`), its `S3_BUCKET` key",
+    "S3_VERIFY_TLS": "the chart: the S3 Secret (`s3.existingSecret`), its "
+    "`S3_VERIFY_TLS` key",
+    "HTRFLOW_SESSION_KEY_FILE": "the chart, fixed: `/secrets/session/key`, the "
+    "`key` of the `results.sessionSecret` Secret",
+    "HTRFLOW_SESSION_HOURS": "the chart: `results.sessionHours`",
+    "HTRFLOW_KEY_DERIVATION": "the chart: `results.keyDerivation`",
+    "HTRFLOW_TRUSTED_HOPS": "the chart, fixed: 2 with `web.ingress.enabled`, else 1",
+}
+
+
+def results_set_by(name: str) -> str:
+    return RESULTS_SET_BY[name]
+
+
 def overrides() -> list[tuple[type[BaseModel], str]]:
     """Campaign and pipeline keys named like a converter.yaml key."""
     fields = ConverterConfig.model_fields
@@ -268,6 +302,7 @@ def converter_set_by(name: str) -> str:
 SET_BY = {
     "wrapper": wrapper_set_by,
     "web": web_set_by,
+    "results": results_set_by,
     "converter": converter_set_by,
     "chart": lambda _: "`values.yaml`",
 }
