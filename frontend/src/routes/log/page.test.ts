@@ -43,6 +43,30 @@ describe("/log live mode", () => {
     window.history.replaceState(null, "", "/");
   });
 
+  test("a 401 goes to the login page and stops polling", async () => {
+    const fetchMock = vi.fn(
+      async () => new Response(null, { status: 401 }),
+    ) as unknown as typeof fetch;
+    const assign = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("location", {
+      origin: "http://localhost",
+      pathname: "/log",
+      search: "?log=http://bucket/logs/v1.txt&live=1",
+      hash: "",
+      assign,
+    });
+    render(LogPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(assign).toHaveBeenCalledWith(
+      "/login?next=" +
+        encodeURIComponent("/log?log=http://bucket/logs/v1.txt&live=1"),
+    );
+    expect(screen.getByRole("status")).not.toHaveTextContent("live");
+    await vi.advanceTimersByTimeAsync(LIVE_MS * 5);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   test("keeps polling through 404s, backs off, then gives up and says so", async () => {
     const fetchMock = vi.fn(fetch404());
     vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);

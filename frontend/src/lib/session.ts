@@ -6,14 +6,27 @@ export function loginUrl(next: string): string {
 
 /** Send the browser to the login page, to come back to where it is now. */
 export function goToLogin(): void {
+  if (location.pathname === "/login") return;
   location.assign(
     loginUrl(location.pathname + location.search + location.hash),
   );
 }
 
+/**
+ * Where to go after logging in: a path on this site, else "/". Parsed the
+ * way a browser will, since it reads "/\\evil.example" and "/\t/evil.example"
+ * as "//evil.example". Never the login page itself.
+ */
 export function safeNext(raw: string | null): string {
-  if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return "/";
-  return raw;
+  if (!raw) return "/";
+  try {
+    const u = new URL(raw, location.origin);
+    if (u.origin !== location.origin) return "/";
+    if (u.pathname === "/login" || u.pathname.startsWith("/login/")) return "/";
+    return u.pathname + u.search + u.hash;
+  } catch {
+    return "/";
+  }
 }
 
 export async function login(
