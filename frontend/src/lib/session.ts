@@ -38,7 +38,7 @@ export function safeNext(raw: string | null): string {
 export async function login(
   username: string,
   password: string,
-): Promise<"ok" | "wrong" | "throttled" | "store"> {
+): Promise<"ok" | "wrong" | "throttled" | "malformed" | "store"> {
   const res = await fetch("/results/_login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -48,6 +48,9 @@ export async function login(
   if (res.status === 204) return "ok";
   if (res.status === 401) return "wrong";
   if (res.status === 429) return "throttled";
+  // The body the proxy refused before asking the store: too large for the
+  // web front's pass-through (413), or fields past the proxy's limits (422).
+  if (res.status === 413 || res.status === 422) return "malformed";
   return "store";
 }
 

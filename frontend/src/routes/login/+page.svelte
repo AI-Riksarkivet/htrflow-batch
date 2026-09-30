@@ -9,6 +9,7 @@
   const messages = {
     wrong: "The result store did not accept that user name or password.",
     throttled: "Too many failed attempts. Wait a minute and try again.",
+    malformed: "The user name or password is too long or malformed.",
     store: "The result store could not be reached. Try again shortly.",
   } as const;
 
