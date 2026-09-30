@@ -10,7 +10,7 @@
   import { LIVE_MAX_FAILURES, LIVE_MS } from "$lib/config.js";
   import { startPolling } from "$lib/poll.js";
   import { isResultUrl, shortDate } from "$lib/api.js";
-  import { goToLogin } from "$lib/session.js";
+  import { FORBIDDEN_FILE, goToLogin } from "$lib/session.js";
   import {
     isTerminalManifest,
     runManifestSchema,
@@ -78,6 +78,12 @@
       if (res.status === 401) {
         goToLogin();
         live = false; // on its way to /login: no more polls
+        return true;
+      }
+      if (res.status === 403) {
+        // Logged in, and refused: no poll will change the answer.
+        logError = FORBIDDEN_FILE;
+        live = false;
         return true;
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -260,7 +266,9 @@
 
   <section class="log" aria-label="run log">
     {#if logError !== null}
-      <p class="error" role="alert">Cannot load log: {logError}</p>
+      <p class="error" role="alert">
+        {logError === FORBIDDEN_FILE ? logError : `Cannot load log: ${logError}`}
+      </p>
     {:else if parsed === null}
       <p>Loading…</p>
     {:else if parsed.groups.length === 0}

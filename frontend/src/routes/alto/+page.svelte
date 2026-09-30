@@ -7,7 +7,7 @@
   import LogoutButton from "$lib/components/LogoutButton.svelte";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
   import { isResultUrl } from "$lib/api.js";
-  import { goToLogin } from "$lib/session.js";
+  import { FORBIDDEN_FILE, goToLogin } from "$lib/session.js";
   import { type AltoPage, parseAlto, prettyXml } from "$lib/alto.js";
 
   function queryParam(name: string): string | null {
@@ -46,6 +46,10 @@
     try {
       const res = await fetch(src, { cache: "no-cache" });
       if (res.status === 401) return goToLogin();
+      if (res.status === 403) {
+        error = FORBIDDEN_FILE;
+        return;
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       xmlText = await res.text();
     } catch (e) {
