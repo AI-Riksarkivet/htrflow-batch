@@ -28,7 +28,7 @@ from importlib import metadata
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -36,6 +36,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from . import projection
 from .kube import ApplyConflict, ClusterUnavailable, is_campaign
 from .progress import ProgressReader
+from .sessions import COOKIE, Session, SessionChecker, SessionsUnavailable
 
 _LOG = logging.getLogger(__name__)
 
@@ -355,6 +356,7 @@ def create_app(
     static_dir: Path | str | None = None,
     batch_version: str = DEV_VERSION,
     progress=None,
+    sessions=None,
 ) -> FastAPI:
     """``batch_version`` is the deployed image's tag, passed in by
     ``__main__`` from ``kube.Config`` -- this module reads no environment of
@@ -371,13 +373,27 @@ def create_app(
     app = FastAPI()
     site_only = reader.cfg is None
     if progress is None and not site_only:
-        verify = getattr(reader.cfg, "s3_verify_tls", True)
-        if not verify:
-            _LOG.warning(
-                "HTRFLOW_S3_VERIFY_TLS=false: "
-                "the results bucket's certificate is not checked"
-            )
-        progress = ProgressReader(verify=verify)
+        progress = ProgressReader()
+
+    if sessions is None and not site_only and getattr(reader.cfg, "results_proxy", ""):
+        sessions = SessionChecker(reader.cfg.results_proxy)
+
+    def current_session(request: Request) -> Session | None:
+        """Every /api/v1 route depends on this. No checker means no gate:
+        only a hand-built cfg (tests) lacks results_proxy -- Config.from_env
+        refuses to start without one."""
+        if sessions is None:
+            return None
+        try:
+            found = sessions.check(request.cookies.get(COOKIE))
+        except SessionsUnavailable as e:
+            _LOG.warning("session check failed: %s", e)
+            raise HTTPException(
+                status_code=502, detail="the results service did not answer"
+            ) from e
+        if found is None:
+            raise HTTPException(status_code=401, detail="not logged in")
+        return found
 
     viewer_csp = uv_csp(Path(static_dir or DEFAULT_STATIC_DIR))
 
@@ -437,7 +453,7 @@ def create_app(
         return {"ok": True}
 
     @app.api_route("/api/v1/version", methods=GET_HEAD)
-    def version() -> dict:
+    def version(session: Session | None = Depends(current_session)) -> dict:
         return {"version": batch_version, "web": WEB_VERSION}
 
     # Namespaces whose last write was refused, and when. A denied RBAC grant
@@ -537,6 +553,7 @@ def create_app(
     @app.api_route("/api/v1/jobs", methods=GET_HEAD)
     def list_jobs(
         response: Response,
+        session: Session | None = Depends(current_session),
         reaped: int = Query(REAPED_SHOWN, ge=0, le=REAPED_MAX),
     ) -> list[dict]:
         """Every live campaign Job, and the ``reaped`` newest campaigns
@@ -625,6 +642,7 @@ def create_app(
         name: str,
         offset: int = Query(0, ge=0),
         limit: int = Query(200, ge=1, le=1000),
+        session: Session | None = Depends(current_session),
     ) -> dict:
         if not _serves(namespace, name):
             raise HTTPException(status_code=404, detail="job not found")
