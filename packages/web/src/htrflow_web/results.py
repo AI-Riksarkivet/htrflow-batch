@@ -10,6 +10,8 @@ import os
 import threading
 import time
 from collections import OrderedDict, deque
+from datetime import timezone
+from email.utils import format_datetime, parsedate_to_datetime
 from typing import Literal, Mapping
 
 import boto3
@@ -202,6 +204,18 @@ def session_of(request: Request, codec: SessionCodec) -> SessionData | None:
     return codec.open(token) if token else None
 
 
+def _fail(detail: str, status: int) -> JSONResponse:
+    """A file-route error: never cacheable, never sniffed."""
+    return JSONResponse(
+        {"detail": detail},
+        status_code=status,
+        headers={
+            "Cache-Control": FILE_HEADERS["Cache-Control"],
+            "X-Content-Type-Options": FILE_HEADERS["X-Content-Type-Options"],
+        },
+    )
+
+
 def _clear(response: Response, request: Request) -> None:
     # set_cookie with Max-Age=0 rather than delete_cookie: the web package's
     # read-only guard test bans every `.delete_*(` call in the source.
@@ -334,17 +348,24 @@ def create_results_app(
     def file(path: str, request: Request) -> Response:
         data = session_of(request, codec)
         if data is None:
-            return JSONResponse({"detail": "not logged in"}, status_code=401)
-        raw = request.scope.get("raw_path", b"").decode("latin-1")
-        raw = raw.split("/results/", 1)[1] if "/results/" in raw else path
-        key = allowed_key(raw, cfg.namespace)
+            return _fail("not logged in", 401)
+        # Only the raw path: a server-decoded %2F must not be decoded again.
+        raw_path = request.scope.get("raw_path", b"").split(b"?", 1)[0]
+        if not raw_path.startswith(b"/results/"):
+            return _fail("not found", 404)
+        key = allowed_key(
+            raw_path[len(b"/results/") :].decode("latin-1"), cfg.namespace
+        )
         if key is None:
-            return JSONResponse({"detail": "not found"}, status_code=404)
+            return _fail("not found", 404)
         args = {"Bucket": cfg.s3_bucket, "Key": key}
         if inm := request.headers.get("if-none-match"):
             args["IfNoneMatch"] = inm
         if ims := request.headers.get("if-modified-since"):
-            args["IfModifiedSince"] = ims
+            try:  # an unparsable date is ignored (RFC 9110)
+                args["IfModifiedSince"] = parsedate_to_datetime(ims)
+            except (TypeError, ValueError):
+                pass
         s3 = clients.get(data.access_key, data.secret_key)
         head = request.method == "HEAD"
         try:
@@ -353,36 +374,30 @@ def create_results_app(
             code = _code(e)
             if code in ("304", "NotModified"):
                 meta = e.response.get("ResponseMetadata", {})
-                etag = meta.get("HTTPHeaders", {}).get("etag", "")
-                return Response(
-                    status_code=304,
-                    headers={**({"ETag": etag} if etag else {}), **FILE_HEADERS},
-                )
+                got = meta.get("HTTPHeaders", {})
+                kept = {
+                    n: got[k]
+                    for n, k in (("ETag", "etag"), ("Last-Modified", "last-modified"))
+                    if got.get(k)
+                }
+                return Response(status_code=304, headers={**kept, **FILE_HEADERS})
             if code in NOT_THERE:
-                return JSONResponse({"detail": "not found"}, status_code=404)
+                return _fail("not found", 404)
             # A HEAD error has no body, so a bad or revoked key surfaces as a
             # bare "403" here and maps to 403; only GET can tell 401 apart.
             if code in DENIED:
-                return JSONResponse(
-                    {"detail": "your account may not read this"}, status_code=403
-                )
+                return _fail("your account may not read this", 403)
             if code in BAD_KEYS:
-                r = JSONResponse(
-                    {"detail": "your login is no longer accepted"}, status_code=401
-                )
+                r = _fail("your login is no longer accepted", 401)
                 _clear(r, request)
                 return r
             _LOG.warning("store answered %s for %s", code, key)
-            return JSONResponse({"detail": "the result store failed"}, status_code=502)
+            return _fail("the result store failed", 502)
         except (ConnectTimeoutError, ReadTimeoutError):
-            return JSONResponse(
-                {"detail": "the result store timed out"}, status_code=504
-            )
+            return _fail("the result store timed out", 504)
         except BotoCoreError as e:
             _LOG.warning("store unreachable: %s", e)
-            return JSONResponse(
-                {"detail": "the result store could not be reached"}, status_code=502
-            )
+            return _fail("the result store could not be reached", 502)
         ctype, attachment = served_type(obj.get("ContentType"))
         # Content-Type set verbatim (media_type= would append a charset).
         headers = {
@@ -393,7 +408,9 @@ def create_results_app(
         if etag := obj.get("ETag"):
             headers["ETag"] = etag
         if lm := obj.get("LastModified"):
-            headers["Last-Modified"] = lm.strftime("%a, %d %b %Y %H:%M:%S GMT")
+            headers["Last-Modified"] = format_datetime(
+                lm.astimezone(timezone.utc), usegmt=True
+            )
         if attachment:
             headers["Content-Disposition"] = "attachment"
         if head:
