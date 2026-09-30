@@ -8,6 +8,7 @@
 // there is no derivation layer left to keep them in.
 import { z } from "zod";
 import { resolveApiBase, resolveResultsBase } from "./config.js";
+import { goToLogin } from "./session.js";
 
 /**
  * Only absolute http(s) URLs may reach an href/src: query strings and
@@ -379,6 +380,9 @@ export class ApiUnreachable extends Error {
   }
 }
 
+/** The session is gone: the browser is on its way to the login page. */
+export class NotLoggedIn extends Error {}
+
 async function getJson(url: string, signal?: AbortSignal): Promise<unknown> {
   return (await getResponse(url, signal)).json();
 }
@@ -397,6 +401,10 @@ async function getResponse(
     throw new ApiUnreachable(e instanceof Error ? e.message : String(e), {
       cause: e,
     });
+  }
+  if (res.status === 401) {
+    goToLogin();
+    throw new NotLoggedIn("not logged in");
   }
   if (!res.ok) throw new ApiUnreachable(`HTTP ${res.status}`);
   return res;

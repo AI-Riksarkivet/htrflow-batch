@@ -4,8 +4,10 @@
   // directly): a prerendered, client-only page like /log, so the query
   // string is read from window.location, not a SvelteKit load function.
   import { browser } from "$app/environment";
+  import LogoutButton from "$lib/components/LogoutButton.svelte";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
   import { isResultUrl } from "$lib/api.js";
+  import { goToLogin } from "$lib/session.js";
   import { type AltoPage, parseAlto, prettyXml } from "$lib/alto.js";
 
   function queryParam(name: string): string | null {
@@ -43,6 +45,7 @@
     }
     try {
       const res = await fetch(src, { cache: "no-cache" });
+      if (res.status === 401) return goToLogin();
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       xmlText = await res.text();
     } catch (e) {
@@ -108,6 +111,7 @@
           {showRaw ? "text" : "raw XML"}
         </button>
       {/if}
+      <LogoutButton />
       <ThemeToggle />
     </div>
   </header>
