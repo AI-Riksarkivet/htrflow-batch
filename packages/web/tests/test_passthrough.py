@@ -1,0 +1,256 @@
+import httpx
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from htrflow_web.app import create_app
+from htrflow_web.passthrough import results_route
+
+
+class _Bytes(httpx.AsyncByteStream):
+    def __init__(self, data):
+        self.data = data
+
+    async def __aiter__(self):
+        yield self.data
+
+
+def _streaming(resp):
+    """A MockTransport answer built from content= is already read; a real
+    transport's is a stream, which is what the pass-through must consume."""
+    if not hasattr(resp, "_content"):
+        return resp
+    return httpx.Response(
+        resp.status_code, headers=resp.headers.raw, stream=_Bytes(resp.content)
+    )
+
+
+def app_with(handler, calls=None):
+    def wrapped(req):
+        if calls is not None:
+            calls.append(req)
+        return _streaming(handler(req))
+
+    app = FastAPI()
+    results_route(
+        app,
+        "http://proxy:8082/results",
+        httpx.AsyncClient(transport=httpx.MockTransport(wrapped)),
+    )
+    return TestClient(app, base_url="https://site.example")
+
+
+def test_a_file_comes_through_with_its_headers():
+    def handler(req):
+        assert str(req.url) == "http://proxy:8082/results/ns/demo/R1/iiif.json"
+        assert req.headers["cookie"] == "htr_session=tok"
+        assert req.headers["x-forwarded-proto"] == "https"
+        assert req.headers["x-forwarded-host"] == "site.example"
+        return httpx.Response(
+            200,
+            content=b"{}",
+            headers={
+                "content-type": "application/json",
+                "etag": '"e"',
+                "content-security-policy": "default-src 'none'; sandbox",
+            },
+        )
+
+    c = app_with(handler)
+    c.cookies.set("htr_session", "tok")
+    r = c.get("/results/ns/demo/R1/iiif.json")
+    assert r.status_code == 200 and r.content == b"{}"
+    assert r.headers["etag"] == '"e"'
+    assert r.headers["content-security-policy"] == "default-src 'none'; sandbox"
+
+
+def test_304_and_set_cookie_pass_unchanged():
+    def handler(req):
+        if req.method == "POST":
+            return httpx.Response(
+                204, headers={"set-cookie": "htr_session=x; HttpOnly"}
+            )
+        assert req.headers["if-none-match"] == '"e"'
+        return httpx.Response(304, headers={"etag": '"e"'})
+
+    c = app_with(handler)
+    r304 = c.get("/results/ns/x", headers={"If-None-Match": '"e"'})
+    assert r304.status_code == 304 and r304.content == b""
+    r = c.post(
+        "/results/_login",
+        json={"username": "a", "password": "b"},
+        headers={"Origin": "https://site.example"},
+    )
+    assert r.status_code == 204
+    assert r.headers["set-cookie"].startswith("htr_session=x")
+
+
+def test_several_set_cookie_headers_all_pass():
+    def handler(req):
+        return httpx.Response(
+            200, headers=[("set-cookie", "a=1"), ("set-cookie", "b=2")]
+        )
+
+    r = app_with(handler).get("/results/ns/x")
+    assert r.headers.get_list("set-cookie") == ["a=1", "b=2"]
+
+
+def test_the_body_is_streamed_not_buffered():
+    sent = b"x" * (3 * 1024 * 1024)
+    c = app_with(
+        lambda req: httpx.Response(
+            200, content=sent, headers={"content-type": "text/plain"}
+        )
+    )
+    with c.stream("GET", "/results/ns/big.txt") as r:
+        chunks = list(r.iter_bytes())
+    assert b"".join(chunks) == sent
+
+
+def test_the_upstream_response_is_closed_after_streaming():
+    closed = []
+
+    class Body(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b"abc"
+
+        async def aclose(self):
+            closed.append(True)
+
+    c = app_with(lambda req: httpx.Response(200, stream=Body()))
+    assert c.get("/results/ns/x").content == b"abc"
+    assert closed
+
+
+def test_head_passes_without_a_body():
+    seen = []
+
+    def handler(req):
+        seen.append(req.method)
+        return httpx.Response(
+            200, headers={"content-length": "5", "content-type": "text/plain"}
+        )
+
+    r = app_with(handler).head("/results/ns/x")
+    assert r.status_code == 200 and r.content == b"" and seen == ["HEAD"]
+
+
+def test_a_proxy_that_does_not_answer_is_502():
+    def handler(req):
+        raise httpx.ConnectError("down")
+
+    assert app_with(handler).get("/results/ns/x").status_code == 502
+
+
+def test_an_encoded_slash_in_the_prefix_is_404_and_the_proxy_is_not_called():
+    calls = []
+    c = app_with(lambda req: httpx.Response(200), calls)
+    assert c.get("/results%2Fns/x").status_code == 404
+    assert calls == []
+
+
+def test_the_path_is_forwarded_still_encoded():
+    calls = []
+    c = app_with(lambda req: httpx.Response(200), calls)
+    assert c.get("/results/ns/a%20b").status_code == 200
+    assert str(calls[0].url) == "http://proxy:8082/results/ns/a%20b"
+    c.get("/results/ns/a%2Fb")
+    assert str(calls[1].url) == "http://proxy:8082/results/ns/a%2Fb"
+
+
+def test_the_query_string_is_forwarded_unchanged():
+    calls = []
+    c = app_with(lambda req: httpx.Response(200), calls)
+    c.get("/results/ns/x?a=1&b=%20")
+    assert str(calls[0].url) == "http://proxy:8082/results/ns/x?a=1&b=%20"
+
+
+def test_this_pod_appends_its_peer_and_sets_forwarded_headers():
+    calls = []
+    c = app_with(lambda req: httpx.Response(200), calls)
+    c.get("/results/ns/x")
+    assert calls[0].headers["x-forwarded-for"] == "testclient"
+    c.get(
+        "/results/ns/x",
+        headers={
+            "X-Forwarded-For": "203.0.113.9",
+            "X-Forwarded-Proto": "https",
+            "X-Forwarded-Host": "public.example",
+        },
+    )
+    h = calls[1].headers
+    assert h["x-forwarded-for"] == "203.0.113.9, testclient"
+    assert h["x-forwarded-proto"] == "https"
+    assert h["x-forwarded-host"] == "public.example"
+
+
+def test_without_an_ingress_proto_and_host_come_from_the_request():
+    calls = []
+    app = FastAPI()
+    results_route(
+        app,
+        "http://proxy:8082/results",
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda r: (calls.append(r), _streaming(httpx.Response(200)))[1]
+            )
+        ),
+    )
+    TestClient(app, base_url="http://plain.example:8080").get("/results/ns/x")
+    h = calls[0].headers
+    assert h["x-forwarded-proto"] == "http"
+    assert h["x-forwarded-host"] == "plain.example:8080"
+
+
+def test_unlisted_request_headers_are_not_forwarded():
+    calls = []
+    c = app_with(lambda req: httpx.Response(200), calls)
+    c.get("/results/ns/x", headers={"Authorization": "Bearer z", "X-Other": "1"})
+    assert "authorization" not in calls[0].headers
+    assert "x-other" not in calls[0].headers
+
+
+def _create(monkeypatch, handler, proxy="http://proxy:8082/results"):
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    import htrflow_web.app as app_mod  # noqa: PLC0415
+
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: _streaming(handler(r)))
+    )
+    monkeypatch.setattr(
+        app_mod, "results_route", lambda app, base: results_route(app, base, client)
+    )
+    reader = SimpleNamespace(
+        cfg=SimpleNamespace(results_url="", namespaces=("ns",), results_proxy=proxy)
+    )
+    return create_app(
+        reader, static_dir="/nonexistent", sessions=None, progress=object()
+    )
+
+
+def test_the_proxys_own_security_headers_win_over_the_web_fronts(monkeypatch):
+    csp = "default-src 'none'; sandbox"
+    app = _create(
+        monkeypatch,
+        lambda req: httpx.Response(
+            200,
+            headers={
+                "content-security-policy": csp,
+                "x-content-type-options": "nosniff",
+            },
+        ),
+    )
+    r = TestClient(app).get("/results/ns/x")
+    assert r.headers["content-security-policy"] == csp
+
+
+def test_route_absent_when_no_results_proxy(monkeypatch):
+    app = _create(monkeypatch, lambda req: httpx.Response(200), proxy="")
+    assert TestClient(app).get("/results/ns/x").status_code == 404
+
+
+def test_route_absent_in_site_only_mode():
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    app = create_app(SimpleNamespace(cfg=None), static_dir="/nonexistent")
+    assert TestClient(app).get("/results/ns/x").status_code in (404, 503)
