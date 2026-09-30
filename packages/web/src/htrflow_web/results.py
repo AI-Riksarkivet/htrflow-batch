@@ -37,7 +37,7 @@ DENIED = {"403", "AccessDenied", "Forbidden"}
 #: Login probe is a ranged GET, which carries an S3 error body. Only these
 #: codes prove the keys work; a bare "403"/"400" (HEAD-style, no S3 code)
 #: is not proof, so the login fails closed on it.
-LOGIN_VALID = {"NoSuchKey", "NotFound", "404", "AccessDenied"}
+LOGIN_VALID = {"NoSuchKey", "NotFound", "404", "AccessDenied", "InvalidRange"}
 
 
 class ResultsConfig(BaseModel):
@@ -154,6 +154,7 @@ class LoginLimiter:
                 q = self._fails[key] = deque()
                 while len(self._fails) > self._max_keys:
                     self._fails.popitem(last=False)
+            self._fails.move_to_end(key)
             q.append(self._clock())
 
     def succeeded(self, key: str) -> None:
@@ -242,9 +243,20 @@ def create_results_app(
                 {"detail": "cross-origin login refused"}, status_code=403
             )
         addr = _client_addr(request, cfg.trusted_hops)
-        if limiter.blocked(addr) or user_limiter.blocked(body.username):
+        if limiter.blocked(addr):
             return JSONResponse(
-                {"detail": "too many failed logins: wait a minute and try again"},
+                {
+                    "detail": "too many failed logins from this address: "
+                    "wait a minute and try again"
+                },
+                status_code=429,
+            )
+        if user_limiter.blocked(body.username):
+            return JSONResponse(
+                {
+                    "detail": "too many failed logins for this user: "
+                    "wait five minutes and try again"
+                },
                 status_code=429,
             )
         ak, sk = derive_keys(body.username, body.password, cfg.key_derivation)
