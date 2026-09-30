@@ -7,12 +7,15 @@ One Deployment, `htrflow-web`, serves three things on one origin:
 - the **read API** at `/api/v1/…`
 
 The read API computes every answer live from the campaign Jobs, their Pods
-and ConfigMaps, plus each running volume's `progress.json` in the bucket.
+and ConfigMaps, plus each running volume's `progress.json`, read through the results proxy.
 It writes one thing: each campaign's status record
 ([Campaigns → The record](../how-it-works/campaigns.md#the-record-a-campaign-leaves)).
-It holds no cluster credentials for the browser and has no authentication:
-who may reach it is decided by the network
-([Deploy](../getting-started/deploy.md)).
+It holds no cluster credentials for the browser. Every `/api/v1` route needs a
+login on the results store, checked with the results proxy; who may reach the
+site at all is decided by the network
+([Deploy](../getting-started/deploy.md)). The proxy, `htrflow-results`, is a
+second Deployment on the same image that serves `/results` files and the
+login ([Security → The results boundary](../how-it-works/security.md#the-results-boundary)).
 
 Source: [`packages/web`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/packages/web)
 (the API) and [`frontend/`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/frontend)
@@ -28,6 +31,8 @@ Source: [`packages/web`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/ma
 | `/uv.html#?manifest=<url>` | Universal Viewer on a IIIF manifest. |
 | `/config.js` | The browser's configuration, written by the API from its own environment (below). |
 | `GET /healthz` | `{"ok": true}`. |
+| `GET`, `HEAD /results/<key>` | A result file, streamed from the results proxy (through the web front, which reads nothing from the answer). `401` without a session. |
+| `POST /results/_login`, `POST /results/_logout`, `GET /results/_session` | The login form's target (user name and password), the log-out, and `{"user": …}` for a valid session (`401` otherwise). Posted bodies are capped at 16 KiB, and only the `htr_session` cookie is forwarded. |
 | `GET /api/v1/version` | `{"version", "web"}`: the release tag both images carry, and the web package's version. |
 | `GET /api/v1/jobs?reaped=20` | One summary per campaign (below). |
 | `GET /api/v1/jobs/{namespace}/{name}?offset=0&limit=200` | One campaign's detail (below). `404` for a name that is not a campaign. |
@@ -128,9 +133,10 @@ the volume up.
   over (an absent file included).
 - One request makes at most 100 bucket reads and spends at most 5 s on
   them, active volumes first. The rest come from later polls.
-- The API reads the bucket at `HTRFLOW_INTERNAL_RESULTS_BASE` when that is
-  set (chart `web.internalResultsBase`). If the pod cannot reach the public
-  address, set it, or the page silently shows no progress.
+- The API reads progress through the results proxy at
+  `HTRFLOW_INTERNAL_RESULTS_BASE`, forwarding the caller's session cookie;
+  the cache is per user, so one person never sees what another's account read.
+  A volume the account may not read shows no progress.
 
 ## Phases and volume states
 
@@ -233,8 +239,8 @@ second copy to keep in step.
 | API env var | Default | Meaning |
 |---|---|---|
 | `HTRFLOW_RESULTS_URL` | required | The browser-reachable base every result URL is built from. The chart sets it from `resultsUrl`. |
-| `HTRFLOW_INTERNAL_RESULTS_BASE` | the public base | Where the pod reads progress files, when the browser's address does not work from inside the cluster. Chart `web.internalResultsBase`. |
-| `HTRFLOW_RESULTS_PROXY` | required | The results proxy's Service, `http://htrflow-results:8082/results`. The web front asks it whether a request's session cookie is valid; every `/api/v1` route answers `401` without a session and `502` when the proxy does not answer. |
+| `HTRFLOW_INTERNAL_RESULTS_BASE` | the public base | Where the pod reads progress files. The chart sets it to the results proxy's Service, `http://htrflow-results:8082/results`. |
+| `HTRFLOW_RESULTS_PROXY` | required | The results proxy's Service, `http://htrflow-results:8082/results`. The web front asks it whether a request's session cookie is valid (an answer is cached for 30 seconds per cookie) and passes `/results` through to it; every `/api/v1` route answers `401` without a session and `502` when the proxy does not answer. |
 | `HTRFLOW_NAMESPACES` | the pod's own namespace (`htr-batch` outside a cluster) | Comma-separated namespaces to list. |
 | `HTRFLOW_WEB_STATIC` | `/app/static` | The built site; missing means API only. |
 | `HTRFLOW_WEB_SITE_ONLY` | unset | Serve the site with no cluster: `/api/v1/…` answers `503`. |

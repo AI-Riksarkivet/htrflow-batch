@@ -230,9 +230,10 @@ Publishing `iiif.json` needs `RESULTS_URL`, the browser-reachable URL
 base, which is not the in-cluster S3 endpoint. The viewer manifest is written
 after verify, under the same `<pipeline-id>/<volume-ref>/` prefix, and
 during the run every tenth page ([From image to transcription](page-flow.md)).
-The browser fetches the manifest and the ALTO straight from the bucket. The
-results prefix therefore needs anonymous read and CORS for GET from the
-viewer's origin ([Security → The bucket policy](security.md#the-bucket-policy)).
+The browser fetches the manifest and the ALTO from the results proxy, on the
+web front's own origin, which reads them from the bucket with the logged-in
+person's keys: the bucket needs no anonymous read and no CORS
+([Security → The results boundary](security.md#the-results-boundary)).
 The viewer's own patches are described in
 [Web front & read API](../reference/web.md).
 
@@ -272,8 +273,9 @@ The cache speeds a run up, and the run never depends on it:
   creates the bucket.
 - **A volume with a page index past 99999 is not cached at all**, with one
   log line, because the key's page number has five digits.
-- **The results bucket is never the cache.** It is public-read, so an
-  `IMAGE_CACHE_BUCKET` that names it turns the cache off, with one log line.
+- **The results bucket is never the cache.** It holds the results people
+  read, so an `IMAGE_CACHE_BUCKET` that names it turns the cache off, with one
+  log line.
 - **The key has no width.** A hit serves the image at whatever width first
   stored it. A pipeline asking for a larger `MAX_IMAGE_WIDTH` gets the
   cached size.
