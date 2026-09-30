@@ -15,7 +15,9 @@ htrflow-batch {{ .Chart.Version }} installed.
   The S3 Secret ({{ .Values.s3.existingSecret }}) needs a `credentials` key in AWS ini format (docs: getting-started/deploy).
 {{- end }}
 - Web front: Deployment htrflow-web on NodePort {{ .Values.web.nodePort }} — campaign browser at /,
-  Universal Viewer at /uv.html, read API at /api/v1/jobs. One image, no proxy (0.4.0).
+  Universal Viewer at /uv.html, read API at /api/v1/jobs, result files at /results/ through the
+  results proxy (Deployment htrflow-results), all behind one login with a result-store account.
+  Session key: Secret {{ .Values.results.sessionSecret }}; result links: {{ .Values.resultsUrl }}.
 {{- if .Values.security.allowTagImages }}
 - WARNING security.allowTagImages=true: control-plane images are tag-pinned and re-pulled on every rollout. PoC only.
 {{- end }}
