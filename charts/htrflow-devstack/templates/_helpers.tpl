@@ -72,31 +72,27 @@ Returns a dict {access, secret}; Helm `lookup` is empty under `helm template`.
 {{- end }}
 
 {{/*
-Anonymous-read bucket policy for the results bucket (audit X14/S6): everything
-is readable except the platform's private state. RustFS honours NotResource
-on an Allow (verified 2026-08-26 against rustfs@sha256:41fe8938…); a Deny
-statement would also block the credentialed principals, and an anonymous-only
-Condition is ignored — hence this shape. Keep in step with scripts/compose_init.py.
-
-The private list holds at most `status/logs/*`: that is the only key anything
-writes under `status/` (packages/wrapper's ResultStore.run_log_key; nothing
-else in the platform touches the bucket). The reconciler-era entries
-(attempts.json, validation.json, volumes.json, failures/*) were dropped in
-0.3.0 — nothing has written them since B63, so excluding them only made the
-rendered policy harder to read. With publicLogs on there is no private key
-at all, and the statement becomes a plain Resource allow.
+The login user's password: existing Secret (upgrade) → random. Nobody sets
+it in values -- it is read back from the Secret -- so there is no value to
+refuse; `helm template` has no cluster to look up and renders a fresh one.
 */}}
-{{- define "htrflow-devstack.bucketPolicy" -}}
-{{- $b := .Values.s3.bucket }}
-{{- $statement := dict
-      "Sid" "AnonymousReadResults"
-      "Effect" "Allow"
-      "Principal" (dict "AWS" (list "*"))
-      "Action" (list "s3:GetObject") }}
-{{- if .Values.rustfs.publicLogs }}
-{{- $_ := set $statement "Resource" (list (printf "arn:aws:s3:::%s/*" $b)) }}
+{{- define "htrflow-devstack.loginPassword" -}}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace .Values.s3.loginSecret }}
+{{- if and $existing $existing.data (hasKey $existing.data "password") }}
+{{- index $existing.data "password" | b64dec }}
 {{- else }}
-{{- $_ := set $statement "NotResource" (list (printf "arn:aws:s3:::%s/status/logs/*" $b)) }}
+{{- randAlphaNum 32 }}
 {{- end }}
-{{- dict "Version" "2012-10-17" "Statement" (list $statement) | toJson }}
+{{- end }}
+
+{{/*
+The login user's policy: read one object of the results bucket. No
+s3:ListBucket (the proxy never lists, and a listing would show every
+namespace's keys), no write, no other bucket -- the image cache included.
+*/}}
+{{- define "htrflow-devstack.readPolicy" -}}
+{{- dict "Version" "2012-10-17" "Statement" (list (dict
+      "Effect" "Allow"
+      "Action" (list "s3:GetObject")
+      "Resource" (list (printf "arn:aws:s3:::%s/*" .Values.s3.bucket)))) | toJson }}
 {{- end }}

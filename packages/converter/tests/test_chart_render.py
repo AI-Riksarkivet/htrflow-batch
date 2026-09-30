@@ -1791,9 +1791,6 @@ def test_the_image_cache_bucket_is_created_with_no_policy_or_cors():
     assert 'ensure_bucket "$IMAGE_CACHE_BUCKET"' in script
     assert 'put-bucket-policy --bucket "$IMAGE_CACHE_BUCKET"' not in script
     assert 'put-bucket-cors --bucket "$IMAGE_CACHE_BUCKET"' not in script
-    # the results bucket's own policy/CORS lines are untouched
-    assert 'put-bucket-policy --bucket "$S3_BUCKET"' in script
-    assert 'put-bucket-cors --bucket "$S3_BUCKET"' in script
 
     job = named(rendered, "Job", "rustfs-init")
     env = {
@@ -1816,6 +1813,142 @@ def test_without_the_value_the_init_configmap_and_job_are_unchanged():
     job = named(rendered, "Job", "rustfs-init")
     names = [e["name"] for e in job["spec"]["template"]["spec"]["containers"][0]["env"]]
     assert "IMAGE_CACHE_BUCKET" not in names
+
+
+# --- The results bucket is private; RustFS gets a read-only login user ----
+
+#: The login policy the init hook creates: read one object of the results
+#: bucket, nothing else -- no listing, no write, no other bucket.
+READ_POLICY = {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": ["s3:GetObject"],
+            "Resource": ["arn:aws:s3:::htr-results/*"],
+        }
+    ],
+}
+
+
+def _init_env(rendered: list[dict]) -> dict[str, dict]:
+    job = named(rendered, "Job", "rustfs-init")
+    return {e["name"]: e for e in job["spec"]["template"]["spec"]["containers"][0]["env"]}
+
+
+def test_the_results_bucket_gets_no_anonymous_policy_and_no_cors():
+    """Everything a browser reads goes through the results proxy with the
+    reader's own keys: the bucket has no public statement left to set."""
+    rendered = _devstack_render()
+    data = named(rendered, "ConfigMap", "rustfs-init")["data"]
+    assert "results-policy.json" not in data and "cors.json" not in data
+    script = data["init.sh"]
+    for gone in ("put-bucket-policy", "put-bucket-cors", "aws "):
+        assert gone not in script, gone
+
+
+def test_an_upgrade_takes_the_old_public_policy_and_cors_off_the_bucket():
+    """0.4.0 set an anonymous-read policy and CORS on the bucket; a bucket
+    policy outlives the chart that set it, so every run of the hook clears
+    both (a no-op on a bucket that has neither)."""
+    script = named(_devstack_render(), "ConfigMap", "rustfs-init")["data"]["init.sh"]
+    ensure = script[script.index("ensure_bucket() {") : script.index("}")]
+    assert 'rc bucket anonymous set private "local/$1"' in ensure
+    assert 'rc bucket cors remove "local/$1"' in ensure
+
+
+def test_the_init_hook_creates_a_read_only_login_user():
+    rendered = _devstack_render()
+    data = named(rendered, "ConfigMap", "rustfs-init")["data"]
+    assert json.loads(data["read-policy.json"]) == READ_POLICY
+    script = data["init.sh"]
+    assert "rc admin policy create local htr-read /init/read-policy.json" in script
+    assert 'rc admin user add local "$LOGIN_USER" "$LOGIN_PASSWORD"' in script
+    assert 'rc admin policy attach local htr-read --user "$LOGIN_USER"' in script
+    # policy before user before attach: attach names both
+    assert (
+        script.index("policy create")
+        < script.index("user add")
+        < script.index("policy attach")
+    )
+
+    env = _init_env(rendered)
+    assert env["LOGIN_USER"]["value"] == "htr-reader"
+    assert env["LOGIN_PASSWORD"]["valueFrom"]["secretKeyRef"] == {
+        "name": "htr-results-login",
+        "key": "password",
+    }
+    # the admin client signs with the root keys the S3 Secret already holds
+    for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        assert env[key]["valueFrom"]["secretKeyRef"] == {
+            "name": "htr-batch-s3",
+            "key": key,
+        }
+
+
+def test_the_login_user_and_its_secret_follow_their_values():
+    rendered = _devstack_render(
+        ("s3.loginUser=site-reader", "s3.loginSecret=site-login", "s3.bucket=site-results")
+    )
+    env = _init_env(rendered)
+    assert env["LOGIN_USER"]["value"] == "site-reader"
+    assert env["LOGIN_PASSWORD"]["valueFrom"]["secretKeyRef"]["name"] == "site-login"
+    policy = json.loads(named(rendered, "ConfigMap", "rustfs-init")["data"]["read-policy.json"])
+    assert policy["Statement"][0]["Resource"] == ["arn:aws:s3:::site-results/*"]
+
+
+def test_the_login_password_is_generated_once_and_kept():
+    """A random password in a Secret Helm keeps on uninstall and re-reads on
+    upgrade (`lookup`), like the root keys: the hook sets RustFS's copy from
+    it on every install and upgrade, so the Secret is the one source."""
+    secret = named(_devstack_render(), "Secret", "htr-results-login")
+    assert secret["metadata"]["annotations"]["helm.sh/resource-policy"] == "keep"
+    assert set(secret["stringData"]) == {"password"}
+    assert re.fullmatch(r"[A-Za-z0-9]{32}", secret["stringData"]["password"])
+    template = (DEVSTACK_CHART / "templates" / "_helpers.tpl").read_text()
+    assert 'lookup "v1" "Secret" .Release.Namespace .Values.s3.loginSecret' in template
+
+
+def test_the_init_image_is_rustfs_own_client_pinned_by_digest():
+    """The AWS CLI cannot make admin calls; RustFS's `rc` can, and its
+    image carries the busybox shell the script runs in."""
+    rendered = _devstack_render()
+    container = named(rendered, "Job", "rustfs-init")["spec"]["template"]["spec"][
+        "containers"
+    ][0]
+    assert re.fullmatch(r"rustfs/rc@sha256:[0-9a-f]{64}", container["image"])
+    assert container["command"] == ["/bin/sh", "/init/init.sh"]
+
+
+def test_the_documented_allow_list_admits_every_devstack_image_in_the_namespace():
+    """With the Kyverno policies on, the release namespace admits only the
+    repositories the dev-cluster page lists (images-allowed matches the part
+    before `@` on a path boundary): RustFS and its init hook live there."""
+    page = (REPO / "docs" / "development" / "dev-cluster.md").read_text()
+    listed = re.search(r"security\.allowedImageRepos='\{([^}]*)\}'", page)
+    assert listed, "dev-cluster.md no longer documents allowedImageRepos"
+    repos = [r.strip().strip("/") for r in listed.group(1).split(",")]
+    rendered = _devstack_render()
+    images = [
+        c["image"]
+        for o in rendered
+        if o["kind"] in ("Deployment", "Job") and o["metadata"]["namespace"] == NAMESPACE
+        for c in o["spec"]["template"]["spec"]["containers"]
+    ]
+    assert len(images) == 2, images
+    for image in images:
+        repo = image.split("@")[0]
+        assert any(repo == r or repo.startswith(r + "/") for r in repos), image
+
+
+@pytest.mark.parametrize("key", ["rustfs.publicLogs=true", "rustfs.init.corsOrigins[0]=*"])
+def test_the_public_bucket_values_are_gone(key: str):
+    values = yaml.safe_load((DEVSTACK_CHART / "values.yaml").read_text())
+    assert "publicLogs" not in values["rustfs"]
+    assert "corsOrigins" not in values["rustfs"]["init"]
+    result = helm_template(values=DEVSTACK_FULL_VALUES, sets=(key,), chart=DEVSTACK_CHART)
+    assert result.returncode != 0
+    assert "additional properties" in result.stderr.lower()
 
 
 def test_the_schema_refuses_a_short_image_cache_bucket_name(tmp_path: Path):

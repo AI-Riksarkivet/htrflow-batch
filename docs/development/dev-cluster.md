@@ -28,9 +28,12 @@ and `HTR_NAMESPACE` ([`.env`](#env), defaults `htr` and `htr-batch`);
 cluster that already has the device plugin ([Gotchas](#gotchas)).
 
 ```bash
+kubectl -n <namespace> create secret generic htr-session \
+  --from-literal=key="$(openssl rand -base64 32)"
 helm upgrade --install htr charts/htrflow-batch -n <namespace> \
-  --set resultsUrl=http://<node-address>:30900/htr-results \
-  --set web.internalResultsBase=http://rustfs.<namespace>.svc.cluster.local:9000/htr-results \
+  --set resultsUrl=http://<node-address>:30800/results \
+  --set results.sessionSecret=htr-session \
+  --set results.keyDerivation=none \
   --set network.apiServer.cidr=<apiserver-address>/32 \
   --set network.iiifCidrs='{<iiif-source-cidr>}' \
   --set network.clusterCidrs='{<pod-cidr>,<service-cidr>}' \
@@ -40,8 +43,11 @@ make psa-labels
 ```
 
 - `<node-address>` is where your browser reaches the node: the web front on
-  port 30800, the results on 30900. Not directly reachable? See
-  [Reaching it from a workstation](#reaching-it-from-a-workstation).
+  port 30800, and the results through it under `/results`. Not directly
+  reachable? See [Reaching it from a workstation](#reaching-it-from-a-workstation).
+- `htr-session` holds the key the results proxy seals login sessions with.
+  `results.keyDerivation=none` says RustFS issues S3 keys: the login form
+  takes the access key as the user name and the secret key as the password.
 - `<apiserver-address>` is the API server as pods reach it; on one node,
   usually the node's address.
 - `network.iiifCidrs` must cover the host you transcribe from; campaign pods
@@ -50,7 +56,7 @@ make psa-labels
   `security.policies.allowDisabled` accepts the Kyverno policies off. Both
   are right for a disposable cluster only. To turn the policies on, add
   `--set security.policies.enabled=true` and
-  `--set security.allowedImageRepos='{docker.io/riksarkivet/,rustfs/,docker.io/amazon/aws-cli}'`
+  `--set security.allowedImageRepos='{docker.io/riksarkivet/,rustfs/}'`
   (plus `<registry>/` for your own images).
 
 Then write a campaigns repo and apply it:
@@ -67,9 +73,11 @@ as `resultsUrl`, and list your volumes in `campaigns/demo.yaml`
 make campaigns-apply DIR=my-campaigns
 ```
 
-`http://<node-address>:30800/` shows the campaign as it runs. The RustFS
-credentials are in the S3 Secret the devstack wrote:
-`kubectl -n <namespace> get secret htr-batch-s3 -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d`.
+`http://<node-address>:30800/` shows the campaign as it runs. Log in as
+`htr-reader`, the read-only RustFS user the devstack created, with the
+password from its Secret:
+`kubectl -n <namespace> get secret htr-results-login -o jsonpath='{.data.password}' | base64 -d`.
+The RustFS root keys, which can write, are in the S3 Secret `htr-batch-s3`.
 
 ### Check resume
 
@@ -208,20 +216,7 @@ machine running `make`. Editing an already-rendered campaign's volume list in
 place hits the append-only rule
 ([Campaign & Pipeline YAML](../reference/campaign-yaml.md)).
 
-## Two S3 endpoints, two results bases
-
-On a dev cluster the browser and the pods reach the same RustFS at different
-addresses. `resultsUrl` is the forwarded address a browser on your
-workstation uses ([View results](../getting-started/viewing.md#exposing-the-web-front));
-the pods cannot resolve it. The wrapper writes through the S3 Secret's
-in-cluster endpoint anyway, but the read API needs the in-cluster address
-for `progress.json`, or the campaign page silently never shows a running
-volume's progress:
-
-```yaml
-web:
-  internalResultsBase: http://rustfs.<namespace>.svc.cluster.local:9000/<bucket>
-```
+## Addresses a pod fetches
 
 Anything you put in a campaign file — a fixture manifest on the RustFS
 bucket, say — must use the in-cluster form
@@ -230,29 +225,26 @@ your browser, fetches it.
 
 ## Reaching it from a workstation
 
-The campaign browser needs two addresses in the browser: the web front
-(page, viewer, `/api/v1/…`) and the results bucket (manifests, images,
-ALTO, logs — every link on the page). When the node is not routable from
-your workstation, forward both, either through a host that reaches the node:
+The browser needs one address: the web front, which serves the page, the
+viewer, `/api/v1/…` and the results under `/results`. When the node is not
+routable from your workstation, forward it, either through a host that
+reaches the node:
 
 ```bash
-ssh -L <web-port>:<node-address>:<web-nodeport> \
-    -L <s3-port>:<node-address>:<s3-nodeport> <ssh-host>
+ssh -L <web-port>:<node-address>:<web-nodeport> <ssh-host>
 ```
 
 or with `kubectl`:
 
 ```bash
 kubectl -n <namespace> port-forward svc/htrflow-web <web-port>:8081
-kubectl -n <namespace> port-forward svc/rustfs <s3-port>:9000
 ```
 
 Then `http://<workstation>:<web-port>/` is the campaign browser, and
-`resultsUrl` must be `http://<workstation>:<s3-port>/<bucket>` — the
-address the browser uses for the S3 forward, which is why it differs from
-the in-cluster one above. `<ssh-host>` is any machine you can reach that
-reaches the node; the `-L` targets resolve on its side. Exposing the web
-front without a tunnel is covered in
+`resultsUrl` must be `http://<workstation>:<web-port>/results`, the address
+the browser uses. `<ssh-host>` is any machine you can reach that reaches the
+node; the `-L` target resolves on its side. Exposing the web front without a
+tunnel is covered in
 [View results](../getting-started/viewing.md#exposing-the-web-front).
 
 ## Resources that already exist on the cluster

@@ -62,7 +62,9 @@
       "additionalProperties": false,
       "required": [
         "bucket",
-        "secretName"
+        "secretName",
+        "loginUser",
+        "loginSecret"
       ],
       "properties": {
         "bucket": {
@@ -74,6 +76,16 @@
         "secretName": {
           "type": "string",
           "minLength": 1
+        },
+        "loginUser": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{3,64}$",
+          "description": "The RustFS user a person logs in as (read-only on s3.bucket)."
+        },
+        "loginSecret": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Secret (key `password`) the chart creates for loginUser."
         },
         "imageCacheBucket": {
           "type": "string",
@@ -98,8 +110,7 @@
         "nodePortS3",
         "console",
         "storage",
-        "init",
-        "publicLogs"
+        "init"
       ],
       "properties": {
         "enabled": {
@@ -138,8 +149,7 @@
           "additionalProperties": false,
           "required": [
             "enabled",
-            "image",
-            "corsOrigins"
+            "image"
           ],
           "properties": {
             "enabled": {
@@ -147,19 +157,8 @@
             },
             "image": {
               "$ref": "#/definitions/imageRef"
-            },
-            "corsOrigins": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "type": "string",
-                "minLength": 1
-              }
             }
           }
-        },
-        "publicLogs": {
-          "type": "boolean"
         }
       }
     },
