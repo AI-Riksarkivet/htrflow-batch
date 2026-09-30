@@ -26,6 +26,7 @@ dependencies = [
 
 [project.scripts]
 htrflow-web = "htrflow_web.__main__:main"
+htrflow-results = "htrflow_web.__main__:results_main"
 
 [build-system]
 requires = ["hatchling"]
