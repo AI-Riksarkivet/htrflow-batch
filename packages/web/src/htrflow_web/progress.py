@@ -260,8 +260,8 @@ class ProgressReader:
     def __init__(
         self, client: httpx.Client | None = None, *, verify: bool = True
     ) -> None:
-        # verify=False: the bucket's certificate is not checked
-        # (HTRFLOW_S3_VERIFY_TLS); only this reader's requests are affected.
+        # verify=False: the endpoint's certificate is not checked; only this
+        # reader's requests are affected.
         self._client = client or httpx.Client(timeout=TIMEOUT, verify=verify)
         #: url -> (expiry, progress, whether the bucket answered at all)
         self._cache: dict[str, tuple[float, dict | None, bool]] = {}

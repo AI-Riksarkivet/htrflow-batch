@@ -71,8 +71,6 @@ SECURITY = {
     "S3_VERIFY_TLS": "`false` skips the S3 certificate check, so the pod would "
     "send the bucket's credentials to whatever answers at `S3_ENDPOINT`; set by "
     "whoever writes the S3 Secret — cluster",
-    "HTRFLOW_S3_VERIFY_TLS": "`false` skips the certificate check on the "
-    "bucket's progress reads; the S3 Secret's `S3_VERIFY_TLS` key — cluster",
     "s3_secret": "names the Secret mounted at `/secrets/s3`; job-shape admits "
     "only `s3.existingSecret` — cluster",
     "hf_token_secret": "names the Secret the warm-up reads `HF_TOKEN` from; job-shape "
@@ -99,6 +97,7 @@ SECURITY = {
 #: packages/web's LOC budget here.
 WEB_DEFAULT_DOC = {
     "HTRFLOW_RESULTS_URL": "required unless `HTRFLOW_WEB_SITE_ONLY`",
+    "HTRFLOW_RESULTS_PROXY": "required unless `HTRFLOW_WEB_SITE_ONLY`",
     "HTRFLOW_INTERNAL_RESULTS_BASE": "`HTRFLOW_RESULTS_URL`",
     "HTRFLOW_NAMESPACES": "the pod's own namespace, else `htr-batch`",
     "HTRFLOW_WEB_STATIC": "`/app/static`",
@@ -238,6 +237,8 @@ def web_set_by(name: str) -> str:
         return "the chart, fixed: the release namespace (no value sets it)"
     if name in image_env("htrflow-web.dockerfile"):
         return _image(name)
+    if name == "HTRFLOW_RESULTS_PROXY":  # the chart sets it once the proxy ships
+        return "not yet set by the chart; set it by hand (required outside a local run)"
     return _local(name, "web") + "; no chart value"
 
 

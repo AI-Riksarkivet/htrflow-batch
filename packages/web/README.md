@@ -127,7 +127,7 @@ last apply, frozen once the campaign has finished) are stamped by `apply`.
 |---|---|---|
 | `HTRFLOW_RESULTS_URL` | required | Browser-reachable base every result URL is built from |
 | `HTRFLOW_INTERNAL_RESULTS_BASE` | the public base | Where this pod reaches the results bucket to read progress files, when the browser's address does not work from inside the cluster (a `localhost` forward, say) |
-| `HTRFLOW_S3_VERIFY_TLS` | `true` | `false` skips the certificate check on those progress reads; the chart sets it from the S3 Secret's optional `S3_VERIFY_TLS` key |
+| `HTRFLOW_RESULTS_PROXY` | required | The results proxy's Service (`http://htrflow-results:8082/results`): asked whether a request's `htr_session` cookie is valid; every `/api/v1` route answers `401` without one, `502` when the proxy does not answer |
 | `HTRFLOW_NAMESPACES` | own namespace in-cluster, else `htr-batch` | Comma-separated namespaces to list; the chart leaves it unset |
 | `HTRFLOW_WEB_STATIC` | `/app/static` | The built site. Missing directory = API only, which is what a local run gets |
 | `HTRFLOW_WEB_SITE_ONLY` | unset | Any non-empty value: serve the site without a cluster — `/api/v1/…` answers `503`, nothing tries to load a kubeconfig. The local compose stack runs this way |
