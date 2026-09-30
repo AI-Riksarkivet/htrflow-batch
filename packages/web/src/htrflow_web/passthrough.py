@@ -13,7 +13,7 @@ from starlette.background import BackgroundTask
 
 _LOG = logging.getLogger("htrflow_web.passthrough")
 
-_UP = ("cookie", "origin", "content-type", "if-none-match", "if-modified-since")
+_UP = ("origin", "content-type", "if-none-match", "if-modified-since")
 _DOWN = (
     "content-type",
     "content-length",
@@ -23,9 +23,12 @@ _DOWN = (
     "content-security-policy",
     "x-content-type-options",
     "content-disposition",
+    "content-encoding",
     "www-authenticate",
 )
 _PREFIX = b"/results/"
+_COOKIE = "htr_session"
+_MAX_BODY = 16 * 1024
 
 
 def results_route(
@@ -46,20 +49,42 @@ def results_route(
         query = request.scope.get("query_string", b"").decode("latin-1")
         url = f"{base}/{tail}" + (f"?{query}" if query else "")
 
-        headers = {k: v for k, v in request.headers.items() if k in _UP}
+        # Bytes end to end: Starlette decodes header values as latin-1 and httpx
+        # encodes str values as ASCII, so a str round trip can raise.
+        headers: dict[bytes, bytes] = {
+            k: v for k, v in request.headers.raw if k.decode("latin-1") in _UP
+        }
         # The body is passed as stored; never negotiate a coding this pod
         # would then have to strip the header for.
-        headers["accept-encoding"] = "identity"
+        headers[b"accept-encoding"] = b"identity"
         peer = request.client.host if request.client else ""
         prior = request.headers.get("x-forwarded-for")
-        headers["x-forwarded-for"] = f"{prior}, {peer}" if prior else peer
-        headers["x-forwarded-proto"] = request.headers.get(
+        headers[b"x-forwarded-for"] = (f"{prior}, {peer}" if prior else peer).encode(
+            "latin-1"
+        )
+        headers[b"x-forwarded-proto"] = request.headers.get(
             "x-forwarded-proto", request.url.scheme
-        )
-        headers["x-forwarded-host"] = request.headers.get(
+        ).encode("latin-1")
+        headers[b"x-forwarded-host"] = request.headers.get(
             "x-forwarded-host", request.headers.get("host", "")
-        )
-        body = await request.body() if request.method == "POST" else None
+        ).encode("latin-1")
+        cookie = request.cookies.get(_COOKIE)
+        if cookie is not None:
+            headers[b"cookie"] = f"{_COOKIE}={cookie}".encode("utf-8", "replace")
+        body = None
+        if request.method == "POST":
+            too_big = JSONResponse({"detail": "body too large"}, status_code=413)
+            declared = request.headers.get("content-length", "")
+            if declared.isdigit() and int(declared) > _MAX_BODY:
+                return too_big
+            parts: list[bytes] = []
+            size = 0
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > _MAX_BODY:
+                    return too_big
+                parts.append(chunk)
+            body = b"".join(parts)
         try:
             upstream = await client.send(
                 client.build_request(
@@ -74,9 +99,9 @@ def results_route(
             )
 
         raw_headers = [
-            (k.encode("latin-1"), v.encode("latin-1"))
-            for k, v in upstream.headers.multi_items()
-            if k.lower() in _DOWN or k.lower() == "set-cookie"
+            (k, v)
+            for k, v in upstream.headers.raw
+            if k.decode("latin-1").lower() in _DOWN or k.lower() == b"set-cookie"
         ]
         if request.method == "HEAD" or upstream.status_code in (204, 304):
             await upstream.aclose()
@@ -88,6 +113,9 @@ def results_route(
             try:
                 async for chunk in upstream.aiter_raw():
                     yield chunk
+            except httpx.HTTPError as e:
+                _LOG.warning("results proxy broke off mid-answer: %s", type(e).__name__)
+                raise
             finally:
                 await upstream.aclose()
 
