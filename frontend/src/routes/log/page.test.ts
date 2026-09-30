@@ -67,6 +67,23 @@ describe("/log live mode", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  test("a 403 says the account may not read the file, and stops polling", async () => {
+    const fetchMock = vi.fn(
+      async () => new Response(null, { status: 403 }),
+    ) as unknown as typeof fetch;
+    vi.stubGlobal("fetch", fetchMock);
+    render(LogPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /^Your account may not read this file\.$/,
+    );
+    expect(screen.queryByText(/HTTP 403/)).toBeNull();
+    const calls = (fetchMock as unknown as { mock: { calls: unknown[] } }).mock
+      .calls.length;
+    await vi.advanceTimersByTimeAsync(LIVE_MS * 5);
+    expect(fetchMock).toHaveBeenCalledTimes(calls);
+  });
+
   test("keeps polling through 404s, backs off, then gives up and says so", async () => {
     const fetchMock = vi.fn(fetch404());
     vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);

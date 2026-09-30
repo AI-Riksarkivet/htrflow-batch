@@ -4,6 +4,12 @@ export function loginUrl(next: string): string {
   return `/login?next=${encodeURIComponent(next)}`;
 }
 
+/**
+ * A result file the results proxy refused (a 403): the user is logged in,
+ * and their store account may not read it (spec §7).
+ */
+export const FORBIDDEN_FILE = "Your account may not read this file.";
+
 /** Send the browser to the login page, to come back to where it is now. */
 export function goToLogin(): void {
   if (location.pathname === "/login") return;
