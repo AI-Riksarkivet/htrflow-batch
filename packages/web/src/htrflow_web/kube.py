@@ -103,7 +103,8 @@ class Config(BaseModel):
     #: Where THIS POD reads progress files: the chart sets it to the results
     #: proxy's Service (there is no chart value for it), because `results_url`
     #: is the browser's address and may not resolve from a pod. Defaults to
-    #: `results_url` outside a chart.
+    #: `results_proxy` outside a chart: progress is read with the caller's
+    #: session, which only the proxy honours.
     internal_results_base: str = Field("", alias="HTRFLOW_INTERNAL_RESULTS_BASE")
     #: The results proxy's Service, e.g. http://htrflow-results:8082/results:
     #: the web front asks it whether a request is logged in, reads progress
@@ -121,13 +122,14 @@ class Config(BaseModel):
     def from_env(cls, env: Mapping[str, str] | None = None) -> Config:
         get = os.environ.get if env is None else env.get
         base = (get("HTRFLOW_RESULTS_URL") or "").rstrip("/")
-        internal_base = (get("HTRFLOW_INTERNAL_RESULTS_BASE") or "").rstrip("/") or base
         site_only = bool(get("HTRFLOW_WEB_SITE_ONLY"))  # any non-empty value
         if not base and not site_only:  # site-only builds no result URL
             raise RuntimeError("HTRFLOW_RESULTS_URL is required")
         proxy = (get("HTRFLOW_RESULTS_PROXY") or "").rstrip("/")
         if not proxy and not site_only:
             raise RuntimeError("HTRFLOW_RESULTS_PROXY is required")
+        internal = get("HTRFLOW_INTERNAL_RESULTS_BASE") or ""
+        internal_base = internal.rstrip("/") or proxy
         names = [n.strip() for n in (get("HTRFLOW_NAMESPACES") or "").split(",")]
         return cls(
             HTRFLOW_RESULTS_URL=base,

@@ -106,7 +106,7 @@ SECURITY = {
 WEB_DEFAULT_DOC = {
     "HTRFLOW_RESULTS_URL": "required unless `HTRFLOW_WEB_SITE_ONLY`",
     "HTRFLOW_RESULTS_PROXY": "required unless `HTRFLOW_WEB_SITE_ONLY`",
-    "HTRFLOW_INTERNAL_RESULTS_BASE": "`HTRFLOW_RESULTS_URL`",
+    "HTRFLOW_INTERNAL_RESULTS_BASE": "`HTRFLOW_RESULTS_PROXY`",
     "HTRFLOW_NAMESPACES": "the pod's own namespace, else `htr-batch`",
     "HTRFLOW_WEB_STATIC": "`/app/static`",
 }
