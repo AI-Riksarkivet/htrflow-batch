@@ -22,9 +22,11 @@ from botocore.exceptions import (
     ReadTimeoutError,
 )
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.background import BackgroundTask
 
+from .results_rules import FILE_HEADERS, allowed_key, served_type
 from .session import COOKIE, SessionCodec, SessionData, derive_keys
 
 _LOG = logging.getLogger("htrflow_web.results")
@@ -327,5 +329,89 @@ def create_results_app(
         if data is None:
             return JSONResponse({"detail": "not logged in"}, status_code=401)
         return JSONResponse({"user": data.user})
+
+    @app.api_route("/results/{path:path}", methods=["GET", "HEAD"])
+    def file(path: str, request: Request) -> Response:
+        data = session_of(request, codec)
+        if data is None:
+            return JSONResponse({"detail": "not logged in"}, status_code=401)
+        raw = request.scope.get("raw_path", b"").decode("latin-1")
+        raw = raw.split("/results/", 1)[1] if "/results/" in raw else path
+        key = allowed_key(raw, cfg.namespace)
+        if key is None:
+            return JSONResponse({"detail": "not found"}, status_code=404)
+        args = {"Bucket": cfg.s3_bucket, "Key": key}
+        if inm := request.headers.get("if-none-match"):
+            args["IfNoneMatch"] = inm
+        if ims := request.headers.get("if-modified-since"):
+            args["IfModifiedSince"] = ims
+        s3 = clients.get(data.access_key, data.secret_key)
+        head = request.method == "HEAD"
+        try:
+            obj = (s3.head_object if head else s3.get_object)(**args)
+        except ClientError as e:
+            code = _code(e)
+            if code in ("304", "NotModified"):
+                meta = e.response.get("ResponseMetadata", {})
+                etag = meta.get("HTTPHeaders", {}).get("etag", "")
+                return Response(
+                    status_code=304,
+                    headers={**({"ETag": etag} if etag else {}), **FILE_HEADERS},
+                )
+            if code in NOT_THERE:
+                return JSONResponse({"detail": "not found"}, status_code=404)
+            # A HEAD error has no body, so a bad or revoked key surfaces as a
+            # bare "403" here and maps to 403; only GET can tell 401 apart.
+            if code in DENIED:
+                return JSONResponse(
+                    {"detail": "your account may not read this"}, status_code=403
+                )
+            if code in BAD_KEYS:
+                r = JSONResponse(
+                    {"detail": "your login is no longer accepted"}, status_code=401
+                )
+                _clear(r, request)
+                return r
+            _LOG.warning("store answered %s for %s", code, key)
+            return JSONResponse({"detail": "the result store failed"}, status_code=502)
+        except (ConnectTimeoutError, ReadTimeoutError):
+            return JSONResponse(
+                {"detail": "the result store timed out"}, status_code=504
+            )
+        except BotoCoreError as e:
+            _LOG.warning("store unreachable: %s", e)
+            return JSONResponse(
+                {"detail": "the result store could not be reached"}, status_code=502
+            )
+        ctype, attachment = served_type(obj.get("ContentType"))
+        # Content-Type set verbatim (media_type= would append a charset).
+        headers = {
+            **FILE_HEADERS,
+            "Content-Type": ctype,
+            "Content-Length": str(obj["ContentLength"]),
+        }
+        if etag := obj.get("ETag"):
+            headers["ETag"] = etag
+        if lm := obj.get("LastModified"):
+            headers["Last-Modified"] = lm.strftime("%a, %d %b %Y %H:%M:%S GMT")
+        if attachment:
+            headers["Content-Disposition"] = "attachment"
+        if head:
+            return Response(status_code=200, headers=headers)
+        body = obj["Body"]
+
+        def chunks():
+            # finally: closes on a client disconnect too, where Starlette
+            # cancels the response and skips the background task.
+            try:
+                yield from body.iter_chunks(1024 * 1024)
+            finally:
+                body.close()
+
+        return StreamingResponse(
+            chunks(),
+            headers=headers,
+            background=BackgroundTask(body.close),
+        )
 
     return app
