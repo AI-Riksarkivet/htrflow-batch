@@ -1,8 +1,9 @@
 import base64
 import hashlib
+import json
+import os
 
 import pytest
-from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from htrflow_web.session import COOKIE, SessionCodec, derive_keys, load_key
@@ -66,20 +67,42 @@ def test_derived_keys_do_not_contain_the_password():
 
 
 def test_a_token_sealed_with_different_associated_data_does_not_open():
-    # Seal with associated data b"htr_session"
-    codec = SessionCodec(KEY, hours=8)
-    token = codec.seal("anna", "AK", "SK")
-    # Try to decrypt the raw ciphertext with a different associated data
-    raw = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
-    nonce = raw[:12]
-    ciphertext = raw[12:]
+    """SessionCodec rejects tokens sealed with wrong associated data."""
+    now = 1000.0
+    codec = SessionCodec(KEY, hours=8, clock=lambda: now)
     aead = AESGCM(KEY)
-    # Decryption with wrong associated data should raise InvalidTag
-    try:
-        aead.decrypt(nonce, ciphertext, b"wrong_ad")
-        assert False, "Should have raised InvalidTag"
-    except InvalidTag:
-        pass  # Expected: wrong associated data detected
+    nonce = os.urandom(12)
+    future_time = now + 8 * 3600  # 8 hours from now
+
+    # Build a token with no associated data
+    body_none = json.dumps(
+        {"u": "anna", "a": "AK", "s": "SK", "e": future_time}
+    ).encode()
+    ciphertext_none = aead.encrypt(nonce, body_none, None)
+    token_none = base64.urlsafe_b64encode(nonce + ciphertext_none).decode().rstrip("=")
+    assert codec.open(token_none) is None  # SessionCodec requires htr_session AD
+
+    # Build a token with wrong associated data
+    body_other = json.dumps(
+        {"u": "anna", "a": "AK", "s": "SK", "e": future_time}
+    ).encode()
+    ciphertext_other = aead.encrypt(nonce, body_other, b"other")
+    token_other = (
+        base64.urlsafe_b64encode(nonce + ciphertext_other).decode().rstrip("=")
+    )
+    assert codec.open(token_other) is None  # SessionCodec requires htr_session AD
+
+    # Build a token with correct associated data - should open
+    body_correct = json.dumps(
+        {"u": "anna", "a": "AK", "s": "SK", "e": future_time}
+    ).encode()
+    ciphertext_correct = aead.encrypt(nonce, body_correct, b"htr_session")
+    token_correct = (
+        base64.urlsafe_b64encode(nonce + ciphertext_correct).decode().rstrip("=")
+    )
+    data = codec.open(token_correct)
+    assert data is not None
+    assert (data.user, data.access_key, data.secret_key) == ("anna", "AK", "SK")
 
 
 def test_the_key_file_must_hold_32_bytes(tmp_path):
