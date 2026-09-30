@@ -53,16 +53,18 @@ docker compose -f .docker/docker-compose.yml logs -f wrapper
 It returns by itself when the wrapper exits, and ends with:
 
 ```
-wrapper-1  | … INFO [mock-vol] COMPLETE 1 pages (1 processed, 0 failed) in …s, viewer: http://localhost:19000/htr-results/demo-v1/mock-vol/iiif.json
+wrapper-1  | … INFO [mock-vol] COMPLETE 1 pages (1 processed, 0 failed) in …s, viewer: http://localhost:8080/results/htr-batch/demo-v1/mock-vol/iiif.json
 wrapper-1 exited with code 0
 ```
 
 ## 4. Open the result
 
-Open this in a browser:
+Results are not public: log in first. Open `http://localhost:8080/login`
+and log in as `htr-reader` with the password `htr-reader-pass`, a read-only
+user of the stack's S3 server. Then open this in the same browser:
 
 ```
-http://localhost:8080/uv.html#?manifest=http://localhost:19000/htr-results/demo-v1/mock-vol/iiif.json
+http://localhost:8080/uv.html#?manifest=http://localhost:8080/results/htr-batch/demo-v1/mock-vol/iiif.json
 ```
 
 You should see the page with every text line outlined, and its
@@ -86,12 +88,14 @@ second run.
 | Service | What it does |
 |---|---|
 | `rustfs` | The S3 server, on port 19000. |
-| `fixtures-init` | Creates the buckets, uploads four sample pages and a IIIF manifest for volume `mock-vol`, and makes the results readable from the browser. |
+| `fixtures-init` | Creates the buckets and uploads four sample pages and a IIIF manifest for volume `mock-vol`. The sample pages play a public IIIF server; the results bucket stays private. |
+| `login-init` | Creates `htr-reader`, an S3 user that may only read results, and the key the results service seals login sessions with. |
 | `wrapper` | The published wrapper image, running pipeline `demo-v1` on `mock-vol`, one page only (`MAX_PAGES`). On a cluster the same image runs one pod per volume, on a GPU. |
-| `web` | The web front on port 8080: the viewer, the run viewer and the campaign browser. |
+| `web` | The web front on port 8080: the login page, the viewer, the run viewer and the campaign browser. It serves the results under `/results`. |
+| `results` | The results service behind `/results`: it reads the bucket with the user name and password you logged in with, and holds no S3 credential of its own. |
 
-The S3 credentials are throwaway values from `.env.example`. Never reuse
-them anywhere else.
+The S3 credentials and the `htr-reader` password are throwaway values from
+`.env.example`. Never reuse them anywhere else.
 
 ## Next
 
