@@ -1833,7 +1833,9 @@ READ_POLICY = {
 
 def _init_env(rendered: list[dict]) -> dict[str, dict]:
     job = named(rendered, "Job", "rustfs-init")
-    return {e["name"]: e for e in job["spec"]["template"]["spec"]["containers"][0]["env"]}
+    return {
+        e["name"]: e for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
 
 
 def test_the_results_bucket_gets_no_anonymous_policy_and_no_cors():
@@ -1888,12 +1890,18 @@ def test_the_init_hook_creates_a_read_only_login_user():
 
 def test_the_login_user_and_its_secret_follow_their_values():
     rendered = _devstack_render(
-        ("s3.loginUser=site-reader", "s3.loginSecret=site-login", "s3.bucket=site-results")
+        (
+            "s3.loginUser=site-reader",
+            "s3.loginSecret=site-login",
+            "s3.bucket=site-results",
+        )
     )
     env = _init_env(rendered)
     assert env["LOGIN_USER"]["value"] == "site-reader"
     assert env["LOGIN_PASSWORD"]["valueFrom"]["secretKeyRef"]["name"] == "site-login"
-    policy = json.loads(named(rendered, "ConfigMap", "rustfs-init")["data"]["read-policy.json"])
+    policy = json.loads(
+        named(rendered, "ConfigMap", "rustfs-init")["data"]["read-policy.json"]
+    )
     assert policy["Statement"][0]["Resource"] == ["arn:aws:s3:::site-results/*"]
 
 
@@ -1932,7 +1940,8 @@ def test_the_documented_allow_list_admits_every_devstack_image_in_the_namespace(
     images = [
         c["image"]
         for o in rendered
-        if o["kind"] in ("Deployment", "Job") and o["metadata"]["namespace"] == NAMESPACE
+        if o["kind"] in ("Deployment", "Job")
+        and o["metadata"]["namespace"] == NAMESPACE
         for c in o["spec"]["template"]["spec"]["containers"]
     ]
     assert len(images) == 2, images
@@ -1941,12 +1950,16 @@ def test_the_documented_allow_list_admits_every_devstack_image_in_the_namespace(
         assert any(repo == r or repo.startswith(r + "/") for r in repos), image
 
 
-@pytest.mark.parametrize("key", ["rustfs.publicLogs=true", "rustfs.init.corsOrigins[0]=*"])
+@pytest.mark.parametrize(
+    "key", ["rustfs.publicLogs=true", "rustfs.init.corsOrigins[0]=*"]
+)
 def test_the_public_bucket_values_are_gone(key: str):
     values = yaml.safe_load((DEVSTACK_CHART / "values.yaml").read_text())
     assert "publicLogs" not in values["rustfs"]
     assert "corsOrigins" not in values["rustfs"]["init"]
-    result = helm_template(values=DEVSTACK_FULL_VALUES, sets=(key,), chart=DEVSTACK_CHART)
+    result = helm_template(
+        values=DEVSTACK_FULL_VALUES, sets=(key,), chart=DEVSTACK_CHART
+    )
     assert result.returncode != 0
     assert "additional properties" in result.stderr.lower()
 

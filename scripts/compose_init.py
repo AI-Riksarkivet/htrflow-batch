@@ -102,13 +102,15 @@ def main() -> None:
 
     # fixtures: fully public (mock manifest + page images), read cross-origin
     s3.put_bucket_policy(
-        Bucket=FIXTURES_BUCKET, Policy=json.dumps(anonymous_read_policy(FIXTURES_BUCKET))
+        Bucket=FIXTURES_BUCKET,
+        Policy=json.dumps(anonymous_read_policy(FIXTURES_BUCKET)),
     )
     s3.put_bucket_cors(Bucket=FIXTURES_BUCKET, CORSConfiguration=CORS)
     # results: private. Both deletes succeed on a bucket that has neither.
     s3.delete_bucket_policy(Bucket=RESULTS_BUCKET)
     s3.delete_bucket_cors(Bucket=RESULTS_BUCKET)
     print("init complete; results are private")
+
 
 if __name__ == "__main__":
     main()

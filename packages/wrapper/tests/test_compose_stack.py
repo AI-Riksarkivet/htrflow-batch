@@ -109,6 +109,7 @@ def test_the_port_knobs_reach_compose_through_make() -> None:
 
 # --- The results bucket is private: a login user and the results proxy ------
 
+
 def _login_init() -> str:
     return (REPO / "scripts" / "compose_login_init.sh").read_text()
 
@@ -126,8 +127,9 @@ def test_the_results_proxy_runs_beside_the_web_front_on_the_same_image() -> None
     assert env["S3_ENDPOINT"] == f"http://rustfs:{S3_PORT}"
     assert env["S3_BUCKET"] == SERVICES["wrapper"]["environment"]["S3_BUCKET"]
     # it reads the keys the wrapper writes: <namespace>/<pipeline>/<volume>/
-    assert env["HTRFLOW_RESULTS_NAMESPACE"] == (
-        SERVICES["wrapper"]["environment"]["S3_PREFIX"]
+    assert (
+        env["HTRFLOW_RESULTS_NAMESPACE"]
+        == (SERVICES["wrapper"]["environment"]["S3_PREFIX"])
     )
     # no port on the host: only the web front reaches it
     assert "ports" not in results
@@ -195,7 +197,9 @@ def test_the_login_knobs_reach_compose_through_make() -> None:
         ("HTR_DEV_LOGIN_PASSWORD", "htr-reader-pass"),
     ):
         assert re.search(rf"^{key}={default}$", env_example, re.M), key
-        assert re.search(rf"^export [^\n]*(?:\\\n[^\n]*)*\b{key}\b", makefile, re.M), key
+        assert re.search(rf"^export [^\n]*(?:\\\n[^\n]*)*\b{key}\b", makefile, re.M), (
+            key
+        )
 
 
 def test_the_smoke_logs_in_and_reads_a_result_through_the_web_front() -> None:
