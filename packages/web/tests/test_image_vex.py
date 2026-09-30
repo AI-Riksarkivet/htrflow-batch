@@ -49,6 +49,7 @@ ROOTS = {"htrflow-web": (), "htrflow-converter": ("hook",)}
 EXPAT = ("xml", "pyexpat", "xmlrpc", "plistlib")
 ABSENT = "absent"
 STATIC_ONLY = "static-only"
+AFFECTED = "affected"
 
 #: The basis of every statement in the VEX file. A statement with no entry
 #: here fails the test: whoever adds one says what it rests on.
@@ -59,16 +60,17 @@ RULES: dict[str, tuple[str, tuple[str, ...]]] = {
     "CVE-2026-78410": (ABSENT, ()),  # util-linux mount(8): not shipped
     "CVE-2025-69720": (ABSENT, ()),  # ncurses infocmp(1): not shipped
     "CVE-2026-82049": (ABSENT, ("tarfile",)),
-    "CVE-2026-7210": (ABSENT, EXPAT),
-    "CVE-2026-66046": (ABSENT, EXPAT),
-    "CVE-2026-76956": (ABSENT, EXPAT),
-    "CVE-2026-76957": (ABSENT, EXPAT),
-    "CVE-2026-93990": (ABSENT, EXPAT),
+    "CVE-2026-7210": (AFFECTED, EXPAT),  # web image parses S3 XML with botocore
+    "CVE-2026-66046": (AFFECTED, EXPAT),  # web image parses S3 XML with libexpat1
+    "CVE-2026-76956": (AFFECTED, EXPAT),  # web image parses S3 XML with libexpat1
+    "CVE-2026-76957": (AFFECTED, EXPAT),  # web image parses S3 XML with libexpat1
+    "CVE-2026-93990": (AFFECTED, EXPAT),  # web image parses S3 XML with libexpat1
     "CVE-2026-15308": (STATIC_ONLY, ("html.parser",)),
 }
 JUSTIFICATIONS = {
     ABSENT: {"vulnerable_code_not_present", "vulnerable_code_not_in_execute_path"},
     STATIC_ONLY: {"vulnerable_code_cannot_be_controlled_by_adversary"},
+    AFFECTED: {"web image parses S3 store XML responses"},
 }
 
 #: Locked dependencies that do import tarfile, and why that is not the
@@ -79,17 +81,10 @@ TARFILE_IN_DEPENDENCIES = {
     "dateutil/zoneinfo/rebuild.py",  # a maintainer tool that rebuilds it
 }
 
-#: Locked dependencies that import XML modules, but only parse trusted data.
-#: A new one fails the test.
-XML_IN_DEPENDENCIES = {
-    "botocore/compat.py",  # boto3 dependency; XML compatibility layer for AWS
-    "botocore/serialize.py",  # boto3 dependency; XML serialization for AWS requests
-}
-
-#: Locked dependencies that import html.parser, but only parse static files.
+#: Locked dependencies that import html.parser only on bundled data.
 #: A new one fails the test.
 HTML_PARSER_IN_DEPENDENCIES = {
-    "botocore/docs/bcdoc/docstringparser.py",  # boto3 dependency; doc generation
+    "botocore/docs/bcdoc/docstringparser.py",  # botocore doc generation only
 }
 
 _IMPORT = re.compile(
@@ -185,9 +180,15 @@ def test_every_statement_has_a_basis_and_names_exact_package_versions() -> None:
     assert sorted(s["vulnerability"]["name"] for s in statements) == sorted(RULES)
     for s in statements:
         kind, _ = RULES[s["vulnerability"]["name"]]
-        assert s["status"] == "not_affected"
-        assert s["justification"] in JUSTIFICATIONS[kind], s["vulnerability"]
+        expected_status = "affected" if kind == AFFECTED else "not_affected"
+        assert s["status"] == expected_status, s["vulnerability"]
+        if kind != AFFECTED:
+            assert s["justification"] in JUSTIFICATIONS[kind], s["vulnerability"]
         assert s["impact_statement"].strip()
+        if kind == AFFECTED:
+            assert s.get("action_statement"), (
+                f"affected CVE needs action_statement: {s['vulnerability']}"
+            )
         for product in s["products"]:
             # A version-scoped Debian purl: the next package update retires it.
             assert re.fullmatch(r"pkg:deb/debian/[a-z0-9.+-]+@[^@?]+", product["@id"])
@@ -217,9 +218,11 @@ def test_no_code_in_the_images_imports_what_a_statement_says_is_unused(
 ) -> None:
     cves = ", ".join(BANS[banned])
     tar = "tarfile" in banned
-    xml = banned == ("xml", "pyexpat", "xmlrpc", "plistlib")
     html = banned == ("html.parser",)
-    if RULES[BANS[banned][0]][0] == ABSENT:
+    rule = RULES[BANS[banned][0]][0]
+    if rule == AFFECTED:
+        return  # affected CVEs are documented; no code checks needed
+    if rule == ABSENT:
         for path in _own_files():
             text = path.read_text()
             assert not _hits(_modules(text), banned), (
@@ -230,8 +233,6 @@ def test_no_code_in_the_images_imports_what_a_statement_says_is_unused(
             )
     for rel, modules in _dependency_modules().items():
         if tar and rel in TARFILE_IN_DEPENDENCIES:
-            continue
-        if xml and rel in XML_IN_DEPENDENCIES:
             continue
         if html and rel in HTML_PARSER_IN_DEPENDENCIES:
             continue
@@ -265,16 +266,6 @@ def test_the_tarfile_exceptions_still_exist() -> None:
         if rel.startswith("dulwich/") and rel not in files:
             continue  # the hook extra, absent from a default test venv
         assert rel in files and "tarfile" in _modules(files[rel]), rel
-
-
-def test_the_xml_exceptions_still_exist() -> None:
-    """An exception for a file that no longer imports XML modules is stale."""
-    files = _dependency_files()
-    for rel in XML_IN_DEPENDENCIES:
-        assert rel in files, f"missing: {rel}"
-        assert _hits(_modules(files[rel]), ("xml", "pyexpat", "xmlrpc", "plistlib")), (
-            f"{rel} no longer imports XML modules"
-        )
 
 
 def test_the_html_parser_exceptions_still_exist() -> None:
