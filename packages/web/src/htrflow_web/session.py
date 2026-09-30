@@ -19,6 +19,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 COOKIE = "htr_session"
 _NONCE = 12
+_ASSOCIATED_DATA = b"htr_session"
 
 
 @dataclass(frozen=True)
@@ -67,13 +68,13 @@ class SessionCodec:
             }
         ).encode()
         nonce = os.urandom(_NONCE)
-        sealed = nonce + self._aead.encrypt(nonce, body, None)
+        sealed = nonce + self._aead.encrypt(nonce, body, _ASSOCIATED_DATA)
         return base64.urlsafe_b64encode(sealed).decode().rstrip("=")
 
     def open(self, token: str) -> SessionData | None:
         try:
             raw = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
-            body = self._aead.decrypt(raw[:_NONCE], raw[_NONCE:], None)
+            body = self._aead.decrypt(raw[:_NONCE], raw[_NONCE:], _ASSOCIATED_DATA)
             d = json.loads(body)
             data = SessionData(d["u"], d["a"], d["s"], float(d["e"]))
         except (binascii.Error, ValueError, InvalidTag, KeyError, TypeError):
