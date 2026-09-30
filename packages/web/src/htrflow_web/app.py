@@ -35,6 +35,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import projection
 from .kube import ApplyConflict, ClusterUnavailable, is_campaign
+from .passthrough import results_route
 from .progress import ProgressReader
 from .sessions import COOKIE, Session, SessionChecker, SessionsUnavailable
 
@@ -738,6 +739,9 @@ def create_app(
             )
         reason = reasons[namespace, name]
         return {"phase": phase, "reason": reason} if reason else {"phase": phase}
+
+    if not site_only and getattr(reader.cfg, "results_proxy", ""):
+        results_route(app, reader.cfg.results_proxy)
 
     # Last, so the routes above win over any file of the same name. Absent
     # outside the image (a local `uv run htrflow-web` builds no site), which
