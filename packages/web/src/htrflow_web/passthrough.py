@@ -11,6 +11,8 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
+from .sessions import no_cookie_jar
+
 _LOG = logging.getLogger("htrflow_web.passthrough")
 
 _UP = ("origin", "content-type", "if-none-match", "if-modified-since")
@@ -31,11 +33,24 @@ _COOKIE = "htr_session"
 _MAX_BODY = 16 * 1024
 
 
+def proxy_client(
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> httpx.AsyncClient:
+    """One client for everyone's requests, so it must keep no cookies: the
+    login's Set-Cookie would otherwise ride along on every later request
+    that arrives without one (sessions.no_cookie_jar)."""
+    return httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0, read=60.0),
+        cookies=no_cookie_jar(),
+        transport=transport,
+    )
+
+
 def results_route(
     app: FastAPI, proxy_base: str, client: httpx.AsyncClient | None = None
 ) -> None:
     base = proxy_base.rstrip("/")
-    client = client or httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=60.0))
+    client = client or proxy_client()
 
     @app.api_route("/results/{path:path}", methods=["GET", "HEAD", "POST"])
     async def results(request: Request):

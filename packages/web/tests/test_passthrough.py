@@ -372,3 +372,56 @@ def test_the_entrypoint_hands_the_proxy_to_the_app_in_site_only_mode(monkeypatch
     monkeypatch.setattr(main_mod.uvicorn, "run", lambda *a, **k: None)
     main_mod.main()
     assert got["results_proxy"] == "http://results:8082/results"
+
+
+def test_one_persons_login_never_rides_along_on_another_request():
+    """httpx keeps every Set-Cookie in the client's own jar and adds it to
+    any later request that has no Cookie header. The pass-through's client
+    is shared by everyone: after one login, an anonymous request must still
+    reach the proxy with no cookie at all."""
+    from htrflow_web.passthrough import proxy_client  # noqa: PLC0415
+
+    seen = []
+
+    def handler(req):
+        seen.append(req.headers.get("cookie"))
+        if req.url.path.endswith("/_login"):
+            return httpx.Response(
+                204, headers={"set-cookie": "htr_session=alice; Path=/; HttpOnly"}
+            )
+        return httpx.Response(401, content=b"{}")
+
+    app = FastAPI()
+    results_route(
+        app,
+        "http://proxy:8082/results",
+        proxy_client(transport=httpx.MockTransport(lambda r: _streaming(handler(r)))),
+    )
+    c = TestClient(app, base_url="https://site.example")
+    login = c.post(
+        "/results/_login",
+        json={"username": "alice", "password": "pw"},
+        headers={"Origin": "https://site.example"},
+    )
+    assert login.status_code == 204
+    anonymous = TestClient(app, base_url="https://site.example")  # no cookies
+    assert anonymous.get("/results/ns/x").status_code == 401
+    assert seen == [None, None]
+
+
+def test_the_web_fronts_other_proxy_clients_keep_no_cookies_either():
+    from htrflow_web.progress import ProgressReader  # noqa: PLC0415
+    from htrflow_web.sessions import SessionChecker  # noqa: PLC0415
+
+    for client in (
+        SessionChecker("http://proxy:8082/results")._client,
+        ProgressReader()._client,
+    ):
+        client.cookies.extract_cookies(
+            httpx.Response(
+                200,
+                headers={"set-cookie": "htr_session=alice; Path=/"},
+                request=httpx.Request("GET", "http://proxy:8082/results/_session"),
+            )
+        )
+        assert list(client.cookies.jar) == []

@@ -7,10 +7,20 @@ import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 
 import httpx
 
 COOKIE = "htr_session"
+
+
+def no_cookie_jar() -> CookieJar:
+    """For every client this pod shares between people when it talks to the
+    results proxy. httpx keeps each Set-Cookie in the client's own jar and
+    adds it to any later request that has no Cookie header of its own, so a
+    shared client with an ordinary jar would carry one person's session on
+    the next person's request. This jar stores nothing."""
+    return CookieJar(policy=DefaultCookiePolicy(allowed_domains=[]))
 
 
 class SessionsUnavailable(Exception):
@@ -33,7 +43,7 @@ class SessionChecker:
         clock=time.monotonic,
     ) -> None:
         self._url = f"{proxy_base.rstrip('/')}/_session"
-        self._client = client or httpx.Client(timeout=3.0)
+        self._client = client or httpx.Client(timeout=3.0, cookies=no_cookie_jar())
         self._ttl, self._max, self._clock = ttl, maxsize, clock
         self._cache: OrderedDict[str, tuple[float, Session | None]] = OrderedDict()
         self._lock = threading.Lock()
