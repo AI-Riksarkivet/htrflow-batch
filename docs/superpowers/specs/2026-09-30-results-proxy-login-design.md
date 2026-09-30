@@ -206,6 +206,9 @@ pruning of old versions).
 
 ## 10. Release
 
-v0.9.0, chart 0.16.0, devstack 0.5.0. Upgrade: chart first; set `results.sessionSecret` and `resultsUrl`
-(`…/results`) in the same change; nothing in campaigns repos changes. Budgets rise for `web`, `frontend` and
+v0.9.0, chart 0.16.0, devstack 0.5.0. Upgrade, in one change window: set `results.sessionSecret` (the
+render fails without it, and with a leftover `web.internalResultsBase`) and change `resultsUrl` by hand to
+`https://<web front host>/results` (not validated: an unchanged value renders and silently breaks the viewer
+and `/alto`); every campaigns repo sets `converter.yaml`'s `results_url` to the same URL, since it becomes
+each campaign Job's `RESULTS_URL`. Budgets rise for `web`, `frontend` and
 `chart`, each with its reason in `scripts/loc-budget.sh`.

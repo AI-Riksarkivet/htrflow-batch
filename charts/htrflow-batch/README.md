@@ -84,14 +84,22 @@ version.
 
 Results are read through a new pod, the results proxy (`htrflow-results`,
 Deployment and Service on the web image), with each logged-in person's own
-store keys. Nothing in campaigns repos changes, and a campaign Job renders
-as before. The upgrade fails until the two values below are set, in the same
-change.
+store keys. A campaign Job renders as before. Only a missing
+`results.sessionSecret`, or a leftover `web.internalResultsBase`, stops the
+render; `resultsUrl` is not checked, and an unchanged one silently leaves
+the viewer and `/alto` pointing at the old address. So, in one change
+window:
+
+1. Set `results.sessionSecret` and change `resultsUrl` by hand to
+   `https://<web front host>/results`.
+2. In **every campaigns repo**, set `converter.yaml`'s `results_url` to the
+   same URL. It becomes each campaign Job's `RESULTS_URL`, and so the URL
+   written into every manifest that Job publishes.
 
 | Change | What to do |
 |---|---|
 | **`results.sessionSecret` is required**: the name of a Secret with key `key`, 32 random bytes, base64. It seals the login cookie; rotating it logs everyone out. | `kubectl -n <namespace> create secret generic htr-session --from-literal=key="$(openssl rand -base64 32)"`, then set `results.sessionSecret=htr-session`. |
-| **`resultsUrl` points at the proxy**: `https://<web front host>/results`. Every manifest published from now on carries it. | Set it, and set the same value as `converter.yaml`'s `results_url` in every campaigns repo. Volumes published under the old URL keep it: run them again to open them in the viewer. |
+| **`resultsUrl` points at the proxy**: `https://<web front host>/results`. Not validated: the chart renders with the old value. | Change it by hand, and set the same value as `converter.yaml`'s `results_url` in every campaigns repo in the same window. Volumes published under the old URL keep it: run them again to open them in the viewer. |
 | **`web.internalResultsBase` is refused**, in words that name this change. The web front reads progress through the proxy. | Remove the key from your values. |
 | **`results.keyDerivation`** (`hcp` by default) says how a login becomes S3 keys. | For a store that issues S3 keys (RustFS, MinIO, AWS) set `none`: the login form takes the access key and the secret key. |
 | **The bucket no longer needs anonymous read or CORS.** | After the upgrade, remove both from the bucket. |
