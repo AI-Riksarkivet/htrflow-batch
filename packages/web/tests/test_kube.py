@@ -113,17 +113,22 @@ def test_batch_version_is_the_deployed_tag():
     assert cfg.batch_version == "v0.2.0"
 
 
-def test_internal_results_base_defaults_to_the_public_one():
-    """The API pod's own ProgressReader must reach the bucket even when
-    nobody set HTRFLOW_INTERNAL_RESULTS_BASE -- true on real AWS, where the
-    same URL really does work from inside the cluster."""
+def test_internal_results_base_defaults_to_the_results_proxy():
+    """Outside the chart nobody sets HTRFLOW_INTERNAL_RESULTS_BASE. Progress
+    is read with the caller's session cookie, which only the proxy honours;
+    the public results URL may not even resolve from the pod."""
     cfg = Config.from_env(
         {
-            "HTRFLOW_RESULTS_URL": "http://x/results",
-            "HTRFLOW_RESULTS_PROXY": "http://p/results",
+            "HTRFLOW_RESULTS_URL": "https://site.example/results",
+            "HTRFLOW_RESULTS_PROXY": "http://p:8082/results/",
         }
     )
-    assert cfg.internal_results_base == "http://x/results"
+    assert cfg.internal_results_base == "http://p:8082/results"
+
+
+def test_site_only_mode_needs_no_internal_base():
+    cfg = Config.from_env({"HTRFLOW_WEB_SITE_ONLY": "1"})
+    assert cfg.internal_results_base == ""
 
 
 def test_internal_results_base_can_differ_from_the_public_one():

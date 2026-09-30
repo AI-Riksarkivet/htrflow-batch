@@ -136,7 +136,7 @@ Each key is an environment variable of the container.
 | Key | Set by | Default | Must agree with | Security |
 |---|---|---|---|---|
 | `HTRFLOW_RESULTS_URL` | the chart: `resultsUrl` | required unless `HTRFLOW_WEB_SITE_ONLY` | chart `resultsUrl`, converter `results_url`, wrapper `RESULTS_URL` | the results URL — nobody |
-| `HTRFLOW_INTERNAL_RESULTS_BASE` | the chart, fixed: `http://htrflow-results:8082/results` | `HTRFLOW_RESULTS_URL` | — | no secret — nobody |
+| `HTRFLOW_INTERNAL_RESULTS_BASE` | the chart, fixed: `http://htrflow-results:8082/results` | `HTRFLOW_RESULTS_PROXY` | — | no secret — nobody |
 | `HTRFLOW_RESULTS_PROXY` | the chart, fixed: `http://htrflow-results:8082/results` | required unless `HTRFLOW_WEB_SITE_ONLY` | — | no secret — nobody |
 | `HTRFLOW_NAMESPACES` | the chart, fixed: the release namespace (no value sets it) | the pod's own namespace, else `htr-batch` | — | no secret — nobody |
 | `HTRFLOW_WEB_STATIC` | the image build (`ENV`): where the image puts the site | `/app/static` | — | no secret — nobody |
