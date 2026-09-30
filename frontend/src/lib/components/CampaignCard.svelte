@@ -17,6 +17,7 @@
   import {
     clockTime,
     fetchJob,
+    NotLoggedIn,
     sameDay,
     shortDate,
     type CampaignNotice,
@@ -508,7 +509,7 @@
       readAt = new Date().toISOString();
       return true;
     } catch (e) {
-      if (signal?.aborted) return true;
+      if (signal?.aborted || e instanceof NotLoggedIn) return true;
       // One sentence, never the transport detail or a ZodError: what the
       // reader can do about it is the point ($lib/reasons).
       detailFailure = e;
