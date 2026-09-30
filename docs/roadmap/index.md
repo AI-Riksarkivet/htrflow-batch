@@ -116,13 +116,10 @@ The trust model and the controls that exist are in
   its own `<namespace>/<pipeline>/<volume>/` prefix. A credential per prefix (plus
   the run-log key) needs IAM users and policies created with the bucket, and
   a second Secret named in `converter.yaml`.
-- **Authentication in front of the web front.** The web front and its
-  read API are unauthenticated, and the process holds an API token that reads
-  Jobs and Pods and writes the campaign status ConfigMaps.
-  Before exposing it beyond a trusted network, put it behind an
-  authenticating proxy (OIDC at the ingress). Then the run logs can stop
-  being anonymously readable too
-  ([View results](../getting-started/viewing.md)).
+- **Other identity providers.** Logins use the results store's own
+  accounts. Signing in through an organisation's identity provider (OIDC at
+  the ingress) would need a mapping from that identity to store access, which
+  does not exist yet ([View results](../getting-started/viewing.md)).
 - **Upstream page-failure propagation.** The stock htrflow CLI submits pages
   to a thread pool and never collects the futures, so page failures do not
   reach its exit code. The wrapper runs htrflow in-process and does not
