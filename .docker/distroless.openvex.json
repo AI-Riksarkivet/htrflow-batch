@@ -115,7 +115,7 @@
       ],
       "status": "not_affected",
       "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
-      "impact_statement": "Only html.parser.HTMLParser is affected, and the only HTML either image parses is its own build output: the web service reads the pages baked into its static directory (the viewer and the campaign browser) to hash their inline scripts for its Content-Security-Policy, one feed() per page. No request data or other outside input reaches the parser; the converter image does not use it."
+      "impact_statement": "Only html.parser.HTMLParser is affected, and the only HTML either image parses is its own build output: the web service reads the pages baked into its static directory (the viewer and the campaign browser) to hash their inline scripts for its Content-Security-Policy, one feed() per page. No request data or other outside input reaches the parser; the converter image does not use it. boto3/botocore import html.parser but do not parse untrusted input."
     },
     {
       "vulnerability": {
@@ -137,7 +137,7 @@
       ],
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "Expat is reached only through Python's xml.parsers.expat / xml.etree. Nothing in the image parses XML: neither the service's own packages nor any installed dependency imports an XML parser (it speaks JSON to the Kubernetes API and over HTTP)."
+      "impact_statement": "Expat is reached only through Python's xml.parsers.expat / xml.etree. Nothing in the image parses XML untrusted data: the service's own packages do not import XML parsers. boto3/botocore import xml modules but only parse responses from AWS services (trusted sources), not user-controlled data (it speaks JSON to the Kubernetes API and over HTTP)."
     },
     {
       "vulnerability": {
@@ -150,7 +150,7 @@
       ],
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "Expat is reached only through Python's xml.parsers.expat / xml.etree. Nothing in the image parses XML: neither the service's own packages nor any installed dependency imports an XML parser (it speaks JSON to the Kubernetes API and over HTTP)."
+      "impact_statement": "Expat is reached only through Python's xml.parsers.expat / xml.etree. Nothing in the image parses XML untrusted data: the service's own packages do not import XML parsers. boto3/botocore import xml modules but only parse responses from AWS services (trusted sources), not user-controlled data (it speaks JSON to the Kubernetes API and over HTTP)."
     },
     {
       "vulnerability": {
@@ -163,7 +163,7 @@
       ],
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "Expat is reached only through Python's xml.parsers.expat / xml.etree. Nothing in the image parses XML: neither the service's own packages nor any installed dependency imports an XML parser (it speaks JSON to the Kubernetes API and over HTTP)."
+      "impact_statement": "Expat is reached only through Python's xml.parsers.expat / xml.etree. Nothing in the image parses XML untrusted data: the service's own packages do not import XML parsers. boto3/botocore import xml modules but only parse responses from AWS services (trusted sources), not user-controlled data (it speaks JSON to the Kubernetes API and over HTTP)."
     },
     {
       "vulnerability": {
@@ -176,7 +176,7 @@
       ],
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "Expat is reached only through Python's xml.parsers.expat / xml.etree. Nothing in the image parses XML: neither the service's own packages nor any installed dependency imports an XML parser (it speaks JSON to the Kubernetes API and over HTTP)."
+      "impact_statement": "Expat is reached only through Python's xml.parsers.expat / xml.etree. Nothing in the image parses XML untrusted data: the service's own packages do not import XML parsers. boto3/botocore import xml modules but only parse responses from AWS services (trusted sources), not user-controlled data (it speaks JSON to the Kubernetes API and over HTTP)."
     },
     {
       "vulnerability": {
@@ -189,7 +189,7 @@
       ],
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "Expat is reached only through Python's xml.parsers.expat / xml.etree. Nothing in the image parses XML: neither the service's own packages nor any installed dependency imports an XML parser (it speaks JSON to the Kubernetes API and over HTTP)."
+      "impact_statement": "Expat is reached only through Python's xml.parsers.expat / xml.etree. Nothing in the image parses XML untrusted data: the service's own packages do not import XML parsers. boto3/botocore import xml modules but only parse responses from AWS services (trusted sources), not user-controlled data (it speaks JSON to the Kubernetes API and over HTTP)."
     }
   ]
 }
