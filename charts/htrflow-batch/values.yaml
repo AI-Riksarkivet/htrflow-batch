@@ -274,11 +274,11 @@ network:                   # NetworkPolicies (docs: development/security, D14)
   # range here, in s3Cidrs and in apply.gitCidrs loses the internal ranges
   # that lie inside it (the ones below, link-local and loopback).
   iiifCidrs: []
-  # S3 endpoint(s) for batch Jobs and the web front's progress reader. A
+  # S3 endpoint(s) for batch Jobs and the results proxy. A
   # real endpoint goes here.
   s3Cidrs: []
   # The results bucket is the in-namespace RustFS of charts/htrflow-devstack:
-  # the batch Job and the web front may reach any `app: rustfs` pod here on
+  # the batch Job and the results proxy may reach any `app: rustfs` pod here on
   # 9000. Off, that rule is not rendered -- any pod carrying the label would
   # otherwise be a destination -- and s3Cidrs must name the endpoint, since
   # a campaign pod with no route to S3 fails every volume after its GPU time.
@@ -319,8 +319,8 @@ network:                   # NetworkPolicies (docs: development/security, D14)
     # Anything wider than /8, or an empty list, needs allowPublicIngress.
     # 0.0.0.0/0 keeps "any browser that can reach the node".
     ingressCidrs: ["0.0.0.0/0"]
-    # The catch-all above is in front of a NodePort with no authentication
-    # of its own, so the chart refuses to render it unless this says the
+    # The catch-all above is in front of a NodePort whose login page anyone
+    # can open, so the chart refuses to render it unless this says the
     # exposure is deliberate. Narrowing the default instead would break
     # every dev stack on upgrade; making it loud does not.
     allowPublicIngress: false

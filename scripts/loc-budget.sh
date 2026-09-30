@@ -1480,7 +1480,8 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5984
 # batch Job's own (network.yaml's `$s3`, recomputed here since it is a
 # separate template file), for HTRFLOW_INTERNAL_RESULTS_BASE's
 # ProgressReader -- plus the env var itself, defaulted from
-# web.internalResultsBase.
+# web.internalResultsBase (a value removed in chart 0.16.0: the progress
+# reader goes through the results proxy and the S3 egress is gone again).
 # 763 -> 769 (2026-09-14, B76): the web Role gains create/patch on ConfigMaps
 # -- the read API writes one object now, the per-campaign status ConfigMap
 # that still answers for a campaign once its Job is past the TTL. The added

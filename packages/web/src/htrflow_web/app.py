@@ -1,9 +1,9 @@
 """FastAPI wiring: the read API plus the built site it is served with.
 
-``/api/v1/…`` is GET-only over a ``kube.Reader`` (no auth — see the package
-docstring / D8). ``reader`` is duck-typed — ``list_jobs``, ``get_job``,
-``get_configmap``, ``list_pods`` and a ``cfg`` attribute — so tests wire a
-fake and never touch a cluster.
+``/api/v1/…`` is GET-only over a ``kube.Reader``, behind the results proxy's
+session check (see the package docstring). ``reader`` is duck-typed —
+``list_jobs``, ``get_job``, ``get_configmap``, ``list_pods`` and a ``cfg``
+attribute — so tests wire a fake and never touch a cluster.
 
 Everything else on the port is the web front: the campaign browser SPA, the
 Universal Viewer at ``/uv.html`` and the runtime ``/config.js``, mounted from

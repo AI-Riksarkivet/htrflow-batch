@@ -28,6 +28,13 @@ def test_no_cookie_never_asks():
     assert checker(lambda r: pytest.fail("asked")).check(None) is None
 
 
+@pytest.mark.parametrize("cookie", ["å-not-ascii", "x" * 4097])
+def test_a_cookie_no_session_could_be_never_asks(cookie):
+    """Not ASCII would be a 500 building the header; over 4 KB would be a
+    cache key for anything a client cares to send."""
+    assert checker(lambda r: pytest.fail("asked")).check(cookie) is None
+
+
 def test_401_is_no_session():
     assert checker(lambda r: httpx.Response(401)).check("tok") is None
 
