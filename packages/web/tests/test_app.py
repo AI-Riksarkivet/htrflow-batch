@@ -200,7 +200,9 @@ def test_every_api_answer_is_private_and_unstored():
         def check(self, cookie):
             raise SessionsUnavailable("proxy down")
 
-    down = TestClient(create_app(FakeReader(), progress=FakeProgress(), sessions=Down()))
+    down = TestClient(
+        create_app(FakeReader(), progress=FakeProgress(), sessions=Down())
+    )
     answers.append(down.get("/api/v1/jobs"))  # 502
     assert {r.status_code for r in answers} == {200, 401, 404, 502}
     for r in answers:
