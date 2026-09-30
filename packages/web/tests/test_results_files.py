@@ -212,3 +212,60 @@ def test_other_methods_are_405(setup):
         c.put("/results/htr-test/demo-v1/R1/iiif.json", content=b"x").status_code == 405
     )
     assert c.delete("/results/htr-test/demo-v1/R1/iiif.json").status_code == 405
+
+
+def test_an_encoded_slash_in_the_prefix_never_reaches_the_store(setup, monkeypatch):
+    c, _ = setup
+    monkeypatch.setattr(ClientCache, "get", lambda *a: pytest.fail("store asked"))
+    r = c.get("/results%2Fhtr-test/demo-v1/R1/iiif.json")
+    assert r.status_code == 404
+
+
+def test_a_key_is_decoded_exactly_once(setup, monkeypatch):
+    asked = []
+
+    class Spy:
+        def get_object(self, **kw):
+            asked.append(kw["Key"])
+            raise _err("NoSuchKey")
+
+    monkeypatch.setattr(ClientCache, "get", lambda self, a, s: Spy())
+    c, _ = setup
+    assert c.get("/results/htr-test/%2541").status_code == 404
+    assert asked == ["htr-test/%41"]
+
+
+def test_a_malformed_if_modified_since_is_ignored(setup):
+    c, _ = setup
+    r = c.get(
+        "/results/htr-test/demo-v1/R1/iiif.json",
+        headers={"If-Modified-Since": "garbage"},
+    )
+    assert r.status_code == 200
+
+
+def test_error_answers_are_not_cacheable_or_sniffable(setup):
+    c, _ = setup
+    r = c.get("/results/htr-test/demo-v1/R1/nope.json")
+    assert r.status_code == 404
+    assert r.headers["cache-control"] == "private, no-cache"
+    assert r.headers["x-content-type-options"] == "nosniff"
+    c.cookies.clear()
+    r = c.get("/results/htr-test/demo-v1/R1/iiif.json")
+    assert r.status_code == 401
+    assert r.headers["cache-control"] == "private, no-cache"
+    assert r.headers["x-content-type-options"] == "nosniff"
+
+
+def test_a_304_forwards_last_modified(setup, monkeypatch):
+    hdr = {"etag": '"x"', "last-modified": "Fri, 02 Jan 2026 03:04:05 GMT"}
+
+    class Cond:
+        def get_object(self, **kw):
+            raise _err("304", 304, hdr)
+
+    monkeypatch.setattr(ClientCache, "get", lambda self, a, s: Cond())
+    c, _ = setup
+    r = c.get("/results/htr-test/demo-v1/R1/iiif.json")
+    assert r.status_code == 304
+    assert r.headers["last-modified"] == hdr["last-modified"]
