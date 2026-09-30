@@ -9,9 +9,20 @@ describe("session helpers", () => {
   });
   test("safeNext refuses other sites", () => {
     expect(safeNext("/alto?src=x")).toBe("/alto?src=x");
-    expect(safeNext("//evil.example")).toBe("/");
-    expect(safeNext("https://evil.example")).toBe("/");
-    expect(safeNext(null)).toBe("/");
+    expect(safeNext("/alto?src=x#p")).toBe("/alto?src=x#p");
+    expect(safeNext("/log?log=a&manifest=b")).toBe("/log?log=a&manifest=b");
+    for (const bad of [
+      "//evil.example",
+      "https://evil.example",
+      "/\\evil.example",
+      "/\t/evil.example",
+      "javascript:alert(1)",
+      "/login",
+      "/login?next=/x",
+      "",
+      null,
+    ])
+      expect(safeNext(bad)).toBe("/");
   });
   test("login maps the proxy's answers", async () => {
     for (const [status, want] of [
