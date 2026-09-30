@@ -90,7 +90,7 @@ def test_wrong_keys_are_401_with_a_sentence(app, monkeypatch):
 def test_not_found_or_denied_on_the_probe_means_the_keys_are_valid(app, monkeypatch):
     from botocore.exceptions import ClientError
 
-    for code in ("404", "AccessDenied", "NoSuchKey", "NotFound"):
+    for code in ("404", "AccessDenied", "NoSuchKey", "NotFound", "InvalidRange"):
 
         class Answering:
             def get_object(self, **kw):
@@ -211,7 +211,9 @@ def test_rotating_the_left_most_forwarded_for_does_not_escape(cfg):
     c = _xff_app(cfg, 1, limiter)
     for i in range(3):
         h = {**ORIGIN, "X-Forwarded-For": f"10.0.0.{i}, 9.9.9.9"}
-        assert login(c, headers=h).status_code == 429
+        r = login(c, headers=h)
+        assert r.status_code == 429
+        assert "from this address" in r.json()["detail"]
 
 
 def test_two_hops_pick_the_second_from_right(cfg):
@@ -245,7 +247,10 @@ def test_ten_failures_for_one_user_block_it_from_any_address(cfg, monkeypatch):
         h = {**ORIGIN, "X-Forwarded-For": f"5.5.5.{i}"}
         assert login(c, headers=h).status_code == 401
     h = {**ORIGIN, "X-Forwarded-For": "5.5.5.99"}
-    assert login(c, headers=h).status_code == 429
+    r = login(c, headers=h)
+    assert r.status_code == 429
+    assert "for this user" in r.json()["detail"]
+    assert "five minutes" in r.json()["detail"]
 
 
 def test_the_limiter_is_bounded_and_reads_add_nothing():
@@ -256,3 +261,13 @@ def test_the_limiter_is_bounded_and_reads_add_nothing():
         lim.failed(k)
     assert len(lim) == 3
     assert not lim.blocked("a")
+
+
+def test_eviction_is_least_recently_failed():
+    lim = LoginLimiter(max_keys=2)
+    lim.failed("a")
+    lim.failed("b")
+    lim.failed("a")
+    lim.failed("c")
+    assert "b" not in lim._fails
+    assert "a" in lim._fails and "c" in lim._fails
