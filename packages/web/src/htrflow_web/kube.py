@@ -113,7 +113,7 @@ class Config(BaseModel):
     #: The results proxy's Service, e.g. http://htrflow-results:8082/results:
     #: the web front asks it whether a request is logged in, reads progress
     #: through it, and passes /results through to it. Required outside
-    #: site-only mode.
+    #: site-only mode; in it, optional, and only /results uses it.
     results_proxy: str = Field("", alias="HTRFLOW_RESULTS_PROXY")
     namespaces: tuple[str, ...] = Field((), alias="HTRFLOW_NAMESPACES")
     static_dir: str = Field("", alias="HTRFLOW_WEB_STATIC")
