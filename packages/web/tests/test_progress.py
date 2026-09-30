@@ -630,3 +630,50 @@ def test_a_refused_read_on_a_finished_volume_is_not_kept_for_the_hour(clock):
     status["code"] = 200
     clock.now += progress_mod.RUNNING_TTL + 1
     assert p.fetch(BASE, "vol0", "done")["total"] == 2
+
+
+# --- a volume the caller's account may not read (spec §7) -----------------
+
+
+def test_a_403_marks_the_volume_forbidden_for_that_caller_only(clock):
+    from htrflow_web.sessions import Session
+
+    def handler(req):
+        if req.headers.get("cookie") == "htr_session=a":
+            return httpx.Response(200, json={"pages_done": 1, "pages_total": 2})
+        return httpx.Response(403)
+
+    r = ProgressReader(httpx.Client(transport=httpx.MockTransport(handler)))
+    a = r.for_session(Session("anna", "a"))
+    b = r.for_session(Session("bo", "b"))
+    assert b.forbidden(BASE, "vol0", "done") is False, "nothing asked yet"
+    assert a.fetch(BASE, "vol0", "done") is not None
+    assert b.fetch(BASE, "vol0", "done") is None
+    assert b.forbidden(BASE, "vol0", "done") is True
+    assert a.forbidden(BASE, "vol0", "done") is False
+    # Still asked again on the short window, never kept for the hour: a
+    # grant made on the store shows on the next poll past it.
+    assert b.cached(BASE, "vol0", "done") == (False, None)
+    clock.now += progress_mod.RUNNING_TTL + 1
+    assert b.forbidden(BASE, "vol0", "done") is False
+
+
+@pytest.mark.parametrize("code", [401, 404, 503])
+def test_only_a_403_is_forbidden(code):
+    r, _ = reader({f"{BASE}/vol0/progress.json": httpx.Response(code)})
+    p = r.for_session(None)
+    p.fetch(BASE, "vol0", "active")
+    assert p.forbidden(BASE, "vol0", "active") is False
+
+
+def test_a_403_on_the_manifest_fallback_is_forbidden_too():
+    r, _ = reader({f"{BASE}/vol0/manifest.json": httpx.Response(403)})
+    p = r.for_session(None)
+    assert p.fetch(BASE, "vol0", "done") is None
+    assert p.forbidden(BASE, "vol0", "done") is True
+
+
+def test_a_pending_volume_is_never_forbidden():
+    r, asked = reader({})
+    assert r.for_session(None).forbidden(BASE, "vol0", "pending") is False
+    assert asked == []

@@ -40,6 +40,8 @@ def test_the_fixture_covers_the_rows_the_page_has_to_draw():
     assert {"done", "failed", "unknown"} <= states
     assert any(v["sourceUrl"] is None for d in doc["details"] for v in d["volumes"])
     assert any(v["progress"] is not None for d in doc["details"] for v in d["volumes"])
+    forbidden = {v["forbidden"] for d in doc["details"] for v in d["volumes"]}
+    assert forbidden == {True, False}
     # A reaped campaign's detail is drawn from its record, and its latest
     # volume is a row the page renders: a fixture with only a live `latest`
     # would leave the reaped one's shape unchecked.

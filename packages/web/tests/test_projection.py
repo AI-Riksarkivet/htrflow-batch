@@ -829,6 +829,36 @@ class TestVolumeProgress:
         assert d["volumes"][0]["progress"]["done"] == 3
         assert d["volumes"][1]["progress"] is None
 
+    def test_a_volume_the_caller_may_not_read_is_marked_forbidden(self):
+        """Spec §7: the proxy's 403 for a volume reaches its row, so the card
+        can say the account may not read it in place of its results. Asked
+        after the volume was read, and never for a pending one."""
+        fetch, asked = self._fetch({})
+        told = []
+
+        def forbidden(base, vol_id, state):
+            told.append(vol_id)
+            assert vol_id in [v for v, _ in asked], "read before it is asked"
+            return vol_id == "vol1"
+
+        d = projection.detail(
+            _job(),
+            _configmap(),
+            [],
+            CFG,
+            warmup=MISSING_WARMUP,
+            fetch_progress=fetch,
+            forbidden_progress=forbidden,
+        )
+        flags = {v["id"]: v["forbidden"] for v in d["volumes"]}
+        assert flags == {f"vol{i}": i == 1 for i in range(7)}
+        assert "vol4" not in told and "vol6" not in told, "pending"
+        assert d["failures"][0]["forbidden"] is False
+
+    def test_without_a_reader_no_volume_is_forbidden(self):
+        d = projection.detail(_job(), _configmap(), [], CFG, warmup=MISSING_WARMUP)
+        assert not any(v["forbidden"] for v in d["volumes"])
+
     def test_the_rows_in_the_answer_are_fetched_before_the_rest(self):
         """The rows a reader is looking at first -- its one failure (vol3)
         and `latest` (vol5) ahead of the page (vol0, vol1) -- then the rest
@@ -1315,6 +1345,13 @@ class TestTheReapedDetailStillHasItsVolumes:
             volumesFailed="1",
             failedVolumes='[{"id":"vol2","reason":"manifest 404"}]',
         )
+
+    def test_a_reaped_volume_the_caller_may_not_read_is_forbidden(self):
+        body = self._body(
+            self._failed(),
+            forbidden_progress=lambda base, vol_id, state: vol_id == "vol0",
+        )
+        assert [v["forbidden"] for v in body["volumes"]] == [True, False, False]
 
     def test_every_volume_the_campaign_ran_is_a_row_again(self):
         body = self._body(self._failed())

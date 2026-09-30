@@ -53,6 +53,7 @@ const volume = {
   logUrl: "https://results.example.org/status/logs/demo-v1/vol0.txt",
   sourceUrl: "https://iiif.example.org/vol0/manifest",
   progress: null,
+  forbidden: false,
 };
 
 const pipeline = {

@@ -201,6 +201,10 @@ NOW = 1789371072.0  # 2026-09-14T07:31:12+00:00
 
 
 def _bucket(request: httpx.Request) -> httpx.Response:
+    # The proxy refuses the caller one volume (a 403): its row is the
+    # `forbidden` one the card words as "may not read" (spec §7).
+    if request.url.path.startswith("/htr-results/htr-test/demo-v0/vol1/"):
+        return httpx.Response(403)
     if request.url.path.startswith("/htr-results/htr-test/demo-v1/vol0/"):
         return httpx.Response(
             200, json={**WRAPPER_PROGRESS, "quality": WRAPPER_QUALITY}
