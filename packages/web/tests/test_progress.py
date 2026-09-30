@@ -582,6 +582,23 @@ def test_the_session_cookie_goes_to_the_proxy():
     )
     assert seen and all(c == "htr_session=tok" for c in seen)
 
+    # A finished volume with no progress.json falls back to manifest.json:
+    # that second request carries the cookie too.
+    seen.clear()
+    urls = []
+
+    def handler2(req):
+        urls.append(str(req.url))
+        seen.append(req.headers.get("cookie"))
+        return httpx.Response(404)
+
+    r2 = ProgressReader(httpx.Client(transport=httpx.MockTransport(handler2)))
+    r2.for_session(Session("anna", "tok")).fetch(
+        "http://p/results/ns/demo", "R1", "done"
+    )
+    assert any(u.endswith("/manifest.json") for u in urls)
+    assert len(seen) == 2 and all(c == "htr_session=tok" for c in seen)
+
 
 def test_one_users_answer_is_never_anothers():
     def handler(req):
@@ -597,3 +614,19 @@ def test_one_users_answer_is_never_anothers():
     assert a.fetch("http://p/results/ns/demo", "R1", "running") is not None
     assert b.cached("http://p/results/ns/demo", "R1", "running") == (False, None)
     assert b.fetch("http://p/results/ns/demo", "R1", "running") is None
+
+
+def test_a_refused_read_on_a_finished_volume_is_not_kept_for_the_hour(clock):
+    status = {"code": 403}
+
+    def handler(req):
+        if status["code"] == 200:
+            return httpx.Response(200, json={"pages_done": 1, "pages_total": 2})
+        return httpx.Response(status["code"])
+
+    r = ProgressReader(httpx.Client(transport=httpx.MockTransport(handler)))
+    p = r.for_session(None)
+    assert p.fetch(BASE, "vol0", "done") is None
+    status["code"] = 200
+    clock.now += progress_mod.RUNNING_TTL + 1
+    assert p.fetch(BASE, "vol0", "done")["total"] == 2

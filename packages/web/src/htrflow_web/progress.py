@@ -24,10 +24,13 @@ import math
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 from urllib.parse import quote
 
 import httpx
+
+if TYPE_CHECKING:
+    from .sessions import Session
 
 #: A running volume rewrites its file after every page, so a few seconds of
 #: staleness is at most a page or two; a finished one never changes again.
@@ -291,7 +294,7 @@ class ProgressReader:
         #: the same oldest key raised a KeyError (2026-09-23 audit).
         self._lock = threading.Lock()
 
-    def for_session(self, session) -> SessionProgress:
+    def for_session(self, session: Session | None) -> SessionProgress:
         if session is None:
             return SessionProgress(self, "", None)
         return SessionProgress(self, session.user, session.cookie)
@@ -401,7 +404,12 @@ class ProgressReader:
                 },
                 follow_redirects=False,
             ) as response:
-                if response.status_code >= 500 or response.status_code in (408, 429):
+                if response.status_code >= 500 or response.status_code in (
+                    401,
+                    403,
+                    408,
+                    429,
+                ):
                     raise _NoAnswer(response.status_code)
                 if response.status_code != 200 or _encoded(response):
                     return None
