@@ -59,9 +59,12 @@ function patchedScript(): string {
     readFileSync(resolve(HERE, "src/lib/fixtures/uv4-uv.html"), "utf8"),
   );
   const page = applyHunks(patch, "src/uv.html", pre);
-  const scripts = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+  // Parsed as a browser parses it, not matched with a pattern: an HTML
+  // tag's case, attributes and spacing are the parser's business.
+  const doc = new DOMParser().parseFromString(page, "text/html");
+  const scripts = [...doc.querySelectorAll("script:not([src])")];
   expect(scripts).toHaveLength(1); // the one inline block uv_csp hashes
-  return scripts[0]?.[1] ?? "";
+  return scripts[0]?.textContent ?? "";
 }
 
 const MANIFEST_PATH = "/results/htr-test/demo-v1/vol0/iiif.json";
