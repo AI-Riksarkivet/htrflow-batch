@@ -312,11 +312,12 @@ def test_compose_smoke_runs_the_images_it_built() -> None:
     services = compose["services"]
     assert services["wrapper"]["image"].startswith("${HTR_WRAPPER_IMAGE:-")
     assert services["web"]["image"].startswith("${HTR_WEB_IMAGE:-")
+    assert services["results"]["image"] == services["web"]["image"]
 
     makefile = (REPO / "Makefile").read_text()
     assert re.search(r"^compose-smoke: build-wrapper build-web$", makefile, re.M)
     run = makefile[makefile.index("compose-smoke-run:") :].split("\n\n")[0]
-    assert "trap 'docker compose down -v' EXIT" in run
+    assert re.search(r"trap '[^']*docker compose down -v' EXIT", run)
     assert "HTR_WRAPPER_IMAGE=$(WRAPPER_IMAGE) HTR_WEB_IMAGE=$(WEB_IMAGE)" in run
     assert run.count("--no-build") == 2  # never a third, differently built image
 
