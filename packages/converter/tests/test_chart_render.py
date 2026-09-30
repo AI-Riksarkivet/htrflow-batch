@@ -56,7 +56,7 @@ DEFAULT_SETS = REQUIRED_SETS + (PUBLIC_INGRESS, POLICIES_OFF, SESSION_SECRET)
 #: not tell one guard from another (finding 3103).
 S3_NOWHERE_REFUSAL = (
     "network.s3Cidrs is empty and network.s3InNamespace is false, so campaign"
-    " pods and the web front have no route to the results bucket and every"
+    " pods and the results proxy have no route to the results bucket and every"
     " volume would fail after its GPU time: list the S3 endpoint's ranges in"
     " network.s3Cidrs, or set network.s3InNamespace=true when the bucket is the"
     " in-namespace RustFS of charts/htrflow-devstack"
@@ -1399,7 +1399,7 @@ BATCH_GUARDS = {
         REQUIRED_SETS + (POLICIES_OFF,),
         "network.web.ingressCidrs is empty, and a NetworkPolicy rule with no"
         " sources admits every address, so an empty list would open the"
-        " unauthenticated web front to everyone rather than close it: list the"
+        " web front to everyone rather than close it: list the"
         " ranges that may reach it, or set network.web.allowPublicIngress=true"
         " to accept that any address may",
     ),
@@ -1407,11 +1407,11 @@ BATCH_GUARDS = {
         None,
         REQUIRED_SETS
         + (POLICIES_OFF, "network.web.ingressCidrs={198.51.100.0/24,8.0.0.0/7}"),
-        "network.web.ingressCidrs has 8.0.0.0/7, wider than /8, and the web"
-        " front has no authentication of its own: list the ranges your clients'"
-        " addresses are in, or set network.web.allowPublicIngress=true to accept"
-        " that any address that can route to a node may open the campaign"
-        " browser, the viewer and the read API",
+        "network.web.ingressCidrs has 8.0.0.0/7, wider than /8, and the"
+        " network decides who reaches the web front and its login page: list"
+        " the ranges your clients' addresses are in, or set"
+        " network.web.allowPublicIngress=true to accept that any address that"
+        " can route to a node may reach it and try to log in",
     ),
     "ingress-not-clusterip": (
         None,
@@ -2049,3 +2049,28 @@ def test_the_network_policies_route_web_to_proxy_and_proxy_to_s3():
         {"podSelector": {"matchLabels": {"app": "htrflow-web"}}}
     ]
     assert res["spec"]["ingress"][0]["ports"] == [{"port": 8082}]
+
+
+def test_the_web_front_has_no_s3_egress_and_the_proxy_has_it():
+    """The web front reads the bucket only through the proxy: the store's
+    ranges and the in-namespace RustFS are destinations of the proxy's policy
+    and not of its own."""
+    objs = render(
+        sets=DEFAULT_SETS + ("network.enabled=true", "network.s3Cidrs={203.0.113.0/24}")
+    )
+
+    def peers(name):
+        policy = named(objs, "NetworkPolicy", name)
+        return [t for r in policy["spec"]["egress"] for t in r.get("to", [])]
+
+    rustfs = {"podSelector": {"matchLabels": {"app": "rustfs"}}}
+    web_peers = peers("htr-web")
+    assert not any(
+        p.get("ipBlock", {}).get("cidr") == "203.0.113.0/24" for p in web_peers
+    )
+    assert rustfs not in web_peers
+    assert any(
+        p.get("ipBlock", {}).get("cidr") == "203.0.113.0/24"
+        for p in peers("htr-results")
+    )
+    assert rustfs in peers("htr-results")

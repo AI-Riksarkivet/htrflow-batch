@@ -12,6 +12,7 @@ from http.cookiejar import CookieJar, DefaultCookiePolicy
 import httpx
 
 COOKIE = "htr_session"
+MAX_COOKIE = 4096
 
 
 def no_cookie_jar() -> CookieJar:
@@ -49,7 +50,10 @@ class SessionChecker:
         self._lock = threading.Lock()
 
     def check(self, cookie: str | None) -> Session | None:
-        if not cookie:
+        # A sealed session is a few hundred ASCII bytes. Anything else is no
+        # session, answered before the proxy is asked or a cache key is kept
+        # (a header value that is not ASCII could not be forwarded at all).
+        if not cookie or len(cookie) > MAX_COOKIE or not cookie.isascii():
             return None
         now = self._clock()
         with self._lock:

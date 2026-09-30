@@ -100,15 +100,10 @@ class Config(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     results_url: str = Field("", alias="HTRFLOW_RESULTS_URL")
-    #: Where THIS POD reaches the results bucket -- not necessarily the same
-    #: address a browser can resolve. On the PoC `results_url` is a
-    #: `localhost` URL reached through an SSH forward (docs:
-    #: development/local-k3s "Two S3 endpoints"): the API pod's own
-    #: ProgressReader would resolve that `localhost` to itself and never
-    #: reach RustFS. Defaults to `results_url` (real AWS, or any
-    #: deployment where the same URL really does work from inside the
-    #: cluster); the chart sets it explicitly for the PoC
-    #: (`web.internalResultsBase`).
+    #: Where THIS POD reads progress files: the chart sets it to the results
+    #: proxy's Service (there is no chart value for it), because `results_url`
+    #: is the browser's address and may not resolve from a pod. Defaults to
+    #: `results_url` outside a chart.
     internal_results_base: str = Field("", alias="HTRFLOW_INTERNAL_RESULTS_BASE")
     #: The results proxy's Service, e.g. http://htrflow-results:8082/results:
     #: the web front asks it whether a request is logged in, reads progress

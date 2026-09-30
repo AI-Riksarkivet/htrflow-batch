@@ -8,14 +8,23 @@ included, on everything else. It is the only source the browser reads: the
 Job's `completedIndexes` and `failedIndexes` are the progress, the Pod
 termination messages are the failure reasons, and every result link is built
 from the results URL; how far each volume has got is read from its
-`progress.json` in the results bucket. Read-only but for one write: every call
+`progress.json`, read through the results proxy. Read-only but for one write: every call
 is a get or a list against Jobs, Pods and ConfigMaps, except the server-side
 apply of each campaign's status ConfigMap (`campaign-<name>-status`), which
 keeps a campaign on the page once its Job is past `ttlSecondsAfterFinished`.
 The chart's Role grants get/list on Jobs and Pods and get/list/create/patch on
 ConfigMaps (a server-side apply of an object that does not exist yet is a
 create), no watch; a test greps the source for any other create, patch,
-replace or delete call. There is no authentication.
+replace or delete call. Every `/api/v1` route needs a session on the results
+store; the static site, which asks for the login, needs none.
+
+The package has a second entrypoint, `htrflow-results`, the **results proxy**
+(`results.py`, `results_rules.py`, `session.py`): it serves the login and, under
+`/results`, result files read from S3 with each logged-in user's own keys,
+sealed in an encrypted `HttpOnly` cookie. The web front never opens that
+cookie: `sessions.py` asks the proxy whether a cookie is valid, and
+`passthrough.py` passes `/results` through to it. The design is in
+[Results behind a login](../../docs/superpowers/specs/2026-09-30-results-proxy-login-design.md).
 
 - Design: [Campaigns as Indexed Jobs](../../docs/superpowers/specs/2026-09-01-indexed-jobs-design.md),
   its decision on the read API
@@ -126,19 +135,25 @@ last apply, frozen once the campaign has finished) are stamped by `apply`.
 | Env var | Default | Meaning |
 |---|---|---|
 | `HTRFLOW_RESULTS_URL` | required | Browser-reachable base every result URL is built from |
-| `HTRFLOW_INTERNAL_RESULTS_BASE` | the public base | Where this pod reaches the results bucket to read progress files, when the browser's address does not work from inside the cluster (a `localhost` forward, say) |
-| `HTRFLOW_RESULTS_PROXY` | required | The results proxy's Service (`http://htrflow-results:8082/results`): asked whether a request's `htr_session` cookie is valid; every `/api/v1` route answers `401` without one, `502` when the proxy does not answer |
+| `HTRFLOW_INTERNAL_RESULTS_BASE` | the public base | Where this pod reads progress files: the chart sets it to the results proxy's Service |
+| `HTRFLOW_RESULTS_PROXY` | required | The results proxy's Service (`http://htrflow-results:8082/results`): asked whether a request's `htr_session` cookie is valid (cached 30 s per cookie), and the target of the `/results` pass-through; every `/api/v1` route answers `401` without a session, `502` when the proxy does not answer |
 | `HTRFLOW_NAMESPACES` | own namespace in-cluster, else `htr-batch` | Comma-separated namespaces to list; the chart leaves it unset |
 | `HTRFLOW_WEB_STATIC` | `/app/static` | The built site. Missing directory = API only, which is what a local run gets |
 | `HTRFLOW_WEB_SITE_ONLY` | unset | Any non-empty value: serve the site without a cluster — `/api/v1/…` answers `503`, nothing tries to load a kubeconfig. The local compose stack runs this way |
 | `HTRFLOW_BATCH_VERSION` | `dev` | The release this image is: baked in from the publish tag by `.docker/htrflow-web.dockerfile`, reported by `/api/v1/version` and shown in the page header. Set by the image, never by an operator |
 
-All six are read in one place — `kube.Config`, a frozen pydantic model whose
+All of these are read in one place — `kube.Config`, a frozen pydantic model whose
 fields carry their own env name (`Field(alias=...)`), the same idiom the
 wrapper and the converter use. `app.py` and `__main__.py` read no environment
-of their own. The chart sets the first from `resultsUrl` and the second
-from `web.internalResultsBase`; `HTRFLOW_WEB_STATIC` empty means the directory
-the image bakes in.
+of their own. The chart sets the first from `resultsUrl` and the second and third to the
+results proxy's Service; `HTRFLOW_WEB_STATIC` empty means the directory the
+image bakes in.
+
+The results proxy reads its own settings from `results.ResultsConfig`, the same
+way: `HTRFLOW_RESULTS_NAMESPACE`, `S3_ENDPOINT`, `S3_BUCKET`, `S3_VERIFY_TLS`,
+`HTRFLOW_SESSION_KEY_FILE`, `HTRFLOW_SESSION_HOURS`, `HTRFLOW_KEY_DERIVATION` and
+`HTRFLOW_TRUSTED_HOPS`, all set by the chart
+([Configuration](../../docs/reference/configuration.md)).
 
 **Why the `HTRFLOW_` prefix here and bare names in the wrapper.** These are
 an operator's settings for a long-lived service, so they are namespaced. The

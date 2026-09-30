@@ -169,6 +169,9 @@ campaigns-apply:
 # Failed Job or a kubectl that cannot read the cluster (finding 3102).
 # The failure-path steps (a 404 manifest, the pod deadline, pause/resume, prune)
 # are campaigns and kubectl in the run log, not this target.
+# The API is behind the login: the last step checks it answers 401 without one,
+# logs in as the devstack's read-only user (its password from the cluster
+# Secret, else HTR_DEV_LOGIN_PASSWORD) and reads the campaign list with the cookie.
 CAMPAIGN_TIMEOUT ?= 3600
 e2e:
 	@test -n "$(DIR)" || (echo "usage: make e2e DIR=<campaigns-repo-dir>"; exit 2)
@@ -176,7 +179,14 @@ e2e:
 	$(MAKE) campaigns-apply DIR=$(DIR)
 	@sel=$$(uv run python -c "from htrflow_converter.render import CAMPAIGN_SELECTOR; print(CAMPAIGN_SELECTOR)") \
 	  && scripts/e2e-wait.sh $(HTR_NAMESPACE) "$$sel" $(CAMPAIGN_TIMEOUT)
-	@curl -fsS http://localhost:$(HTR_WEB_NODEPORT)/api/v1/jobs
+	@web=http://localhost:$(HTR_WEB_NODEPORT); jar=$$(mktemp); trap 'rm -f "$$jar"' EXIT; \
+	  test "$$(curl -sS -o /dev/null -w '%{http_code}' $$web/api/v1/jobs)" = 401 \
+	    || { echo "::error::/api/v1/jobs answered without a login"; exit 1; }; \
+	  pw=$$(kubectl -n $(HTR_NAMESPACE) get secret htr-results-login -o jsonpath='{.data.password}' 2>/dev/null | base64 -d); \
+	  pw=$${pw:-$(HTR_DEV_LOGIN_PASSWORD)}; \
+	  curl -fsS -c "$$jar" -o /dev/null -H "Origin: $$web" -H 'Content-Type: application/json' \
+	    -d "{\"username\":\"$(HTR_DEV_LOGIN_USER)\",\"password\":\"$$pw\"}" $$web/results/_login \
+	  && curl -fsS -b "$$jar" $$web/api/v1/jobs
 
 # Chart: lint + render on defaults and on ci/full-values.yaml (every feature
 # on, no cluster lookups), then kubeconform when it is installed. The local
