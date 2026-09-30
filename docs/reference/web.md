@@ -37,6 +37,9 @@ Source: [`packages/web`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/ma
 | `GET /api/v1/jobs?reaped=20` | One summary per campaign (below). |
 | `GET /api/v1/jobs/{namespace}/{name}?offset=0&limit=200` | One campaign's detail (below). `404` for a name that is not a campaign. |
 
+Every `/api/v1` answer, its `401` and `502` included, carries
+`Cache-Control: private, no-store`: each is one logged-in person's view.
+
 `/log` and `/alto` open only URLs under the results base, so a mailed link
 cannot point them at another host, nor outside the base on the same one:
 one with an escaped `/` or `\` in its path below the base is refused too,

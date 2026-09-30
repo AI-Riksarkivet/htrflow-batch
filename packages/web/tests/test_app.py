@@ -178,6 +178,37 @@ def test_the_api_is_401_without_a_session():
     assert c.get("/api/v1/jobs").status_code == 200
 
 
+def test_every_api_answer_is_private_and_unstored():
+    """Each /api/v1 answer is one person's view: no shared cache may keep
+    it, and no browser cache past the page -- the 401 and 502 included."""
+    from htrflow_web.sessions import SessionsUnavailable
+
+    c = TestClient(
+        create_app(FakeReader(), progress=FakeProgress(), sessions=FakeSessions())
+    )
+    answers = [c.get("/api/v1/jobs"), c.get("/api/v1/version")]  # 401
+    c.cookies.set("htr_session", "tok")
+    answers += [
+        c.get("/api/v1/jobs"),
+        c.get("/api/v1/jobs/htr-test/kyrk"),
+        c.get("/api/v1/version"),
+        c.head("/api/v1/jobs"),
+        c.get("/api/v1/jobs/htr-test/nonesuch"),  # 404
+    ]
+
+    class Down:
+        def check(self, cookie):
+            raise SessionsUnavailable("proxy down")
+
+    down = TestClient(create_app(FakeReader(), progress=FakeProgress(), sessions=Down()))
+    answers.append(down.get("/api/v1/jobs"))  # 502
+    assert {r.status_code for r in answers} == {200, 401, 404, 502}
+    for r in answers:
+        assert r.headers["cache-control"] == "private, no-store", r.request.url
+    # The site's own files keep their caching.
+    assert "cache-control" not in c.get("/config.js").headers
+
+
 def test_the_site_itself_needs_no_session():
     c = TestClient(
         create_app(FakeReader(), progress=FakeProgress(), sessions=FakeSessions())

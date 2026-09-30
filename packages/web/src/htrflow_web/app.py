@@ -54,6 +54,11 @@ SECURITY_HEADERS = {
     "Content-Security-Policy": "frame-ancestors 'none'",
 }
 
+#: Every /api/v1 answer, errors included: each is one logged-in person's
+#: view (the progress the store lets their account read), so no shared
+#: cache may keep it and no browser cache may keep it past the page.
+API_CACHE_CONTROL = "private, no-store"
+
 #: The Universal Viewer is a third-party page with no <meta> CSP of its own,
 #: and until the 2026-09-14 audit the only thing forbidden on it was framing.
 #: What the built viewer actually needs, read off /app/static in the image:
@@ -417,6 +422,9 @@ def create_app(
             )
         for name, value in SECURITY_HEADERS.items():
             response.headers.setdefault(name, value)
+        path = request.url.path
+        if path == "/api/v1" or path.startswith("/api/v1/"):
+            response.headers["Cache-Control"] = API_CACHE_CONTROL
         return response
 
     @app.exception_handler(ClusterUnavailable)
