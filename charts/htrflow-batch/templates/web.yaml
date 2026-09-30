@@ -91,14 +91,13 @@ spec:
               value: /tmp
             - name: HTRFLOW_RESULTS_URL
               value: {{ .Values.resultsUrl | required "resultsUrl is required (the read API serves S3 links built from it)" | quote }}
-            # Where THIS POD reaches the bucket for progress.json -- not
-            # necessarily the same address as the one above: on the PoC,
-            # resultsUrl is a `localhost` URL reached through an SSH
-            # forward, which the pod itself cannot resolve to anything but
-            # itself (docs: development/local-k3s, "Two S3 endpoints").
-            # Defaults to resultsUrl, which is correct on real AWS.
+            # The results proxy (templates/results.yaml): the web front asks it
+            # whether a request is logged in, reads progress through it, and
+            # passes /results through to it. It holds no bucket access itself.
+            - name: HTRFLOW_RESULTS_PROXY
+              value: http://htrflow-results:8082/results
             - name: HTRFLOW_INTERNAL_RESULTS_BASE
-              value: {{ .Values.web.internalResultsBase | default .Values.resultsUrl | quote }}
+              value: http://htrflow-results:8082/results
             # The API acts on its own namespace; the downward API keeps it
             # correct whatever --namespace the release uses. Deliberately
             # single-valued today (one namespace, this release's) — the
@@ -194,18 +193,11 @@ spec:
 {{- end }}
 {{- if .Values.network.enabled }}
 ---
-{{- /*
-Same S3 egress as the batch Job's own policy (_helpers.tpl's s3Egress):
-this pod's ProgressReader (HTRFLOW_INTERNAL_RESULTS_BASE below) has to reach
-the bucket too, on the PoC's in-namespace `app: rustfs` pod or a real
-endpoint from network.s3Cidrs.
-*/}}
-{{- $s3 := include "htrflow-batch.s3Egress" . | fromJsonArray }}
 # Web front: browsers in, matched on their own addresses (the Service's
 # externalTrafficPolicy: Local keeps them un-SNAT'd); egress to DNS, the
-# apiserver, and S3 -- this pod's own ProgressReader reads progress.json out
-# of the results bucket (docs: s3-layout); everything else it links to is
-# fetched by the browser, not by this pod.
+# apiserver, and the results proxy (progress and result files go through it);
+# no S3 egress -- this pod holds no bucket access. Everything else it links
+# to is fetched by the browser, not by this pod.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -240,7 +232,8 @@ spec:
         - { port: 53, protocol: UDP }
         - { port: 53, protocol: TCP }
     - {{ include "htrflow-batch.apiServerEgress" . }}
-    {{- range $s3 }}
-    - {{ toJson . }}
-    {{- end }}
+    - to:
+        - podSelector: { matchLabels: { app: htrflow-results } }
+      ports:
+        - { port: 8082 }
 {{- end }}
