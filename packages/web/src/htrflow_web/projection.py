@@ -373,6 +373,7 @@ def record_detail(
     limit: int = 200,
     fetch_progress=None,
     cached_progress=None,
+    forbidden_progress=None,
 ) -> dict:
     """``JobDetail`` for a campaign whose Job is gone.
 
@@ -420,6 +421,7 @@ def record_detail(
         _internal_results_base(row["namespace"], pipeline, cfg),
         fetch_progress or (lambda *_args: None),
         cached_progress or _not_cached,
+        forbidden_progress or (lambda *_args: False),
     )
     return {
         **row,
@@ -954,6 +956,9 @@ def _volume_row(
         "altoPrefix": f"{results_base}/{key}/alto/",
         "logUrl": _log_url(pipeline, vol_id, cfg),
         "sourceUrl": _source_url(line),
+        # The proxy refused this caller the volume's files (a 403): the card
+        # says their account may not read it, in place of its results.
+        "forbidden": False,
     }
 
 
@@ -1082,6 +1087,7 @@ def _read_progress(
     results_base: str,
     fetch,
     cached,
+    forbidden,
 ) -> dict:
     """Give every run volume its ``progress``, and sum them into the
     campaign's page totals (``_campaign_pages``) plus how many of the run
@@ -1096,7 +1102,9 @@ def _read_progress(
     network only while the cap and the deadline allow. ``pagesCoverage``
     says how many were read, so the page never calls a campaign clean on
     totals that are not yet everyone's. ``fetch``/``cached`` are passed in
-    (progress.py does the HTTP) so this module stays pure."""
+    (progress.py does the HTTP) so this module stays pure; so is
+    ``forbidden``, which says from what those two just read whether the
+    proxy refused the caller the volume (a 403)."""
     ahead, shown = {id(row) for row in lead}, {id(row) for row in page}
     order = sorted(  # stable: by index within each band
         (row for row in volumes if row["state"] != "pending"),
@@ -1114,6 +1122,7 @@ def _read_progress(
                 row["progress"] is not None
                 or cached(results_base, row["id"], row["state"])[0]
             )
+        row["forbidden"] = forbidden(results_base, row["id"], row["state"])
         counted += known
     for row in [*page, *lead]:
         row.setdefault("progress", None)  # pending: nothing to read
@@ -1209,13 +1218,15 @@ def detail(
     warmup: dict,
     fetch_progress=None,
     cached_progress=None,
+    forbidden_progress=None,
 ) -> dict:
     """``JobDetail``: ``JobSummary`` plus per-index rows and top failures for
     ``GET /api/v1/jobs/{ns}/{name}``, paged by index. ``warmup`` passes
     through to ``summarize`` unchanged (Task 28); ``fetch_progress`` is
     ``(results_base, volume id, state) -> progress | None``
     (``app.py`` wires ``progress.ProgressReader.fetch``, and its ``cached``
-    as ``cached_progress``, ``(...) -> (known, progress)``) -- called with the
+    as ``cached_progress``, ``(...) -> (known, progress)``, and its
+    ``forbidden`` as ``forbidden_progress``, ``(...) -> bool``) -- called with the
     INTERNAL results base (this pod's own way to the bucket), never the
     public one every URL below is built from: on the PoC they are not the
     same address (docs: development/local-k3s)."""
@@ -1254,6 +1265,7 @@ def detail(
         internal_base,
         fetch_progress or (lambda *_args: None),
         cached_progress or _not_cached,
+        forbidden_progress or (lambda *_args: False),
     )
 
     pipeline_yaml = _pipeline_yaml(pipeline_configmap)

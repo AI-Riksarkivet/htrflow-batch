@@ -75,6 +75,7 @@ const volumeDone = {
   logUrl: "https://pub/status/logs/demo-v1/vol0.txt",
   sourceUrl: "https://iiif.example.org/vol0/manifest",
   progress: null,
+  forbidden: false,
 };
 
 const volumeFailed = {
@@ -88,6 +89,7 @@ const volumeFailed = {
   sourceUrl: "https://iiif.example.org/vol1/manifest",
   reason: { stage: "load", permanent: true, error: "model not found" },
   progress: null,
+  forbidden: false,
 };
 
 // Every detail response carries these; a fixture without them would only

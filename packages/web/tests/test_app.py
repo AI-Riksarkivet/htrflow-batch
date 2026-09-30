@@ -133,8 +133,9 @@ class FakeProgress:
     """Stands in for the bucket: create_app's real one would make an HTTP
     call per volume row, and these tests have no bucket to answer it."""
 
-    def __init__(self, known: dict | None = None) -> None:
+    def __init__(self, known: dict | None = None, refused: set | None = None) -> None:
         self.known = known or {}
+        self.refused = refused or set()
 
     def fetch(self, results_base: str, volume_id: str, state: str) -> dict | None:
         return self.known.get(volume_id)
@@ -143,6 +144,9 @@ class FakeProgress:
         self, results_base: str, volume_id: str, state: str
     ) -> tuple[bool, dict | None]:
         return False, None
+
+    def forbidden(self, results_base: str, volume_id: str, state: str) -> bool:
+        return volume_id in self.refused
 
     def for_session(self, session):
         return self
@@ -405,6 +409,15 @@ def test_job_detail_carries_each_volume_progress_and_the_campaign_total():
     assert (body["pagesFailed"], body["errors"]) == (1, 2)
     assert body["lastError"]["volume"] == "vol0"
     assert body["lastError"]["logUrl"].endswith("/status/logs/demo-v1/vol0.txt")
+
+
+def test_a_volume_the_proxy_refused_is_forbidden_in_the_answer():
+    client = TestClient(
+        create_app(FakeReader(), progress=FakeProgress(refused={"vol0", "vol1"}))
+    )
+    body = client.get("/api/v1/jobs/htr-test/kyrk").json()
+    # vol1 is pending: nothing of it was read, so nothing was refused.
+    assert [v["forbidden"] for v in body["volumes"]] == [True, False]
 
 
 def test_job_detail_carries_the_pipeline_steps_and_yaml(client: TestClient):

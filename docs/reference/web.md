@@ -93,6 +93,7 @@ Each volume row (`VolumeView`):
 | `logUrl` | `<results URL>/status/logs/<pipeline>/<id>.txt`, always present. |
 | `reason` | `{stage, permanent, error}` from a failed pod's termination message, while a pod for that index still exists. |
 | `progress` | From the volume's `progress.json` (below), or `null`. |
+| `forbidden` | `true` when the results proxy refused the signed-in user the volume's progress file (a `403`): their store account may not read the volume. Asked again every few seconds, like any unanswered read. |
 
 **Where a `reason` comes from.** The wrapper's own JSON termination message
 when it wrote one. A pod stopped by the warm-up gate carries the gate's

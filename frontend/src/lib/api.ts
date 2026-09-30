@@ -308,6 +308,9 @@ export const volumeViewSchema = z.object({
   sourceUrl: httpUrlSchema.nullable().catch(null),
   reason: volumeReasonSchema.optional(),
   progress: volumeProgressSchema.nullable(),
+  // The results proxy refused this user the volume's files (a 403): the
+  // card says their account may not read it, in place of its results.
+  forbidden: z.boolean(),
 });
 
 // GET /api/v1/jobs/{namespace}/{name}: JobSummary + paged volumes/failures,
