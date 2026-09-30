@@ -136,7 +136,7 @@ Each key is an environment variable of the container.
 |---|---|---|---|---|
 | `HTRFLOW_RESULTS_URL` | the chart: `resultsUrl` | required unless `HTRFLOW_WEB_SITE_ONLY` | chart `resultsUrl`, converter `results_url`, wrapper `RESULTS_URL` | the results URL — nobody |
 | `HTRFLOW_INTERNAL_RESULTS_BASE` | the chart: `web.internalResultsBase`, else `resultsUrl` | `HTRFLOW_RESULTS_URL` | — | no secret — nobody |
-| `HTRFLOW_S3_VERIFY_TLS` | the chart: the S3 Secret (`s3.existingSecret`), its `S3_VERIFY_TLS` key | `true` | — | `false` skips the certificate check on the bucket's progress reads; the S3 Secret's `S3_VERIFY_TLS` key — cluster |
+| `HTRFLOW_RESULTS_PROXY` | not yet set by the chart; set it by hand (required outside a local run) | required unless `HTRFLOW_WEB_SITE_ONLY` | — | no secret — nobody |
 | `HTRFLOW_NAMESPACES` | the chart, fixed: the release namespace (no value sets it) | the pod's own namespace, else `htr-batch` | — | no secret — nobody |
 | `HTRFLOW_WEB_STATIC` | the image build (`ENV`): where the image puts the site | `/app/static` | — | no secret — nobody |
 | `HTRFLOW_WEB_SITE_ONLY` | **a local run only** (the compose stack sets it); no chart value | `false` | — | no secret — nobody |
