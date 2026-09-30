@@ -79,6 +79,19 @@ TARFILE_IN_DEPENDENCIES = {
     "dateutil/zoneinfo/rebuild.py",  # a maintainer tool that rebuilds it
 }
 
+#: Locked dependencies that import XML modules, but only parse trusted data.
+#: A new one fails the test.
+XML_IN_DEPENDENCIES = {
+    "botocore/compat.py",  # boto3 dependency; XML compatibility layer for AWS
+    "botocore/serialize.py",  # boto3 dependency; XML serialization for AWS requests
+}
+
+#: Locked dependencies that import html.parser, but only parse static files.
+#: A new one fails the test.
+HTML_PARSER_IN_DEPENDENCIES = {
+    "botocore/docs/bcdoc/docstringparser.py",  # boto3 dependency; doc generation
+}
+
 _IMPORT = re.compile(
     r"^\s*(?:from\s+([\w.]+)\s+import\s+([\w, ()]+)|import\s+([\w., ]+))", re.M
 )
@@ -204,6 +217,8 @@ def test_no_code_in_the_images_imports_what_a_statement_says_is_unused(
 ) -> None:
     cves = ", ".join(BANS[banned])
     tar = "tarfile" in banned
+    xml = banned == ("xml", "pyexpat", "xmlrpc", "plistlib")
+    html = banned == ("html.parser",)
     if RULES[BANS[banned][0]][0] == ABSENT:
         for path in _own_files():
             text = path.read_text()
@@ -215,6 +230,10 @@ def test_no_code_in_the_images_imports_what_a_statement_says_is_unused(
             )
     for rel, modules in _dependency_modules().items():
         if tar and rel in TARFILE_IN_DEPENDENCIES:
+            continue
+        if xml and rel in XML_IN_DEPENDENCIES:
+            continue
+        if html and rel in HTML_PARSER_IN_DEPENDENCIES:
             continue
         assert not _hits(modules, banned), f"dependency {rel} breaks {cves}"
         text = _dependency_files()[rel]
@@ -246,6 +265,26 @@ def test_the_tarfile_exceptions_still_exist() -> None:
         if rel.startswith("dulwich/") and rel not in files:
             continue  # the hook extra, absent from a default test venv
         assert rel in files and "tarfile" in _modules(files[rel]), rel
+
+
+def test_the_xml_exceptions_still_exist() -> None:
+    """An exception for a file that no longer imports XML modules is stale."""
+    files = _dependency_files()
+    for rel in XML_IN_DEPENDENCIES:
+        assert rel in files, f"missing: {rel}"
+        assert _hits(_modules(files[rel]), ("xml", "pyexpat", "xmlrpc", "plistlib")), (
+            f"{rel} no longer imports XML modules"
+        )
+
+
+def test_the_html_parser_exceptions_still_exist() -> None:
+    """An exception for a file that no longer imports html.parser is stale."""
+    files = _dependency_files()
+    for rel in HTML_PARSER_IN_DEPENDENCIES:
+        assert rel in files, f"missing: {rel}"
+        assert "html.parser" in _modules(files[rel]), (
+            f"{rel} no longer imports html.parser"
+        )
 
 
 #: Where the static directory enters the service: the directory the app is
