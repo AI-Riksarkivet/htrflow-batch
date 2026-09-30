@@ -11,8 +11,9 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-// Vitest runs from frontend/ (vite.config.ts); the patch is the repo's.
-const ROOT = resolve(process.cwd(), "..");
+// Vitest runs from frontend/ (vite.config.ts); the patch is the repo's, one
+// level up (the dagger check mounts it there too).
+const HERE = process.cwd();
 const lf = (s: string) => s.replace(/\r\n/g, "\n");
 
 /** `pre` with the patch's hunks for `file` applied, or a thrown error. */
@@ -52,13 +53,10 @@ function applyHunks(patch: string, file: string, pre: string): string {
 
 function patchedScript(): string {
   const patch = lf(
-    readFileSync(resolve(ROOT, ".docker/uv4-uv-html.patch"), "utf8"),
+    readFileSync(resolve(HERE, "../.docker/uv4-uv-html.patch"), "utf8"),
   );
   const pre = lf(
-    readFileSync(
-      resolve(ROOT, "frontend/src/lib/fixtures/uv4-uv.html"),
-      "utf8",
-    ),
+    readFileSync(resolve(HERE, "src/lib/fixtures/uv4-uv.html"), "utf8"),
   );
   const page = applyHunks(patch, "src/uv.html", pre);
   const scripts = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)];
