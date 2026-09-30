@@ -29,6 +29,8 @@ describe("session helpers", () => {
       [204, "ok"],
       [401, "wrong"],
       [429, "throttled"],
+      [413, "malformed"],
+      [422, "malformed"],
       [502, "store"],
     ] as const) {
       globalThis.fetch = vi
