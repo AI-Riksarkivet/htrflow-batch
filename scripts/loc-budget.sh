@@ -1100,7 +1100,14 @@ check converter "$(count packages/converter/src -name '*.py')" 5074
 # per user and its cache is keyed by user. app.py +36 net: the /api/v1 gate and
 # the pass-through mount; __main__.py +23: the second entrypoint; kube.py -2:
 # HTRFLOW_S3_VERIFY_TLS left for the proxy.
-check web       "$(count packages/web/src -name '*.py')" 3698
+# 3698 -> 3751 (2026-09-30, the final review of the login): a volume the
+# proxy refuses the caller is `forbidden` in the API (spec §7) --
+# progress.py +29 net (the 403 kept in the cache beside the answer, the
+# cache-only lookup, the file list it reads), projection.py +12 (the row's
+# flag and the lookup threaded through both details); app.py +10: every
+# /api/v1 answer is `private, no-store` and the lookup is wired; kube.py +2:
+# the internal base falls back to the proxy.
+check web       "$(count packages/web/src -name '*.py')" 3751
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
@@ -1477,7 +1484,13 @@ check web       "$(count packages/web/src -name '*.py')" 3698
 # log-out button +35 and session.ts +53 (a 401 sends the person to the login
 # page and back afterwards), plus api.ts +8, and +22 across the campaign page,
 # the run viewer and the ALTO viewer for their 401 and 403 answers.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 6176
+# 6176 -> 6213 (2026-09-30, the final review of the login): what a refused
+# read says (spec §7) -- CampaignCard +10 (the "may not read this volume"
+# line in place of the progress, no viewer link), the run viewer +10 and the
+# ALTO viewer +4 for a 403 on a file, session.ts +9 (the sentence, and a 413
+# or 422 login read as too long or malformed), api.ts +3 and the login page
+# +1.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 6213
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
