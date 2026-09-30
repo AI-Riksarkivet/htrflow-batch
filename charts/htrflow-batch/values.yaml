@@ -149,13 +149,6 @@ web:
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: 500m, memory: 256Mi }
-  # Where the API pod itself reaches the results bucket, for its own
-  # ProgressReader -- "" (default) means the same address as
-  # resultsUrl, correct on real AWS. Set this whenever that is not
-  # true, e.g. the PoC, where resultsUrl is a browser-facing
-  # `localhost` URL the pod cannot resolve to anything but itself:
-  # http://rustfs.<namespace>.svc.cluster.local:9000/<bucket>
-  internalResultsBase: ""
   service:
     # ClusterIP is for an ingress controller in front (web.ingress below);
     # NodePort is the browser's direct way in and stays the default.
@@ -169,6 +162,23 @@ web:
     host: ""
     tlsSecretName: ""
     annotations: {}
+
+# The results proxy (templates/results.yaml): result files on the web
+# front's origin, read with each logged-in user's own store keys.
+results:
+  replicas: 1
+  # A Secret with key `key`: 32 random bytes, base64. It seals login
+  # sessions; rotating it logs everyone out. Required.
+  #   kubectl create secret generic htr-session --from-literal=key="$(openssl rand -base64 32)"
+  sessionSecret: ""
+  sessionHours: 8
+  # hcp: the login takes the store account's user name and password and
+  # derives its S3 keys (HCP). none: the login takes the S3 access key and
+  # secret key as they are (RustFS, MinIO, AWS).
+  keyDerivation: hcp
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
 
 # `htrflow-campaigns apply` (packages/converter) run INSIDE the cluster — an
 # Argo CD PostSync hook, a CI Job — needs an identity with write access to

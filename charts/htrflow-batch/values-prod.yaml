@@ -9,7 +9,8 @@
 # This file is only the switches. What it deliberately does NOT set is
 # everything one cluster cannot know for another — `resultsUrl`,
 # `network.apiServer.cidr`, `network.clusterCidrs`, `network.iiifCidrs`,
-# `network.s3Cidrs` and who may reach the web front — and it empties the
+# `network.s3Cidrs`, `results.sessionSecret` (the Secret that seals login
+# sessions) and who may reach the web front — and it empties the
 # network lists values.yaml fills with one distribution's defaults. A render
 # with this file alone fails asking for each of them, one at a time, which
 # is the point: a guessed value would be wrong on every cluster and look
@@ -46,6 +47,10 @@ security:
     # dispatch, so the certificate carries the branch it ran from, never a
     # tag ref. Change this to your own workflow if you republish the images.
     subject: https://github.com/AI-Riksarkivet/htrflow-batch/.github/workflows/publish.yml@refs/heads/main
+
+# Must be set: the name of a Secret with key `key` (32 random bytes, base64).
+results:
+  sessionSecret: ""
 
 network:
   # The results bucket is an S3 endpoint named in s3Cidrs, not the dev

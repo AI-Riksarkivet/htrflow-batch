@@ -644,6 +644,7 @@ def test_the_hook_job_init_writes_is_admitted(tmp_path: Path, template: str):
         template,
         "resultsUrl=https://x/",
         "network.enabled=false",
+        "results.sessionSecret=htr-session",
         values="values-prod.yaml",
     )
     hook = yaml.safe_load(HOOK.read_text(encoding="utf-8"))
@@ -673,6 +674,7 @@ def test_the_production_allow_list_admits_the_release_and_nothing_else(
         "images-allowed",
         "resultsUrl=https://x/",
         "network.enabled=false",
+        "results.sessionSecret=htr-session",
         values="values-prod.yaml",
     )
     for repo in PUBLISHED:

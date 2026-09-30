@@ -10,6 +10,7 @@
     "modelCache",
     "queue",
     "web",
+    "results",
     "apply",
     "security",
     "network"
@@ -349,6 +350,41 @@
         }
       }
     },
+    "results": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "replicas",
+        "sessionSecret",
+        "sessionHours",
+        "keyDerivation",
+        "resources"
+      ],
+      "properties": {
+        "replicas": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sessionSecret": {
+          "type": "string",
+          "pattern": "^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$",
+          "maxLength": 253
+        },
+        "sessionHours": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "keyDerivation": {
+          "enum": [
+            "hcp",
+            "none"
+          ]
+        },
+        "resources": {
+          "$ref": "#/definitions/resources"
+        }
+      }
+    },
     "web": {
       "type": "object",
       "additionalProperties": false,
@@ -370,7 +406,7 @@
           "$ref": "#/definitions/resources"
         },
         "internalResultsBase": {
-          "type": "string"
+          "description": "Removed in 0.16.0; admitted only so htrflow-batch.validate can refuse it by name."
         },
         "service": {
           "type": "object",

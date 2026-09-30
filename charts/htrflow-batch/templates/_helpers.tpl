@@ -19,6 +19,9 @@ but only when the schema is evaluated; this fires from any template.
 {{- if not .Values.network }}
 {{- fail "`.Values.network` is missing: upgrade with --reset-then-reuse-values (or a full values file), never plain --reuse-values" }}
 {{- end }}
+{{- if hasKey .Values.web "internalResultsBase" }}
+{{- fail "web.internalResultsBase is gone (chart 0.16.0): the web front reads the bucket through the results proxy; remove the key" }}
+{{- end }}
 {{- if .Values.security.verifyImages.enabled }}
 {{- if or (not .Values.security.verifyImages.issuer) (not .Values.security.verifyImages.subject) }}
 {{- fail "security.verifyImages.issuer and .subject are required when security.verifyImages.enabled" }}
