@@ -1089,7 +1089,18 @@ check converter "$(count packages/converter/src -name '*.py')" 5074
 # 2797 -> 2813 (HTRFLOW_S3_VERIFY_TLS: kube.py +6 (the field, its comment, from_env),
 # progress.py +3 (verify on the reader's client), app.py +7 (read it, warn
 # once).)
-check web       "$(count packages/web/src -name '*.py')" 2813
+# 2813 -> 3698 (2026-09-30, results behind a login): the results proxy, a
+# second entrypoint on the web image. results.py +434 (the login with its two
+# failure limiters, the session routes, the file route with the store's
+# answers and the streamed body, the LRU of S3 clients), results_rules.py +42
+# (the key rules and the content-type rule), session.py +82 (the AES-GCM
+# cookie and the key derivation), sessions.py +81 (the web front's cached
+# session check) and passthrough.py +143 (the streamed /results pass-through
+# with its body cap). progress.py +44 net: the reader goes through the proxy
+# per user and its cache is keyed by user. app.py +36 net: the /api/v1 gate and
+# the pass-through mount; __main__.py +23: the second entrypoint; kube.py -2:
+# HTRFLOW_S3_VERIFY_TLS left for the proxy.
+check web       "$(count packages/web/src -name '*.py')" 3698
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
@@ -1462,7 +1473,11 @@ check web       "$(count packages/web/src -name '*.py')" 2813
 # so nothing moves when the detail lands. PagesTable +34 and quality.ts +23:
 # the sortable column and its formatting. run.ts +6: a bad score is dropped,
 # not a blank run viewer.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5984
+# 5984 -> 6176 (2026-09-30, results behind a login): the login page +74, the
+# log-out button +35 and session.ts +53 (a 401 sends the person to the login
+# page and back afterwards), plus api.ts +8, and +22 across the campaign page,
+# the run viewer and the ALTO viewer for their 401 and 403 answers.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 6176
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
@@ -1648,5 +1663,11 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5984
 # publicResultsBase key refused in words that name resultsUrl.
 # 2062 -> 2071 (S3_VERIFY_TLS: web.yaml +9 (the web front reads the S3 Secret's
 # optional key), job-shape.yaml unchanged in lines (one more secretEnv name).)
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2071
+# 2071 -> 2173 (2026-09-30, results behind a login): results.yaml +115, the
+# proxy's Deployment (no token, only the session Secret), Service and
+# NetworkPolicy, with the reason each env var is there. web.yaml -16 net: the
+# web front no longer reads the S3 Secret or reaches S3, and gains the proxy's
+# address and egress. _helpers.tpl +3: the refusal of web.internalResultsBase
+# and the results.sessionSecret requirement.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2173
 exit $fail
