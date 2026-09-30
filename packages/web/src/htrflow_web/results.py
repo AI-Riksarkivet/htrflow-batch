@@ -34,6 +34,10 @@ BAD_KEYS = {"InvalidAccessKeyId", "SignatureDoesNotMatch"}
 #: Store answers that mean the keys work and the object is not readable/there.
 NOT_THERE = {"404", "NoSuchKey", "NotFound"}
 DENIED = {"403", "AccessDenied", "Forbidden"}
+#: Login probe is a ranged GET, which carries an S3 error body. Only these
+#: codes prove the keys work; a bare "403"/"400" (HEAD-style, no S3 code)
+#: is not proof, so the login fails closed on it.
+LOGIN_VALID = {"NoSuchKey", "NotFound", "404", "AccessDenied"}
 
 
 class ResultsConfig(BaseModel):
@@ -50,6 +54,7 @@ class ResultsConfig(BaseModel):
     key_derivation: Literal["hcp", "none"] = Field(
         "hcp", alias="HTRFLOW_KEY_DERIVATION"
     )
+    trusted_hops: int = Field(1, alias="HTRFLOW_TRUSTED_HOPS", ge=0)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "ResultsConfig":
@@ -71,13 +76,10 @@ class ClientCache:
     def __len__(self) -> int:
         return len(self._clients)
 
-    def get(self, access_key: str, secret_key: str):
-        k = (access_key, secret_key)
-        with self._lock:
-            if k in self._clients:
-                self._clients.move_to_end(k)
-                return self._clients[k]
-        client = boto3.client(
+    def build(self, access_key: str, secret_key: str):
+        """A new, uncached client (own boto3 session: the default one is not
+        thread-safe)."""
+        return boto3.session.Session().client(
             "s3",
             endpoint_url=self._cfg.s3_endpoint or None,
             aws_access_key_id=access_key,
@@ -94,46 +96,85 @@ class ClientCache:
                 retries={"max_attempts": 2, "mode": "standard"},
             ),
         )
+
+    def put(self, access_key: str, secret_key: str, client) -> None:
         with self._lock:
-            self._clients[k] = client
+            self._clients[(access_key, secret_key)] = client
+            self._clients.move_to_end((access_key, secret_key))
             while len(self._clients) > self._max:
                 self._clients.popitem(last=False)
+
+    def get(self, access_key: str, secret_key: str):
+        k = (access_key, secret_key)
+        with self._lock:
+            if k in self._clients:
+                self._clients.move_to_end(k)
+                return self._clients[k]
+        client = self.build(access_key, secret_key)
+        self.put(access_key, secret_key, client)
         return client
 
 
 class LoginLimiter:
-    def __init__(self, max_failures=5, window=60.0, clock=time.monotonic) -> None:
+    """Failed logins per key (address or user name) in a sliding window.
+    Tracks at most ``max_keys`` keys, oldest evicted first."""
+
+    def __init__(
+        self, max_failures=5, window=60.0, clock=time.monotonic, max_keys=10_000
+    ) -> None:
         self._max, self._window, self._clock = max_failures, window, clock
-        self._fails: dict[str, deque[float]] = {}
+        self._max_keys = max_keys
+        self._fails: OrderedDict[str, deque[float]] = OrderedDict()
         self._lock = threading.Lock()
 
-    def _recent(self, addr: str) -> deque[float]:
-        q = self._fails.setdefault(addr, deque())
+    def __len__(self) -> int:
+        return len(self._fails)
+
+    def _recent(self, key: str) -> deque[float] | None:
+        q = self._fails.get(key)
+        if q is None:
+            return None
         cutoff = self._clock() - self._window
         while q and q[0] <= cutoff:
             q.popleft()
+        if not q:
+            del self._fails[key]
+            return None
         return q
 
-    def blocked(self, addr: str) -> bool:
+    def blocked(self, key: str) -> bool:
         with self._lock:
-            return len(self._recent(addr)) >= self._max
+            q = self._recent(key)
+            return q is not None and len(q) >= self._max
 
-    def failed(self, addr: str) -> None:
+    def failed(self, key: str) -> None:
         with self._lock:
-            self._recent(addr).append(self._clock())
+            q = self._recent(key)
+            if q is None:
+                q = self._fails[key] = deque()
+                while len(self._fails) > self._max_keys:
+                    self._fails.popitem(last=False)
+            q.append(self._clock())
 
-    def succeeded(self, addr: str) -> None:
+    def succeeded(self, key: str) -> None:
         with self._lock:
-            self._fails.pop(addr, None)
+            self._fails.pop(key, None)
 
 
 def _code(e: ClientError) -> str:
     return str(e.response.get("Error", {}).get("Code", ""))
 
 
-def _client_addr(request: Request) -> str:
-    fwd = request.headers.get("x-forwarded-for", "")
-    return fwd.split(",")[0].strip() or (request.client.host if request.client else "")
+def _client_addr(request: Request, trusted_hops: int) -> str:
+    """The address our own proxies saw: the ``trusted_hops``-th entry from the
+    right of X-Forwarded-For (the left side is client-chosen)."""
+    if trusted_hops >= 1:
+        parts = [
+            p.strip() for p in request.headers.get("x-forwarded-for", "").split(",")
+        ]
+        if len(parts) >= trusted_hops and parts[-trusted_hops]:
+            return parts[-trusted_hops]
+    return request.client.host if request.client else ""
 
 
 def _same_origin(request: Request) -> bool:
@@ -147,7 +188,10 @@ def _same_origin(request: Request) -> bool:
 
 
 def _secure(request: Request) -> bool:
-    return (request.headers.get("x-forwarded-proto") or request.url.scheme) == "https"
+    fwd_proto = request.headers.get("x-forwarded-proto")
+    if fwd_proto and request.headers.get("x-forwarded-host"):
+        return fwd_proto == "https"
+    return request.url.scheme == "https"
 
 
 def session_of(request: Request, codec: SessionCodec) -> SessionData | None:
@@ -184,6 +228,7 @@ def create_results_app(
     app = FastAPI()
     clients = clients or ClientCache(cfg)
     limiter = limiter or LoginLimiter()
+    user_limiter = LoginLimiter(max_failures=10, window=300.0)
     app.state.cfg, app.state.codec, app.state.clients = cfg, codec, clients
 
     @app.get("/healthz")
@@ -196,28 +241,39 @@ def create_results_app(
             return JSONResponse(
                 {"detail": "cross-origin login refused"}, status_code=403
             )
-        addr = _client_addr(request)
-        if limiter.blocked(addr):
+        addr = _client_addr(request, cfg.trusted_hops)
+        if limiter.blocked(addr) or user_limiter.blocked(body.username):
             return JSONResponse(
                 {"detail": "too many failed logins: wait a minute and try again"},
                 status_code=429,
             )
         ak, sk = derive_keys(body.username, body.password, cfg.key_derivation)
+        client = clients.build(ak, sk)
         try:
-            clients.get(ak, sk).head_object(
-                Bucket=cfg.s3_bucket, Key=f"{cfg.namespace}/"
+            got = client.get_object(
+                Bucket=cfg.s3_bucket, Key=f"{cfg.namespace}/", Range="bytes=0-0"
             )
+            stream = got.get("Body") if isinstance(got, dict) else None
+            if stream is not None:
+                stream.close()
         except ClientError as e:
-            if _code(e) in BAD_KEYS:
+            code = _code(e)
+            if code in BAD_KEYS:
                 limiter.failed(addr)
+                user_limiter.failed(body.username)
                 return JSONResponse(
                     {"detail": "the store did not accept that user name or password"},
                     status_code=401,
                 )
-            if _code(e) not in NOT_THERE | DENIED:
-                _LOG.warning("login probe: store answered %s", _code(e))
+            if code not in LOGIN_VALID:
+                _LOG.warning(
+                    "login probe: store answered %r (http %s)",
+                    code,
+                    e.response.get("ResponseMetadata", {}).get("HTTPStatusCode"),
+                )
                 return JSONResponse(
-                    {"detail": "the result store did not answer"}, status_code=502
+                    {"detail": "the result store answered without a reason"},
+                    status_code=502,
                 )
         except (ConnectTimeoutError, ReadTimeoutError):
             return JSONResponse(
@@ -228,7 +284,9 @@ def create_results_app(
             return JSONResponse(
                 {"detail": "the result store could not be reached"}, status_code=502
             )
+        clients.put(ak, sk, client)
         limiter.succeeded(addr)
+        user_limiter.succeeded(body.username)
         response = Response(status_code=204)
         response.set_cookie(
             COOKIE,

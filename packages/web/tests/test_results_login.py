@@ -74,29 +74,29 @@ def test_wrong_keys_are_401_with_a_sentence(app, monkeypatch):
         from botocore.exceptions import ClientError
 
         class Refusing:
-            def head_object(self, **kw):
+            def get_object(self, **kw):
                 raise ClientError(
-                    {"Error": {"Code": "SignatureDoesNotMatch"}}, "HeadObject"
+                    {"Error": {"Code": "SignatureDoesNotMatch"}}, "GetObject"
                 )
 
         return Refusing()
 
-    monkeypatch.setattr(ClientCache, "get", refuse)
+    monkeypatch.setattr(ClientCache, "build", refuse)
     r = login(c)
     assert r.status_code == 401
     assert "user name or password" in r.json()["detail"]
 
 
-def test_a_403_or_404_on_the_probe_means_the_keys_are_valid(app, monkeypatch):
+def test_not_found_or_denied_on_the_probe_means_the_keys_are_valid(app, monkeypatch):
     from botocore.exceptions import ClientError
 
-    for code in ("403", "404", "AccessDenied", "NoSuchKey"):
+    for code in ("404", "AccessDenied", "NoSuchKey", "NotFound"):
 
         class Answering:
-            def head_object(self, **kw):
-                raise ClientError({"Error": {"Code": code}}, "HeadObject")
+            def get_object(self, **kw):
+                raise ClientError({"Error": {"Code": code}}, "GetObject")
 
-        monkeypatch.setattr(ClientCache, "get", lambda self, a, s: Answering())
+        monkeypatch.setattr(ClientCache, "build", lambda self, a, s: Answering())
         c = TestClient(app, base_url="https://testserver")
         assert login(c).status_code == 204, code
 
@@ -105,10 +105,10 @@ def test_an_unreachable_store_is_502(app, monkeypatch):
     from botocore.exceptions import EndpointConnectionError
 
     class Down:
-        def head_object(self, **kw):
+        def get_object(self, **kw):
             raise EndpointConnectionError(endpoint_url="https://store")
 
-    monkeypatch.setattr(ClientCache, "get", lambda self, a, s: Down())
+    monkeypatch.setattr(ClientCache, "build", lambda self, a, s: Down())
     c = TestClient(app, base_url="https://testserver")
     assert login(c).status_code == 502
 
@@ -162,3 +162,97 @@ def test_config_requires_namespace_and_bucket():
         ResultsConfig.from_env({"S3_BUCKET": "b"})
     with pytest.raises(ValueError):
         ResultsConfig.from_env({"HTRFLOW_RESULTS_NAMESPACE": "n"})
+
+
+def test_a_bare_403_or_400_is_not_a_login(app, monkeypatch):
+    from botocore.exceptions import ClientError
+
+    for code in ("403", "400"):
+
+        class Bare:
+            def get_object(self, **kw):
+                raise ClientError({"Error": {"Code": code}}, "GetObject")
+
+        monkeypatch.setattr(ClientCache, "build", lambda self, a, s: Bare())
+        c = TestClient(app, base_url="https://testserver")
+        r = login(c)
+        assert r.status_code == 502, code
+        assert "set-cookie" not in r.headers
+        assert c.get("/results/_session").status_code == 401
+
+
+def test_a_wrong_password_leaves_the_cache_alone(cfg, monkeypatch):
+    from botocore.exceptions import ClientError
+
+    class Refusing:
+        def get_object(self, **kw):
+            raise ClientError({"Error": {"Code": "SignatureDoesNotMatch"}}, "GetObject")
+
+    monkeypatch.setattr(ClientCache, "build", lambda self, a, s: Refusing())
+    cache = ClientCache(cfg)
+    app = create_results_app(cfg, SessionCodec(KEY, hours=8), clients=cache)
+    c = TestClient(app, base_url="https://testserver")
+    assert login(c).status_code == 401
+    assert len(cache) == 0
+
+
+def _xff_app(cfg, hops, limiter):
+    cfg = cfg.model_copy(update={"trusted_hops": hops})
+    return TestClient(
+        create_results_app(cfg, SessionCodec(KEY, hours=8), limiter=limiter),
+        base_url="https://testserver",
+    )
+
+
+def test_rotating_the_left_most_forwarded_for_does_not_escape(cfg):
+    limiter = LoginLimiter()
+    for _ in range(5):
+        limiter.failed("9.9.9.9")
+    c = _xff_app(cfg, 1, limiter)
+    for i in range(3):
+        h = {**ORIGIN, "X-Forwarded-For": f"10.0.0.{i}, 9.9.9.9"}
+        assert login(c, headers=h).status_code == 429
+
+
+def test_two_hops_pick_the_second_from_right(cfg):
+    limiter = LoginLimiter()
+    for _ in range(5):
+        limiter.failed("7.7.7.7")
+    c = _xff_app(cfg, 2, limiter)
+    h = {**ORIGIN, "X-Forwarded-For": "1.1.1.1, 7.7.7.7, 8.8.8.8"}
+    assert login(c, headers=h).status_code == 429
+
+
+def test_a_short_forwarded_list_falls_back_to_the_peer(cfg):
+    limiter = LoginLimiter()
+    for _ in range(5):
+        limiter.failed("testclient")
+    c = _xff_app(cfg, 2, limiter)
+    h = {**ORIGIN, "X-Forwarded-For": "1.1.1.1"}
+    assert login(c, headers=h).status_code == 429
+
+
+def test_ten_failures_for_one_user_block_it_from_any_address(cfg, monkeypatch):
+    from botocore.exceptions import ClientError
+
+    class Refusing:
+        def get_object(self, **kw):
+            raise ClientError({"Error": {"Code": "InvalidAccessKeyId"}}, "GetObject")
+
+    monkeypatch.setattr(ClientCache, "build", lambda self, a, s: Refusing())
+    c = _xff_app(cfg, 1, LoginLimiter(max_failures=1000))
+    for i in range(10):
+        h = {**ORIGIN, "X-Forwarded-For": f"5.5.5.{i}"}
+        assert login(c, headers=h).status_code == 401
+    h = {**ORIGIN, "X-Forwarded-For": "5.5.5.99"}
+    assert login(c, headers=h).status_code == 429
+
+
+def test_the_limiter_is_bounded_and_reads_add_nothing():
+    lim = LoginLimiter(max_keys=3)
+    assert not lim.blocked("unknown")
+    assert len(lim) == 0
+    for k in "abcd":
+        lim.failed(k)
+    assert len(lim) == 3
+    assert not lim.blocked("a")
