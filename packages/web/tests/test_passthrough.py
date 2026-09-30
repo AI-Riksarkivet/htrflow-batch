@@ -425,3 +425,41 @@ def test_the_web_fronts_other_proxy_clients_keep_no_cookies_either():
             )
         )
         assert list(client.cookies.jar) == []
+
+
+def test_the_default_client_carries_no_one_elses_login(monkeypatch):
+    """The same guarantee, through the client ``results_route`` builds for
+    itself -- the one production uses. Every httpx transport is answered
+    here, so a default that were a plain ``httpx.AsyncClient`` would reach
+    this handler too, keep alice's Set-Cookie in its jar and send it on the
+    anonymous request."""
+    seen = []
+
+    def handler(req):
+        seen.append(req.headers.get("cookie"))
+        if req.url.path.endswith("/_login"):
+            return httpx.Response(
+                204, headers={"set-cookie": "htr_session=alice; Path=/; HttpOnly"}
+            )
+        return httpx.Response(401, content=b"{}")
+
+    async def answer(self, request):
+        return _streaming(handler(request))
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", answer)
+    app = FastAPI()
+    results_route(app, "http://proxy:8082/results")  # its own default client
+    c = TestClient(app, base_url="https://site.example")
+    login = c.post(
+        "/results/_login",
+        json={"username": "alice", "password": "pw"},
+        headers={"Origin": "https://site.example"},
+    )
+    assert login.status_code == 204
+    assert seen == [None]
+    anonymous = TestClient(app, base_url="https://site.example")
+    assert anonymous.get("/results/ns/x").status_code == 401
+    bob = TestClient(app, base_url="https://site.example")
+    bob.cookies.set("htr_session", "bob")
+    assert bob.get("/results/ns/x").status_code == 401
+    assert seen == [None, None, "htr_session=bob"]
