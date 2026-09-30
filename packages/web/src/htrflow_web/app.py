@@ -650,13 +650,14 @@ def create_app(
         # A Job that is not a campaign is no campaign's Job: the name is
         # answered as though it were absent, from a record or not at all.
         if job is None or not is_campaign(job):
-            return _reaped_detail(namespace, name, offset, limit)
+            return _reaped_detail(namespace, name, offset, limit, session)
         cm_name = projection.configmap_ref(job)
         configmap = reader.get_configmap(namespace, cm_name) if cm_name else None
         pipe_name = projection.configmap_ref(job, "pipeline")
         pipeline_cm = reader.get_configmap(namespace, pipe_name) if pipe_name else None
         pods = reader.list_pods(namespace, name)
         warmup = _warmup_status(job, reader.list_warmups(), {})
+        bound = progress.for_session(session) if progress is not None else None
         body = projection.detail(
             job,
             configmap,
@@ -666,15 +667,21 @@ def create_app(
             limit,
             pipeline_cm,
             warmup=warmup,
-            fetch_progress=progress.fetch if progress is not None else None,
-            cached_progress=progress.cached if progress is not None else None,
+            fetch_progress=bound.fetch if bound is not None else None,
+            cached_progress=bound.cached if bound is not None else None,
         )
         status_name = f"{cm_name or 'campaign-' + name}{projection.STATUS_SUFFIX}"
         live = reader.get_configmap(namespace, status_name)
         _record(body, job, live, body["failures"])
         return body
 
-    def _reaped_detail(namespace: str, name: str, offset: int, limit: int) -> dict:
+    def _reaped_detail(
+        namespace: str,
+        name: str,
+        offset: int,
+        limit: int,
+        session: Session | None,
+    ) -> dict:
         """The campaign page of a campaign whose Job is gone. The pipeline
         ConfigMap is asked for by name here -- the one place this package
         rebuilds the converter's ``htr-pipeline-<id>`` convention instead of
@@ -696,6 +703,7 @@ def create_app(
         if row is None:
             raise HTTPException(status_code=404, detail="job not found")
         pipe = reader.get_configmap(namespace, f"htr-pipeline-{row['pipeline']}")
+        bound = progress.for_session(session) if progress is not None else None
         return projection.record_detail(
             row,
             record,
@@ -704,8 +712,8 @@ def create_app(
             pipe,
             offset,
             limit,
-            fetch_progress=progress.fetch if progress is not None else None,
-            cached_progress=progress.cached if progress is not None else None,
+            fetch_progress=bound.fetch if bound is not None else None,
+            cached_progress=bound.cached if bound is not None else None,
         )
 
     def _warmup_status(
