@@ -31,6 +31,21 @@ stringData:
   S3_ENDPOINT: http://rustfs.{{ .Release.Namespace }}.svc.cluster.local:9000
   S3_BUCKET: {{ .Values.s3.bucket }}
 ---
+# The password of the read-only RustFS user a person logs in to the web
+# front as (s3.loginUser). Generated once, re-read on upgrade; the init hook
+# below sets RustFS's copy from it on every install and upgrade.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Values.s3.loginSecret }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-devstack.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+stringData:
+  password: {{ include "htrflow-devstack.loginPassword" . | quote }}
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -130,8 +145,8 @@ spec:
       nodePort: {{ .Values.rustfs.console.nodePort }}
     {{- end }}
 ---
-# RustFS: S3 API from anywhere (Jobs, the browser-facing origin,
-# the init Job, browsers via the NodePort); the console port only when it is
+# RustFS: S3 API from anywhere (Jobs, the results proxy,
+# the init Job, tools on the host via the NodePort); the console port only when it is
 # enabled. No egress. Namespace default-deny is rendered by
 # charts/htrflow-batch (network.defaultDeny) — this policy is what lets
 # RustFS through it when the two charts share a namespace, which is why it
@@ -156,11 +171,12 @@ spec:
         {{- end }}
 {{- if .Values.rustfs.init.enabled }}
 ---
-# Bucket setup (replaces the hand-run aws-cli pod of the PoC): idempotent,
-# re-run on every install/upgrade so a policy change in values lands. Only
-# creates s3.bucket — this chart has no git daemon (removed: nothing in the
-# platform reads git:// any more, campaigns are applied with `kubectl` from
-# rendered manifests), so there is no campaigns-repo bucket to seed.
+# Bucket and login setup: idempotent, re-run on every install/upgrade, so a
+# changed login password or bucket name lands. Creates s3.bucket (and
+# s3.imageCacheBucket), both private: no bucket policy, no CORS, nothing
+# readable without a login. Then the read-only policy and the s3.loginUser a person
+# logs in to the web front as; `rc admin user add` on an existing user sets
+# its secret key, which is what keeps RustFS in step with the Secret.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -172,34 +188,32 @@ metadata:
     helm.sh/hook-weight: "-5"
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 data:
-  # Generated from values via the bucketPolicy helper (see _helpers.tpl for
-  # why it is an Allow with NotResource); scripts/compose_init.py mirrors it.
-  results-policy.json: {{ include "htrflow-devstack.bucketPolicy" . | quote }}
-  cors.json: {{ dict "CORSRules" (list (dict
-      "AllowedOrigins" .Values.rustfs.init.corsOrigins
-      "AllowedMethods" (list "GET" "HEAD")
-      "AllowedHeaders" (list "*")
-      "MaxAgeSeconds" 3600)) | toJson | quote }}
+  read-policy.json: {{ include "htrflow-devstack.readPolicy" . | quote }}
   init.sh: |
     #!/bin/sh
     set -eu
-    ep="$S3_ENDPOINT"
+    rc alias set local "$S3_ENDPOINT" "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" >/dev/null
     for i in $(seq 1 60); do
-      aws --endpoint-url "$ep" s3api list-buckets >/dev/null 2>&1 && break
+      rc admin user ls local >/dev/null 2>&1 && break
       echo "waiting for rustfs ($i)"; sleep 2
     done
+    # Private however it was left: an earlier chart version set an
+    # anonymous-read policy and CORS, which outlive it. Both are no-ops on a
+    # bucket that has neither.
     ensure_bucket() {
-      aws --endpoint-url "$ep" s3api head-bucket --bucket "$1" >/dev/null 2>&1 \
-        || aws --endpoint-url "$ep" s3api create-bucket --bucket "$1" >/dev/null
+      rc bucket create --ignore-existing "local/$1"
+      rc bucket anonymous set private "local/$1"
+      rc bucket cors remove "local/$1"
     }
     ensure_bucket "$S3_BUCKET"
     {{- if .Values.s3.imageCacheBucket }}
     if [ -n "${IMAGE_CACHE_BUCKET:-}" ]; then
-      ensure_bucket "$IMAGE_CACHE_BUCKET"   # private: no policy, no CORS
+      ensure_bucket "$IMAGE_CACHE_BUCKET"
     fi
     {{- end }}
-    aws --endpoint-url "$ep" s3api put-bucket-policy --bucket "$S3_BUCKET" --policy file:///init/results-policy.json
-    aws --endpoint-url "$ep" s3api put-bucket-cors --bucket "$S3_BUCKET" --cors-configuration file:///init/cors.json
+    rc admin policy create local htr-read /init/read-policy.json
+    rc admin user add local "$LOGIN_USER" "$LOGIN_PASSWORD"
+    rc admin policy attach local htr-read --user "$LOGIN_USER"
     echo "rustfs init complete"
 ---
 apiVersion: batch/v1
@@ -225,7 +239,7 @@ spec:
       securityContext:
         {{- include "htrflow-devstack.restrictedPod" 1000 | nindent 8 }}
       containers:
-        - name: aws
+        - name: rc
           image: {{ .Values.rustfs.init.image }}
           imagePullPolicy: {{ include "htrflow-devstack.pullPolicy" .Values.rustfs.init.image }}
           command: ["/bin/sh", "/init/init.sh"]
@@ -234,10 +248,17 @@ spec:
           env:
             - name: HOME
               value: /tmp
-            - name: AWS_DEFAULT_REGION
-              value: us-east-1
-            - name: AWS_SHARED_CREDENTIALS_FILE
-              value: /secrets/s3/credentials
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.s3.secretName }}, key: AWS_ACCESS_KEY_ID }
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.s3.secretName }}, key: AWS_SECRET_ACCESS_KEY }
+            - name: LOGIN_USER
+              value: {{ .Values.s3.loginUser | quote }}
+            - name: LOGIN_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.s3.loginSecret }}, key: password }
             - name: S3_ENDPOINT
               valueFrom:
                 secretKeyRef: { name: {{ .Values.s3.secretName }}, key: S3_ENDPOINT }
@@ -250,7 +271,6 @@ spec:
             {{- end }}
           volumeMounts:
             - { name: init, mountPath: /init, readOnly: true }
-            - { name: s3, mountPath: /secrets/s3, readOnly: true }
             - { name: tmp, mountPath: /tmp }
           resources:
             requests: { cpu: 50m, memory: 128Mi }
@@ -258,8 +278,6 @@ spec:
       volumes:
         - name: init
           configMap: { name: rustfs-init }
-        - name: s3
-          secret: { secretName: {{ .Values.s3.secretName }}, defaultMode: 0440 }
         - name: tmp
           emptyDir: { sizeLimit: 64Mi }
 ---

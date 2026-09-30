@@ -121,24 +121,28 @@ kubectl -n kube-system label daemonset nvidia-device-plugin app.kubernetes.io/ma
 - **Console** — off by default (`RUSTFS_CONSOLE_ENABLE=false`, no NodePort);
   `rustfs.console.enabled=true` exposes it on `rustfs.console.nodePort`.
 - **Buckets** — the `rustfs-init` Helm hook Job (post-install/upgrade,
-  `rustfs.init`) creates `s3.bucket`, applies the bucket policy and CORS,
-  idempotently. `s3.imageCacheBucket` (empty by default: none) names a
-  second bucket for the converter's `image_cache.bucket` — created the same
-  idempotent way, but with no policy or CORS: the image cache is never
-  public.
-- **Anonymous read is split** (audit X14): `<pipeline>/<volume>/*` and
-  `sources/*` are always anonymous (the browser fetches them directly), and
-  `status/logs/*` is anonymous only while `rustfs.publicLogs=true` (default
-  — the campaign browser links run logs; they can carry a tokenised private
-  IIIF URL on failure, so set it false behind an authenticated proxy). That
-  is the whole split: the run log is the only key anything writes under
-  `status/` (`packages/wrapper`'s `ResultStore.run_log_key`), so with
-  `publicLogs` on the policy is a plain `Resource` allow on the bucket and
-  with it off a single `Allow` with `NotResource` — `NotResource` rather
-  than a `Deny` because RustFS applies a `Deny` to the root credential too
-  and ignores anonymous-only conditions (verified 2026-08-26).
-  `scripts/compose_init.py` renders the same shape for the compose stack.
-  Listing stays denied.
+  `rustfs.init`) creates `s3.bucket` idempotently. `s3.imageCacheBucket`
+  (empty by default: none) names a second bucket for the converter's
+  `image_cache.bucket`, created the same way.
+- **Nothing is anonymous.** Neither bucket has a bucket policy or CORS
+  (the hook removes any it finds): a person reads results by logging in to
+  the web front, whose results proxy reads the bucket with that person's own
+  store keys.
+- **The login user** — the hook also creates a policy `htr-read`
+  (`s3:GetObject` on `s3.bucket/*`: no listing, no write, no other bucket)
+  and the RustFS user `s3.loginUser` (default `htr-reader`) with it attached.
+  Its password is in the Secret `s3.loginSecret` (default
+  `htr-results-login`, key `password`): generated once, kept on uninstall,
+  re-read on upgrade (Helm `lookup`), and set on RustFS again by every run of
+  the hook, so the Secret is the one source. Install htrflow-batch with
+  `results.keyDerivation=none` — RustFS issues S3 keys, so the login form
+  takes the user name as the access key and the password as the secret key —
+  and log in as `htr-reader` with
+  `kubectl -n htr-batch get secret htr-results-login -o jsonpath='{.data.password}' | base64 -d`.
+- **The hook's image** is RustFS's own client, `rc` (`rustfs/rc`, pinned by
+  digest): the admin calls need it, and the AWS CLI has none. With
+  htrflow-batch's Kyverno policies on, the `rustfs/` entry that admits
+  RustFS itself in `security.allowedImageRepos` admits it too.
 
 ## Sizing (O18)
 
@@ -153,6 +157,20 @@ kubectl -n kube-system label daemonset nvidia-device-plugin app.kubernetes.io/ma
 
 Everything below this line is history: each entry names the objects and
 value keys as they were at that version.
+
+### 0.5.0 — unreleased (the results bucket is private; a login user)
+
+Breaking: the results bucket loses its anonymous-read bucket policy and its
+CORS rule, and `rustfs.publicLogs`, `rustfs.init.corsOrigins` and the
+`htrflow-devstack.bucketPolicy` helper are gone (the schema refuses the two
+values). Results are read through htrflow-batch's results proxy, logged in.
+The hook now takes any bucket policy and CORS rule off both buckets on
+every run, so an upgrade clears what an earlier version set.
+
+Added: `s3.loginUser` (default `htr-reader`) and `s3.loginSecret` (default
+`htr-results-login`): the Secret, and a read-only RustFS user the hook
+creates, with policy `htr-read` (`s3:GetObject` on the bucket only).
+`rustfs.init.image` is now RustFS's `rc` client instead of the AWS CLI.
 
 ### 0.4.0 — 2026-09-28 (v0.6.0: an optional image cache bucket)
 
