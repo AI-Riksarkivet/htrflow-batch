@@ -135,8 +135,8 @@ Each key is an environment variable of the container.
 | Key | Set by | Default | Must agree with | Security |
 |---|---|---|---|---|
 | `HTRFLOW_RESULTS_URL` | the chart: `resultsUrl` | required unless `HTRFLOW_WEB_SITE_ONLY` | chart `resultsUrl`, converter `results_url`, wrapper `RESULTS_URL` | the results URL — nobody |
-| `HTRFLOW_INTERNAL_RESULTS_BASE` | the chart: `web.internalResultsBase`, else `resultsUrl` | `HTRFLOW_RESULTS_URL` | — | no secret — nobody |
-| `HTRFLOW_RESULTS_PROXY` | not yet set by the chart; set it by hand (required outside a local run) | required unless `HTRFLOW_WEB_SITE_ONLY` | — | no secret — nobody |
+| `HTRFLOW_INTERNAL_RESULTS_BASE` | the chart, fixed: `http://htrflow-results:8082/results` | `HTRFLOW_RESULTS_URL` | — | no secret — nobody |
+| `HTRFLOW_RESULTS_PROXY` | the chart, fixed: `http://htrflow-results:8082/results` | required unless `HTRFLOW_WEB_SITE_ONLY` | — | no secret — nobody |
 | `HTRFLOW_NAMESPACES` | the chart, fixed: the release namespace (no value sets it) | the pod's own namespace, else `htr-batch` | — | no secret — nobody |
 | `HTRFLOW_WEB_STATIC` | the image build (`ENV`): where the image puts the site | `/app/static` | — | no secret — nobody |
 | `HTRFLOW_WEB_SITE_ONLY` | **a local run only** (the compose stack sets it); no chart value | `false` | — | no secret — nobody |
@@ -199,13 +199,20 @@ Each key is a key of its `values.yaml`.
 | `web.resources.requests.memory` | `values.yaml` | `128Mi` | — | no secret — nobody |
 | `web.resources.limits.cpu` | `values.yaml` | `500m` | — | no secret — nobody |
 | `web.resources.limits.memory` | `values.yaml` | `256Mi` | — | no secret — nobody |
-| `web.internalResultsBase` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `web.service.type` | `values.yaml` | `NodePort` | — | no secret — nobody |
 | `web.ingress.enabled` | `values.yaml` | `false` | — | no secret — nobody |
 | `web.ingress.className` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `web.ingress.host` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `web.ingress.tlsSecretName` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `web.ingress.annotations` | `values.yaml` | *(empty)* | — | no secret — nobody |
+| `results.replicas` | `values.yaml` | `1` | — | no secret — nobody |
+| `results.sessionSecret` | `values.yaml` | *(empty)* | — | no secret — nobody |
+| `results.sessionHours` | `values.yaml` | `8` | — | no secret — nobody |
+| `results.keyDerivation` | `values.yaml` | `hcp` | — | no secret — nobody |
+| `results.resources.requests.cpu` | `values.yaml` | `50m` | — | no secret — nobody |
+| `results.resources.requests.memory` | `values.yaml` | `128Mi` | — | no secret — nobody |
+| `results.resources.limits.cpu` | `values.yaml` | `500m` | — | no secret — nobody |
+| `results.resources.limits.memory` | `values.yaml` | `256Mi` | — | no secret — nobody |
 | `apply.rbac.enabled` | `values.yaml` | `false` | — | no secret — nobody |
 | `apply.gitCidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `apply.gitPorts` | `values.yaml` | `[443]` | — | no secret — nobody |

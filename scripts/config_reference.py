@@ -182,7 +182,19 @@ def chart_web_env() -> dict[str, list[str]]:
     that set it -- empty for one it takes from the downward API."""
     text = WEB_TEMPLATE.read_text(encoding="utf-8")
     found = re.findall(r"- name: (HTRFLOW_\w+)\n\s+(value: [^\n]*|valueFrom:)", text)
-    return {n: re.findall(r"\.Values\.([\w.]+)", how) for n, how in found}
+    return {
+        n: re.findall(r"\.Values\.([\w.]+)", how)
+        for n, how in found
+        if n not in chart_web_fixed_env()
+    }
+
+
+def chart_web_fixed_env() -> dict[str, str]:
+    """Each HTRFLOW_ env var the web Deployment sets to a literal, no value
+    and no template involved -> that literal."""
+    text = WEB_TEMPLATE.read_text(encoding="utf-8")
+    found = re.findall(r"- name: (HTRFLOW_\w+)\n\s+value: ([^\n{]*)\n", text)
+    return {n: v.strip() for n, v in found}
 
 
 def chart_web_secret_env() -> dict[str, str]:
@@ -231,14 +243,14 @@ def web_set_by(name: str) -> str:
     if name in chart_web_secret_env():
         key = chart_web_secret_env()[name]
         return f"the chart: the S3 Secret (`s3.existingSecret`), its `{key}` key"
+    if name in chart_web_fixed_env():
+        return f"the chart, fixed: `{chart_web_fixed_env()[name]}`"
     if name in chart and chart[name]:
         return "the chart: " + ", else ".join(f"`{v}`" for v in chart[name])
     if name in chart:
         return "the chart, fixed: the release namespace (no value sets it)"
     if name in image_env("htrflow-web.dockerfile"):
         return _image(name)
-    if name == "HTRFLOW_RESULTS_PROXY":  # the chart sets it once the proxy ships
-        return "not yet set by the chart; set it by hand (required outside a local run)"
     return _local(name, "web") + "; no chart value"
 
 
