@@ -697,6 +697,9 @@
   // actually happened yet, and a volume smaller than that cadence would
   // otherwise link to a manifest that is not there.
   function openHref(v: VolumeView): string | null {
+    // The results proxy refused this user the volume: its published
+    // manifest would only answer 403 in the viewer (spec §7).
+    if (v.forbidden) return null;
     const published =
       v.state === "done" || (v.progress?.viewerPublished ?? false);
     const manifest = published ? v.iiifUrl : v.sourceUrl;
@@ -805,9 +808,11 @@
   {#if open === null}
     <span
       class="vid-name"
-      title="{v.id} — {coming
-        ? 'nothing to open there yet'
-        : 'no viewer manifest for this volume'}">{v.id}</span
+      title="{v.id} — {v.forbidden
+        ? 'your account may not read this volume'
+        : coming
+          ? 'nothing to open there yet'
+          : 'no viewer manifest for this volume'}">{v.id}</span
     >
   {:else}
     <a
@@ -966,7 +971,12 @@
     v.progress === null ? "" : describeProgress(v.progress, v.state)}
   <span class="c-label" role={cellRole}>
     <span class="vid-line">{@render volumeId(v)}</span>
-    {#if story !== ""}<span class="vprogress">{story}</span>{/if}
+    <!-- A 403 from the results proxy: the sentence stands where the
+         volume's progress would, and there is no viewer link above it
+         (spec §7). -->
+    {#if v.forbidden}<span class="vprogress forbidden"
+        >Your account may not read this volume.</span
+      >{:else if story !== ""}<span class="vprogress">{story}</span>{/if}
   </span>
   <span class="c-links" role={cellRole}>{@render manifestLink(v)}</span>
   <span class="c-bar" role={cellRole}
