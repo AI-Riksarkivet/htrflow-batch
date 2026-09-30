@@ -121,6 +121,82 @@ def test_the_upstream_response_is_closed_after_streaming():
     assert closed
 
 
+def test_only_the_session_cookie_is_forwarded():
+    calls = []
+    c = app_with(lambda req: httpx.Response(200), calls)
+    c.get("/results/ns/x", headers={"Cookie": "other=1; htr_session=tok; x=2"})
+    assert calls[0].headers["cookie"] == "htr_session=tok"
+    c.get("/results/ns/x", headers={"Cookie": "other=1"})
+    assert "cookie" not in calls[1].headers
+
+
+def test_a_non_ascii_request_header_value_is_not_a_500():
+    calls = []
+    c = app_with(lambda req: httpx.Response(200), calls)
+    r = c.get(
+        "/results/ns/x",
+        headers=[(b"if-none-match", b'"caf\xc3\xa9"'), (b"x-forwarded-for", b"a\xff")],
+    )
+    assert r.status_code == 200
+
+
+def test_response_headers_are_copied_as_bytes_with_content_encoding():
+    def handler(req):
+        return httpx.Response(
+            200,
+            headers=[
+                (b"content-disposition", b'attachment; filename="a.txt"'),
+                (b"content-encoding", b"identity"),
+                (b"x-secret", b"no"),
+            ],
+        )
+
+    r = app_with(handler).get("/results/ns/x")
+    assert r.status_code == 200
+    assert (
+        r.headers.raw.count((b"content-disposition", b'attachment; filename="a.txt"'))
+        == 1
+    )
+    assert r.headers["content-encoding"] == "identity"
+    assert "x-secret" not in r.headers
+
+
+def test_a_declared_oversize_post_is_413_and_the_proxy_is_not_called():
+    calls = []
+    c = app_with(lambda req: httpx.Response(200), calls)
+    r = c.post("/results/_login", content=b"x" * 16385)
+    assert r.status_code == 413 and calls == []
+    assert c.post("/results/_login", content=b"x" * 16384).status_code == 200
+
+
+def test_a_chunked_oversize_post_is_413_and_the_proxy_is_not_called():
+    calls = []
+    c = app_with(lambda req: httpx.Response(200), calls)
+
+    def gen():
+        for _ in range(5):
+            yield b"x" * 4096
+
+    r = c.post("/results/_login", content=gen())
+    assert r.status_code == 413 and calls == []
+
+
+def test_a_mid_stream_failure_is_logged_and_raised(caplog):
+    class Broken(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b"a"
+            raise httpx.ReadError("secret-cookie-value")
+
+    c = app_with(lambda req: httpx.Response(200, stream=Broken()))
+    with caplog.at_level("WARNING", logger="htrflow_web.passthrough"):
+        try:
+            c.get("/results/ns/x")
+        except Exception:
+            pass
+    assert any("mid-answer" in m for m in caplog.messages)
+    assert "secret-cookie-value" not in caplog.text
+
+
 def test_head_passes_without_a_body():
     seen = []
 
