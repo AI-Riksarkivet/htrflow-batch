@@ -14,7 +14,7 @@
 -include .env
 export HTR_RELEASE HTR_NAMESPACE HTR_REGISTRY HTR_REGISTRY_NODEPORT HTR_S3_ENDPOINT HTR_S3_NODEPORT \
        HTR_BUCKET HTR_WEB_NODEPORT HTR_DEV_S3_ACCESS_KEY HTR_DEV_S3_SECRET_KEY HTRFLOW_DIR \
-       HTR_COMPOSE_S3_PORT HTR_COMPOSE_WEB_PORT
+       HTR_COMPOSE_S3_PORT HTR_COMPOSE_WEB_PORT HTR_DEV_LOGIN_USER HTR_DEV_LOGIN_PASSWORD
 
 # On RA hosts dagger containers need the corp CA; harmless elsewhere if the file exists.
 CA_BUNDLE ?= /etc/ssl/certs/ca-certificates.crt
@@ -116,13 +116,25 @@ compose-smoke: build-wrapper build-web
 
 # The smoke on its own, against whatever WRAPPER_IMAGE and WEB_IMAGE name:
 # the images compose-smoke just built, or a published release by digest.
-# The stack comes down (volumes included) however the run ends.
+# The stack comes down (volumes included) however the run ends. After the
+# site answers it takes the path a person does: the volume's iiif.json is a
+# 401 without a login, the login is a cookie, and the cookie reads it; and
+# it is a 401 again for a request without that cookie.
+COMPOSE_WEB := http://localhost:$(HTR_COMPOSE_WEB_PORT)
+COMPOSE_IIIF := $(COMPOSE_WEB)/results/$(HTR_NAMESPACE)/demo-v1/mock-vol/iiif.json
 compose-smoke-run:
-	cd .docker && trap 'docker compose down -v' EXIT && \
+	cd .docker && jar=$$(mktemp) && trap 'rm -f "$$jar"; docker compose down -v' EXIT && \
 	export HTR_WRAPPER_IMAGE=$(WRAPPER_IMAGE) HTR_WEB_IMAGE=$(WEB_IMAGE) && \
 	docker compose up --no-build --abort-on-container-exit --exit-code-from wrapper wrapper && \
-	docker compose up --no-build -d web && \
-	curl -fsS --retry 15 --retry-delay 2 --retry-all-errors -o /dev/null http://localhost:$(HTR_COMPOSE_WEB_PORT)/uv.html
+	docker compose up --no-build -d --wait web results && \
+	curl -fsS --retry 15 --retry-delay 2 --retry-all-errors -o /dev/null $(COMPOSE_WEB)/uv.html && \
+	test "$$(curl -sS --retry 15 --retry-delay 2 --retry-all-errors -o /dev/null -w '%{http_code}' $(COMPOSE_IIIF))" = 401 && \
+	curl -fsS -c "$$jar" -o /dev/null -H 'Origin: http://localhost:$(HTR_COMPOSE_WEB_PORT)' \
+	  -H 'Content-Type: application/json' \
+	  -d '{"username":"$(HTR_DEV_LOGIN_USER)","password":"$(HTR_DEV_LOGIN_PASSWORD)"}' \
+	  $(COMPOSE_WEB)/results/_login && \
+	curl -fsS -b "$$jar" -o /dev/null $(COMPOSE_IIIF) && \
+	test "$$(curl -sS -o /dev/null -w '%{http_code}' $(COMPOSE_IIIF))" = 401
 
 compose-down:
 	cd .docker && docker compose down -v

@@ -1,5 +1,6 @@
 # Full local smoke stack (no k8s): S3 + fixtures + one wrapper run + the web
-# front (the campaign browser and Universal Viewer, served site-only).
+# front (the campaign browser and Universal Viewer, served site-only) + the
+# results proxy it reads results through, logged in.
 # Wrapper env contract mirrors the k8s Job (see docs how-it-works/wrapper);
 # source of truth is packages/wrapper/src/htrflow_batch/config.py.
 #
@@ -17,8 +18,14 @@
 # taken. RustFS listens on the S3 port inside the container too, and the
 # wrapper shares RustFS's network namespace, so `http://localhost:<port>`
 # names the same server to the wrapper and to a browser on the host: the
-# mock manifest's page images and the published iiif.json both resolve in
-# the viewer.
+# mock manifest's page images resolve in the viewer.
+#
+# The results bucket is private. The published iiif.json and everything
+# beside it are read at http://localhost:<web port>/results/…, which the web
+# front passes through to the results proxy; log in there as
+# HTR_DEV_LOGIN_USER / HTR_DEV_LOGIN_PASSWORD (default htr-reader /
+# htr-reader-pass), the read-only RustFS user login-init creates. Only the
+# fixtures bucket, the stand-in IIIF server, is anonymous-readable.
 #
 # Constants (${HTR_*}) come from the repo-root `.env` (defaults in
 # `.env.example`): the Makefile exports them, and every reference below
@@ -66,9 +73,6 @@ services:
       # which is RustFS for both (see the note at the top).
       MOCK_BASE: http://localhost:${HTR_COMPOSE_S3_PORT:-19000}/htr-fixtures/mock-vol
       S3_BUCKET: ${HTR_BUCKET:-htr-results}
-      # Anonymous read on status/logs/* — same trade-off as the chart's
-      # devStack.rustfs.publicLogs (see charts/htrflow-batch/values.yaml).
-      PUBLIC_LOGS: "true"
       # The optional private image cache bucket; empty (the default) is none.
       # The wrapper below reads the same knob.
       IMAGE_CACHE_BUCKET: ${HTR_IMAGE_CACHE_BUCKET:-}
@@ -76,6 +80,30 @@ services:
       AWS_SECRET_ACCESS_KEY: ${HTR_DEV_S3_SECRET_KEY:-rustfsadmin}
     command: ["uv", "run", "--with", "boto3", "--with", "httpx",
               "python", "/scripts/compose_init.py"]
+
+  # The read-only login user and the results proxy's session key
+  # (scripts/compose_login_init.sh). RustFS's own client, pinned like the
+  # devstack chart's init hook. Root, to hand the key file to the web
+  # image's uid in a fresh named volume.
+  login-init:
+    image: rustfs/rc@sha256:ab024bfebee49a750ce886b4c70963ccd9ddaa03f491704a90710641d7a26699  # v0.1.36
+    user: "0:0"
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    volumes:
+      - ../scripts:/scripts:ro
+      - session:/session
+    environment:
+      HOME: /tmp
+      S3_ENDPOINT: http://rustfs:${HTR_COMPOSE_S3_PORT:-19000}
+      S3_BUCKET: ${HTR_BUCKET:-htr-results}
+      AWS_ACCESS_KEY_ID: ${HTR_DEV_S3_ACCESS_KEY:-rustfsadmin}
+      AWS_SECRET_ACCESS_KEY: ${HTR_DEV_S3_SECRET_KEY:-rustfsadmin}
+      LOGIN_USER: ${HTR_DEV_LOGIN_USER:-htr-reader}
+      LOGIN_PASSWORD: ${HTR_DEV_LOGIN_PASSWORD:-htr-reader-pass}
+      SESSION_KEY_OWNER: "1000:1000"   # the web image's USER
+    entrypoint: ["/bin/sh", "/scripts/compose_login_init.sh"]  # the image's is `rc`
 
   wrapper:
     image: ${HTR_WRAPPER_IMAGE:-riksarkivet/htrflow-batch@sha256:4a4455159ea56557fed24b86afb9d302d800d9df1e9d5359ed244f4b0193dada}  # v0.8.0
@@ -94,9 +122,13 @@ services:
       PIPELINE_ID: demo-v1
       S3_ENDPOINT: http://localhost:${HTR_COMPOSE_S3_PORT:-19000}
       S3_BUCKET: ${HTR_BUCKET:-htr-results}
+      # Keys land under <namespace>/, as a campaign Job's do: the results
+      # proxy serves that namespace and nothing else.
+      S3_PREFIX: ${HTR_NAMESPACE:-htr-batch}
       AWS_ACCESS_KEY_ID: ${HTR_DEV_S3_ACCESS_KEY:-rustfsadmin}
       AWS_SECRET_ACCESS_KEY: ${HTR_DEV_S3_SECRET_KEY:-rustfsadmin}
-      RESULTS_URL: http://localhost:${HTR_COMPOSE_S3_PORT:-19000}/${HTR_BUCKET:-htr-results}
+      # The web front's /results, where the browser reads what this writes.
+      RESULTS_URL: http://localhost:${HTR_COMPOSE_WEB_PORT:-8080}/results
       IMAGE_CACHE_BUCKET: ${HTR_IMAGE_CACHE_BUCKET:-}  # empty: no image cache
       MAX_PAGES: "1"          # CPU is ~41x slower than GPU; full volume ≈ 13 min
       WORKDIR_PATH: /work
@@ -122,14 +154,49 @@ services:
     # Site only: a compose stack has no apiserver, so the read API would have
     # nothing to read and the console script would exit on a missing
     # kubeconfig. In this mode /, /log and /uv.html are served and /api/v1/…
-    # answers 503 — the site is exactly what this stack checks.
+    # answers 503. /results still passes through to the results proxy.
+    # No depends_on the proxy: `dagger call compose-test` brings this service
+    # up alone to check the site; `make compose-smoke-run` starts both.
     environment:
       HTRFLOW_WEB_SITE_ONLY: "1"
+      HTRFLOW_RESULTS_PROXY: http://results:8082/results
     ports:
       - "${HTR_COMPOSE_WEB_PORT:-8080}:8081"
     depends_on:
       rustfs:
         condition: service_healthy
 
+  # The results proxy: the web image's second entrypoint. It holds no bucket
+  # credential: it reads with the keys a person logs in with, sealed in a
+  # cookie with the session key login-init wrote. No host port: only the
+  # web front reaches it.
+  results:
+    image: ${HTR_WEB_IMAGE:-riksarkivet/htrflow-web@sha256:a5a479de7ce223c56ddf65eeb9cc7710332ece8b0c8d54f15a82cc298fd19ac0}  # v0.8.0
+    # The image's ENTRYPOINT is htrflow-web: replace it, not its arguments.
+    entrypoint: ["/app/.venv/bin/htrflow-results"]
+    depends_on:
+      login-init:
+        condition: service_completed_successfully
+    volumes:
+      - session:/session:ro
+    environment:
+      HTRFLOW_RESULTS_NAMESPACE: ${HTR_NAMESPACE:-htr-batch}
+      S3_ENDPOINT: http://rustfs:${HTR_COMPOSE_S3_PORT:-19000}
+      S3_BUCKET: ${HTR_BUCKET:-htr-results}
+      HTRFLOW_SESSION_KEY_FILE: /session/key
+      # RustFS issues S3 keys: the login's user name is the access key and
+      # its password the secret key.
+      HTRFLOW_KEY_DERIVATION: none
+      # The web front appends the one X-Forwarded-For entry; no Ingress.
+      HTRFLOW_TRUSTED_HOPS: "1"
+    healthcheck:
+      # Distroless: no curl, but the venv's interpreter.
+      test: ["CMD", "/app/.venv/bin/python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/healthz', timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
 volumes:
   rustfs-data:
+  session:
