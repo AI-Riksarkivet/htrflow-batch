@@ -77,11 +77,14 @@ API_CACHE_CONTROL = "private, no-store"
 #: keyword would make a browser ignore the keyword (2026-09-16, the viewer
 #: rendered unstyled under the hashed policy). Script stays hashed: an
 #: injected style is a layout nuisance, an injected script is the bucket.
+#: The manifest's metadata is rendered on this origin, so no form on the
+#: page may post anywhere else, and no <base> may move its links.
 UV_CSP = (
     "default-src 'self'; script-src 'self'{scripts}; "
     "style-src 'self' 'unsafe-inline'; "
     "object-src 'none'; img-src * data: blob:; connect-src *; "
-    "worker-src 'self' blob:; frame-ancestors 'none'"
+    "worker-src 'self' blob:; form-action 'self'; base-uri 'none'; "
+    "frame-ancestors 'none'"
 )
 
 
