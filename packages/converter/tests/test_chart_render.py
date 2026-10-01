@@ -18,6 +18,7 @@ Three renders, each the same command an operator would run:
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -45,14 +46,17 @@ PUBLIC_INGRESS = "network.web.allowPublicIngress=true"
 #: So is an install that enforces nothing: the chart defaults leave the
 #: Kyverno policies off, and a render that keeps them off says so.
 POLICIES_OFF = "security.policies.allowDisabled=true"
-DEFAULT_SETS = REQUIRED_SETS + (PUBLIC_INGRESS, POLICIES_OFF)
+#: The results proxy seals login sessions with a Secret the chart cannot
+#: invent: the install names one.
+SESSION_SECRET = "results.sessionSecret=htr-session"
+DEFAULT_SETS = REQUIRED_SETS + (PUBLIC_INGRESS, POLICIES_OFF, SESSION_SECRET)
 
 #: Two refusals several tests look for, verbatim: the chart's own sentence
 #: is what an operator reads, so a test that only saw a non-zero exit could
 #: not tell one guard from another (finding 3103).
 S3_NOWHERE_REFUSAL = (
     "network.s3Cidrs is empty and network.s3InNamespace is false, so campaign"
-    " pods and the web front have no route to the results bucket and every"
+    " pods and the results proxy have no route to the results bucket and every"
     " volume would fail after its GPU time: list the S3 endpoint's ranges in"
     " network.s3Cidrs, or set network.s3InNamespace=true when the bucket is the"
     " in-namespace RustFS of charts/htrflow-devstack"
@@ -485,7 +489,7 @@ def _blocks(policy: dict) -> dict[str, list[str]]:
     }
 
 
-@pytest.mark.parametrize("policy_name", ["htr-batch-job", "htr-web"])
+@pytest.mark.parametrize("policy_name", ["htr-batch-job", "htr-results"])
 def test_a_catch_all_s3_range_is_carved_out_like_any_other(policy_name: str):
     """The carve-out applied to a literal `0.0.0.0/0` in iiifCidrs only, so
     `s3Cidrs: [0.0.0.0/0]` -- realistic for S3 on AWS, whose ranges move --
@@ -559,7 +563,7 @@ def test_a_named_range_inside_a_private_block_is_left_whole():
     assert set(blocks["10.0.0.0/8"]) == {"10.42.0.0/16", "10.43.0.0/16"}
 
 
-@pytest.mark.parametrize("policy_name", ["htr-batch-job", "htr-web"])
+@pytest.mark.parametrize("policy_name", ["htr-batch-job", "htr-results"])
 def test_without_in_namespace_s3_no_pod_labelled_rustfs_is_a_route(policy_name: str):
     """The in-namespace `app: rustfs` rule is the dev stack's bucket. Off
     it, any pod that carries the label is a destination the batch Job and
@@ -602,7 +606,7 @@ def test_the_schema_takes_every_real_address_range():
 # --- D4: all-port egress to the S3 range ----------------------------------
 
 
-@pytest.mark.parametrize("policy_name", ["htr-batch-job", "htr-web"])
+@pytest.mark.parametrize("policy_name", ["htr-batch-job", "htr-results"])
 def test_s3_egress_names_the_ports_it_needs(policy_name: str):
     """The CIDR half of the S3 rule carried no `ports` at all, so both pods
     that reach S3 had egress to EVERY port of that range -- which for a
@@ -1395,7 +1399,7 @@ BATCH_GUARDS = {
         REQUIRED_SETS + (POLICIES_OFF,),
         "network.web.ingressCidrs is empty, and a NetworkPolicy rule with no"
         " sources admits every address, so an empty list would open the"
-        " unauthenticated web front to everyone rather than close it: list the"
+        " web front to everyone rather than close it: list the"
         " ranges that may reach it, or set network.web.allowPublicIngress=true"
         " to accept that any address may",
     ),
@@ -1403,11 +1407,11 @@ BATCH_GUARDS = {
         None,
         REQUIRED_SETS
         + (POLICIES_OFF, "network.web.ingressCidrs={198.51.100.0/24,8.0.0.0/7}"),
-        "network.web.ingressCidrs has 8.0.0.0/7, wider than /8, and the web"
-        " front has no authentication of its own: list the ranges your clients'"
-        " addresses are in, or set network.web.allowPublicIngress=true to accept"
-        " that any address that can route to a node may open the campaign"
-        " browser, the viewer and the read API",
+        "network.web.ingressCidrs has 8.0.0.0/7, wider than /8, and the"
+        " network decides who reaches the web front and its login page: list"
+        " the ranges your clients' addresses are in, or set"
+        " network.web.allowPublicIngress=true to accept that any address that"
+        " can route to a node may reach it and try to log in",
     ),
     "ingress-not-clusterip": (
         None,
@@ -1462,6 +1466,18 @@ BATCH_GUARDS = {
         None,
         DEFAULT_SETS + ("publicResultsBase=https://results.example.org/r",),
         RESULTS_BASE_RENAMED_REFUSAL,
+    ),
+    "session-secret": (
+        None,
+        DEFAULT_SETS + ("results.sessionSecret=",),
+        "results.sessionSecret is required: the name of a Secret with key `key` "
+        "(32 random bytes, base64) that seals login sessions",
+    ),
+    "internal-results-base-gone": (
+        None,
+        DEFAULT_SETS + ("web.internalResultsBase=http://x",),
+        "web.internalResultsBase is gone (chart 0.16.0): the web front reads "
+        "the bucket through the results proxy; remove the key",
     ),
     "s3-nowhere": (
         None,
@@ -1775,9 +1791,6 @@ def test_the_image_cache_bucket_is_created_with_no_policy_or_cors():
     assert 'ensure_bucket "$IMAGE_CACHE_BUCKET"' in script
     assert 'put-bucket-policy --bucket "$IMAGE_CACHE_BUCKET"' not in script
     assert 'put-bucket-cors --bucket "$IMAGE_CACHE_BUCKET"' not in script
-    # the results bucket's own policy/CORS lines are untouched
-    assert 'put-bucket-policy --bucket "$S3_BUCKET"' in script
-    assert 'put-bucket-cors --bucket "$S3_BUCKET"' in script
 
     job = named(rendered, "Job", "rustfs-init")
     env = {
@@ -1802,9 +1815,262 @@ def test_without_the_value_the_init_configmap_and_job_are_unchanged():
     assert "IMAGE_CACHE_BUCKET" not in names
 
 
+# --- The results bucket is private; RustFS gets a read-only login user ----
+
+#: The login policy the init hook creates: read one object of the results
+#: bucket, nothing else -- no listing, no write, no other bucket.
+READ_POLICY = {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": ["s3:GetObject"],
+            "Resource": ["arn:aws:s3:::htr-results/*"],
+        }
+    ],
+}
+
+
+def _init_env(rendered: list[dict]) -> dict[str, dict]:
+    job = named(rendered, "Job", "rustfs-init")
+    return {
+        e["name"]: e for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+
+
+def test_the_results_bucket_gets_no_anonymous_policy_and_no_cors():
+    """Everything a browser reads goes through the results proxy with the
+    reader's own keys: the bucket has no public statement left to set."""
+    rendered = _devstack_render()
+    data = named(rendered, "ConfigMap", "rustfs-init")["data"]
+    assert "results-policy.json" not in data and "cors.json" not in data
+    script = data["init.sh"]
+    for gone in ("put-bucket-policy", "put-bucket-cors", "aws "):
+        assert gone not in script, gone
+
+
+def test_an_upgrade_takes_the_old_public_policy_and_cors_off_the_bucket():
+    """0.4.0 set an anonymous-read policy and CORS on the bucket; a bucket
+    policy outlives the chart that set it, so every run of the hook clears
+    both (a no-op on a bucket that has neither)."""
+    script = named(_devstack_render(), "ConfigMap", "rustfs-init")["data"]["init.sh"]
+    ensure = script[script.index("ensure_bucket() {") : script.index("}")]
+    assert 'rc bucket anonymous set private "local/$1"' in ensure
+    assert 'rc bucket cors remove "local/$1"' in ensure
+
+
+def test_the_init_hook_creates_a_read_only_login_user():
+    rendered = _devstack_render()
+    data = named(rendered, "ConfigMap", "rustfs-init")["data"]
+    assert json.loads(data["read-policy.json"]) == READ_POLICY
+    script = data["init.sh"]
+    assert "rc admin policy create local htr-read /init/read-policy.json" in script
+    assert 'rc admin user add local "$LOGIN_USER" "$LOGIN_PASSWORD"' in script
+    assert 'rc admin policy attach local htr-read --user "$LOGIN_USER"' in script
+    # policy before user before attach: attach names both
+    assert (
+        script.index("policy create")
+        < script.index("user add")
+        < script.index("policy attach")
+    )
+
+    env = _init_env(rendered)
+    assert env["LOGIN_USER"]["value"] == "htr-reader"
+    assert env["LOGIN_PASSWORD"]["valueFrom"]["secretKeyRef"] == {
+        "name": "htr-results-login",
+        "key": "password",
+    }
+    # the admin client signs with the root keys the S3 Secret already holds
+    for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        assert env[key]["valueFrom"]["secretKeyRef"] == {
+            "name": "htr-batch-s3",
+            "key": key,
+        }
+
+
+def test_the_login_user_and_its_secret_follow_their_values():
+    rendered = _devstack_render(
+        (
+            "s3.loginUser=site-reader",
+            "s3.loginSecret=site-login",
+            "s3.bucket=site-results",
+        )
+    )
+    env = _init_env(rendered)
+    assert env["LOGIN_USER"]["value"] == "site-reader"
+    assert env["LOGIN_PASSWORD"]["valueFrom"]["secretKeyRef"]["name"] == "site-login"
+    policy = json.loads(
+        named(rendered, "ConfigMap", "rustfs-init")["data"]["read-policy.json"]
+    )
+    assert policy["Statement"][0]["Resource"] == ["arn:aws:s3:::site-results/*"]
+
+
+def test_the_login_password_is_generated_once_and_kept():
+    """A random password in a Secret Helm keeps on uninstall and re-reads on
+    upgrade (`lookup`), like the root keys: the hook sets RustFS's copy from
+    it on every install and upgrade, so the Secret is the one source."""
+    secret = named(_devstack_render(), "Secret", "htr-results-login")
+    assert secret["metadata"]["annotations"]["helm.sh/resource-policy"] == "keep"
+    assert set(secret["stringData"]) == {"password"}
+    assert re.fullmatch(r"[A-Za-z0-9]{32}", secret["stringData"]["password"])
+    template = (DEVSTACK_CHART / "templates" / "_helpers.tpl").read_text()
+    assert 'lookup "v1" "Secret" .Release.Namespace .Values.s3.loginSecret' in template
+
+
+def test_the_init_image_is_rustfs_own_client_pinned_by_digest():
+    """The AWS CLI cannot make admin calls; RustFS's `rc` can, and its
+    image carries the busybox shell the script runs in."""
+    rendered = _devstack_render()
+    container = named(rendered, "Job", "rustfs-init")["spec"]["template"]["spec"][
+        "containers"
+    ][0]
+    assert re.fullmatch(r"rustfs/rc@sha256:[0-9a-f]{64}", container["image"])
+    assert container["command"] == ["/bin/sh", "/init/init.sh"]
+
+
+def test_the_documented_allow_list_admits_every_devstack_image_in_the_namespace():
+    """With the Kyverno policies on, the release namespace admits only the
+    repositories the dev-cluster page lists (images-allowed matches the part
+    before `@` on a path boundary): RustFS and its init hook live there."""
+    page = (REPO / "docs" / "development" / "dev-cluster.md").read_text()
+    listed = re.search(r"security\.allowedImageRepos='\{([^}]*)\}'", page)
+    assert listed, "dev-cluster.md no longer documents allowedImageRepos"
+    repos = [r.strip().strip("/") for r in listed.group(1).split(",")]
+    rendered = _devstack_render()
+    images = [
+        c["image"]
+        for o in rendered
+        if o["kind"] in ("Deployment", "Job")
+        and o["metadata"]["namespace"] == NAMESPACE
+        for c in o["spec"]["template"]["spec"]["containers"]
+    ]
+    assert len(images) == 2, images
+    for image in images:
+        repo = image.split("@")[0]
+        assert any(repo == r or repo.startswith(r + "/") for r in repos), image
+
+
+@pytest.mark.parametrize(
+    "key", ["rustfs.publicLogs=true", "rustfs.init.corsOrigins[0]=*"]
+)
+def test_the_public_bucket_values_are_gone(key: str):
+    values = yaml.safe_load((DEVSTACK_CHART / "values.yaml").read_text())
+    assert "publicLogs" not in values["rustfs"]
+    assert "corsOrigins" not in values["rustfs"]["init"]
+    result = helm_template(
+        values=DEVSTACK_FULL_VALUES, sets=(key,), chart=DEVSTACK_CHART
+    )
+    assert result.returncode != 0
+    assert "additional properties" in result.stderr.lower()
+
+
 def test_the_schema_refuses_a_short_image_cache_bucket_name(tmp_path: Path):
     path = tmp_path / "values.yaml"
     path.write_text("s3:\n  imageCacheBucket: ab\n", encoding="utf-8")
     result = helm_template(values=str(path), chart=DEVSTACK_CHART)
     assert result.returncode != 0
     assert "s3/imageCacheBucket" in result.stderr
+
+
+def test_the_results_proxy_holds_no_token_and_no_bucket_credential():
+    objs = render(sets=DEFAULT_SETS)
+    dep = named(objs, "Deployment", "htrflow-results")
+    spec = dep["spec"]["template"]["spec"]
+    assert spec["automountServiceAccountToken"] is False
+    assert [v["secret"]["secretName"] for v in spec["volumes"] if "secret" in v] == [
+        "htr-session"
+    ]
+    env = {e["name"]: e for e in spec["containers"][0]["env"]}
+    for key in ("S3_ENDPOINT", "S3_BUCKET", "S3_VERIFY_TLS"):
+        assert env[key]["valueFrom"]["secretKeyRef"]["key"] == key
+    assert "credentials" not in json.dumps(spec)
+    assert (
+        env["HTRFLOW_RESULTS_NAMESPACE"]["valueFrom"]["fieldRef"]["fieldPath"]
+        == "metadata.namespace"
+    )
+    assert spec["containers"][0]["command"] == ["/app/.venv/bin/htrflow-results"]
+    assert "serviceAccountName" not in spec
+    assert not any(
+        o["kind"] in ("Role", "RoleBinding") and "results" in o["metadata"]["name"]
+        for o in objs
+    )
+
+
+@pytest.mark.parametrize(
+    "extra,hops",
+    [
+        ((), "1"),
+        (
+            (
+                "web.service.type=ClusterIP",
+                "web.ingress.enabled=true",
+                "web.ingress.host=htr.example.org",
+                "network.web.ingressFrom[0].podSelector.matchLabels.app=ingress",
+            ),
+            "2",
+        ),
+    ],
+    ids=["direct", "behind-ingress"],
+)
+def test_the_proxy_trusts_as_many_forwarding_hops_as_sit_in_front_of_it(extra, hops):
+    """The Ingress controller and the web front each append to
+    X-Forwarded-For; the login's rate limit reads the client from the right."""
+    objs = render(sets=DEFAULT_SETS + extra)
+    env = {
+        e["name"]: e.get("value")
+        for e in named(objs, "Deployment", "htrflow-results")["spec"]["template"][
+            "spec"
+        ]["containers"][0]["env"]
+    }
+    assert env["HTRFLOW_TRUSTED_HOPS"] == hops
+
+
+def test_the_web_front_no_longer_touches_the_s3_secret():
+    objs = render(sets=DEFAULT_SETS)
+    web = named(objs, "Deployment", "htrflow-web")
+    text = json.dumps(web)
+    assert "htr-batch-s3" not in text and "S3_VERIFY_TLS" not in text
+    env = {
+        e["name"]: e.get("value")
+        for e in web["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env["HTRFLOW_RESULTS_PROXY"] == "http://htrflow-results:8082/results"
+    assert env["HTRFLOW_INTERNAL_RESULTS_BASE"] == "http://htrflow-results:8082/results"
+
+
+def test_the_network_policies_route_web_to_proxy_and_proxy_to_s3():
+    objs = render(sets=DEFAULT_SETS + ("network.enabled=true",))
+    web = named(objs, "NetworkPolicy", "htr-web")
+    res = named(objs, "NetworkPolicy", "htr-results")
+    assert {"podSelector": {"matchLabels": {"app": "htrflow-results"}}} in [
+        t for r in web["spec"]["egress"] for t in r.get("to", [])
+    ]
+    assert res["spec"]["ingress"][0]["from"] == [
+        {"podSelector": {"matchLabels": {"app": "htrflow-web"}}}
+    ]
+    assert res["spec"]["ingress"][0]["ports"] == [{"port": 8082}]
+
+
+def test_the_web_front_has_no_s3_egress_and_the_proxy_has_it():
+    """The web front reads the bucket only through the proxy: the store's
+    ranges and the in-namespace RustFS are destinations of the proxy's policy
+    and not of its own."""
+    objs = render(
+        sets=DEFAULT_SETS + ("network.enabled=true", "network.s3Cidrs={203.0.113.0/24}")
+    )
+
+    def peers(name):
+        policy = named(objs, "NetworkPolicy", name)
+        return [t for r in policy["spec"]["egress"] for t in r.get("to", [])]
+
+    rustfs = {"podSelector": {"matchLabels": {"app": "rustfs"}}}
+    web_peers = peers("htr-web")
+    assert not any(
+        p.get("ipBlock", {}).get("cidr") == "203.0.113.0/24" for p in web_peers
+    )
+    assert rustfs not in web_peers
+    assert any(
+        p.get("ipBlock", {}).get("cidr") == "203.0.113.0/24"
+        for p in peers("htr-results")
+    )
+    assert rustfs in peers("htr-results")

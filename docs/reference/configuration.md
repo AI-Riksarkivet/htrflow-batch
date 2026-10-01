@@ -4,9 +4,9 @@
 
 # Configuration
 
-Every setting of the wrapper, the web front, the converter, the
-`htrflow-batch` chart and the frontend build, generated from the three
-config models, the chart's `values.yaml` and the frontend's `config.ts`. The `htrflow-devstack` chart — the development support
+Every setting of the wrapper, the web front, the results proxy, the
+converter, the `htrflow-batch` chart and the frontend build, generated from
+the config models, the chart's `values.yaml` and the frontend's `config.ts`. The `htrflow-devstack` chart — the development support
 stack (RustFS, an in-cluster registry, `devStack.insecureDefaults`,
 `rustfs.accessKey`/`secretKey`) — is a separate surface, documented in its own
 [README](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/charts/htrflow-devstack/README.md).
@@ -44,9 +44,10 @@ without a retry.
   exemption is per file, so reading a token anywhere but the warm-up
   entrypoint still fails. The devstack's own S3 store refuses to render on
   credentials nobody chose (`devStack.insecureDefaults`).
-- **The read API is unauthenticated**: `GET /api/v1/jobs[/…]` and the
-  campaign browser are open to anyone who can reach the port. The network
-  is the only gate: on a NodePort, `network.web.ingressCidrs` (the clients'
+- **The read API needs a login, the site does not**: `GET /api/v1/jobs[/…]`
+  answers `401` without a session on the results store, but the campaign
+  browser's page, which asks for the login, is served to anyone who can reach
+  the port. The network decides who gets that far: on a NodePort, `network.web.ingressCidrs` (the clients'
   own addresses); behind an ingress controller (`web.ingress`),
   `network.web.ingressFrom` names the controller and the controller's own
   allow-list is what keeps browsers out.
@@ -58,11 +59,11 @@ without a retry.
   a Job or a Pod, and `test_chart_agreement.py` holds the rendered Role to
   exactly that. With `security.policies.enabled`, a Kyverno rule also holds
   its ConfigMap writes to names of the form `campaign-<name>-status`.
-- **The results bucket is public-read**: everything under
-  `resultsUrl` — with the devstack's store, except `status/logs/*`
-  when `rustfs.publicLogs` is off. The run log is the only key anything
-  writes under `status/`, so there is nothing else to exclude. See
-  [the bucket policy](../how-it-works/security.md#the-bucket-policy).
+- **The results bucket is private**: nothing in it is anonymous. The
+  results proxy reads it with each logged-in person's own store keys,
+  sealed in an `HttpOnly` cookie only the proxy can open, and no pod holds a
+  credential to read results. See
+  [the results boundary](../how-it-works/security.md#the-results-boundary).
 
 The *Set by* column says who can set each key in a deployment, read off
 what really sets it: the converter's Job skeleton and the job-shape
@@ -88,7 +89,7 @@ Each key is an environment variable of the container.
 | `PIPELINE_PATH` | the converter, fixed: `/config/pipeline.yaml` | **required** | — | no secret — nobody |
 | `PIPELINE_ID` | the pipeline file's `id` | **required** | — | no secret — nobody |
 | `S3_ENDPOINT` | the S3 Secret (`s3_secret`), its `S3_ENDPOINT` key | *(empty)* | — | from the S3 Secret (`secretKeyRef`) — cluster |
-| `S3_VERIFY_TLS` | the S3 Secret (`s3_secret`), its `S3_VERIFY_TLS` key | `true` | — | `false` skips the S3 certificate check, so the pod would send the bucket's credentials to whatever answers at `S3_ENDPOINT`; set by whoever writes the S3 Secret — cluster |
+| `S3_VERIFY_TLS` | the S3 Secret (`s3_secret`), its `S3_VERIFY_TLS` key | `true` | — | `false` skips the S3 certificate check, so the pod would send its S3 keys (a logged-in user's own, for the results proxy) to whatever answers at `S3_ENDPOINT`; set by whoever writes the S3 Secret — cluster |
 | `S3_BUCKET` | the S3 Secret (`s3_secret`), its `S3_BUCKET` key | **required** | — | from the S3 Secret (`secretKeyRef`) — cluster |
 | `RESULTS_URL` | `converter.yaml` `results_url` | **required** | chart `resultsUrl`, converter `results_url`, web `HTRFLOW_RESULTS_URL` | the results URL — nobody |
 | `IIIF_MANIFEST_URL` | the campaign file: its volume list, one entry per index | *(empty)* | — | no secret — nobody |
@@ -135,12 +136,27 @@ Each key is an environment variable of the container.
 | Key | Set by | Default | Must agree with | Security |
 |---|---|---|---|---|
 | `HTRFLOW_RESULTS_URL` | the chart: `resultsUrl` | required unless `HTRFLOW_WEB_SITE_ONLY` | chart `resultsUrl`, converter `results_url`, wrapper `RESULTS_URL` | the results URL — nobody |
-| `HTRFLOW_INTERNAL_RESULTS_BASE` | the chart: `web.internalResultsBase`, else `resultsUrl` | `HTRFLOW_RESULTS_URL` | — | no secret — nobody |
-| `HTRFLOW_S3_VERIFY_TLS` | the chart: the S3 Secret (`s3.existingSecret`), its `S3_VERIFY_TLS` key | `true` | — | `false` skips the certificate check on the bucket's progress reads; the S3 Secret's `S3_VERIFY_TLS` key — cluster |
+| `HTRFLOW_INTERNAL_RESULTS_BASE` | the chart, fixed: `http://htrflow-results:8082/results` | `HTRFLOW_RESULTS_PROXY` | — | no secret — nobody |
+| `HTRFLOW_RESULTS_PROXY` | the chart, fixed: `http://htrflow-results:8082/results` | required unless `HTRFLOW_WEB_SITE_ONLY` | — | no secret — nobody |
 | `HTRFLOW_NAMESPACES` | the chart, fixed: the release namespace (no value sets it) | the pod's own namespace, else `htr-batch` | — | no secret — nobody |
 | `HTRFLOW_WEB_STATIC` | the image build (`ENV`): where the image puts the site | `/app/static` | — | no secret — nobody |
 | `HTRFLOW_WEB_SITE_ONLY` | **a local run only** (the compose stack sets it); no chart value | `false` | — | no secret — nobody |
 | `HTRFLOW_BATCH_VERSION` | the image build (`ENV`): the tag the image is published under | `dev` | — | no secret — nobody |
+
+## results — the results proxy (`htrflow-results`)
+
+Each key is an environment variable of the container.
+
+| Key | Set by | Default | Must agree with | Security |
+|---|---|---|---|---|
+| `HTRFLOW_RESULTS_NAMESPACE` | the chart, fixed: the release namespace (downward API) | **required** | — | no secret — nobody |
+| `S3_ENDPOINT` | the chart: the S3 Secret (`s3.existingSecret`), its `S3_ENDPOINT` key | *(empty)* | — | from the S3 Secret (`secretKeyRef`) — cluster |
+| `S3_BUCKET` | the chart: the S3 Secret (`s3.existingSecret`), its `S3_BUCKET` key | **required** | — | from the S3 Secret (`secretKeyRef`) — cluster |
+| `S3_VERIFY_TLS` | the chart: the S3 Secret (`s3.existingSecret`), its `S3_VERIFY_TLS` key | `true` | — | `false` skips the S3 certificate check, so the pod would send its S3 keys (a logged-in user's own, for the results proxy) to whatever answers at `S3_ENDPOINT`; set by whoever writes the S3 Secret — cluster |
+| `HTRFLOW_SESSION_KEY_FILE` | the chart, fixed: `/secrets/session/key`, the `key` of the `results.sessionSecret` Secret | `/secrets/session/key` | — | the file holding the key that seals every login session; whoever reads it can forge a session — cluster |
+| `HTRFLOW_SESSION_HOURS` | the chart: `results.sessionHours` | `8.0` | — | no secret — nobody |
+| `HTRFLOW_KEY_DERIVATION` | the chart: `results.keyDerivation` | `hcp` | — | how a login's password becomes S3 keys; a wrong value only makes every login fail — nobody |
+| `HTRFLOW_TRUSTED_HOPS` | the chart, fixed: 2 with `web.ingress.enabled`, else 1 | `1` | — | no secret — nobody |
 
 ## converter — a campaigns repo
 
@@ -199,13 +215,20 @@ Each key is a key of its `values.yaml`.
 | `web.resources.requests.memory` | `values.yaml` | `128Mi` | — | no secret — nobody |
 | `web.resources.limits.cpu` | `values.yaml` | `500m` | — | no secret — nobody |
 | `web.resources.limits.memory` | `values.yaml` | `256Mi` | — | no secret — nobody |
-| `web.internalResultsBase` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `web.service.type` | `values.yaml` | `NodePort` | — | no secret — nobody |
 | `web.ingress.enabled` | `values.yaml` | `false` | — | no secret — nobody |
 | `web.ingress.className` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `web.ingress.host` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `web.ingress.tlsSecretName` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `web.ingress.annotations` | `values.yaml` | *(empty)* | — | no secret — nobody |
+| `results.replicas` | `values.yaml` | `1` | — | no secret — nobody |
+| `results.sessionSecret` | `values.yaml` | *(empty)* | — | names the Secret that seals login sessions; `required` — render |
+| `results.sessionHours` | `values.yaml` | `8` | — | no secret — nobody |
+| `results.keyDerivation` | `values.yaml` | `hcp` | — | no secret — nobody |
+| `results.resources.requests.cpu` | `values.yaml` | `50m` | — | no secret — nobody |
+| `results.resources.requests.memory` | `values.yaml` | `128Mi` | — | no secret — nobody |
+| `results.resources.limits.cpu` | `values.yaml` | `500m` | — | no secret — nobody |
+| `results.resources.limits.memory` | `values.yaml` | `256Mi` | — | no secret — nobody |
 | `apply.rbac.enabled` | `values.yaml` | `false` | — | no secret — nobody |
 | `apply.gitCidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `apply.gitPorts` | `values.yaml` | `[443]` | — | no secret — nobody |

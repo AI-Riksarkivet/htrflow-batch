@@ -3,8 +3,8 @@
 # resource type and never one object's name, so the read API's create/patch
 # on configmaps also covers `htr-pipeline-<id>` -- the immutable ConfigMap a
 # campaign Job mounts as its pipeline. Overwrite that and the next campaign
-# loads weights of someone else's choosing, from a pod browsers reach that
-# has no authentication of its own. The Role is already the narrowest one
+# loads weights of someone else's choosing, from a pod browsers reach.
+# The Role is already the narrowest one
 # RBAC can express; admission is the only place left that sees WHO is
 # asking.
 #

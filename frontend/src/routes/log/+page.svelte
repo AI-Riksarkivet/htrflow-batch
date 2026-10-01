@@ -2,6 +2,7 @@
   import { browser } from "$app/environment";
   import { untrack } from "svelte";
   import RunSummaryCard from "$lib/components/RunSummaryCard.svelte";
+  import LogoutButton from "$lib/components/LogoutButton.svelte";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
   // LIVE_MS matches the wrapper's log-ship period (polling faster buys
   // nothing); LIVE_MAX_FAILURES stops a log that never appears from
@@ -9,6 +10,7 @@
   import { LIVE_MAX_FAILURES, LIVE_MS } from "$lib/config.js";
   import { startPolling } from "$lib/poll.js";
   import { isResultUrl, shortDate } from "$lib/api.js";
+  import { FORBIDDEN_FILE, goToLogin } from "$lib/session.js";
   import {
     isTerminalManifest,
     runManifestSchema,
@@ -73,6 +75,17 @@
       // ETag and gets a 304 when nothing changed, instead of re-pulling a
       // multi-MB log every poll.
       const res = await fetch(logUrl, { cache: "no-cache", signal });
+      if (res.status === 401) {
+        goToLogin();
+        live = false; // on its way to /login: no more polls
+        return true;
+      }
+      if (res.status === 403) {
+        // Logged in, and refused: no poll will change the answer.
+        logError = FORBIDDEN_FILE;
+        live = false;
+        return true;
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const text = await res.text();
       logError = null;
@@ -115,6 +128,7 @@
     if (manifestUrl === null) return;
     try {
       const res = await fetch(manifestUrl, { cache: "no-cache", signal });
+      if (res.status === 401) return goToLogin();
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const parsed = runManifestSchema.safeParse(await res.json());
       if (parsed.success) {
@@ -225,6 +239,7 @@
       {#if logUrl !== null}
         <a class="raw" href={logUrl} target="_blank" rel="noopener">raw</a>
       {/if}
+      <LogoutButton />
       <ThemeToggle />
     </div>
   </header>
@@ -251,7 +266,11 @@
 
   <section class="log" aria-label="run log">
     {#if logError !== null}
-      <p class="error" role="alert">Cannot load log: {logError}</p>
+      <p class="error" role="alert">
+        {logError === FORBIDDEN_FILE
+          ? logError
+          : `Cannot load log: ${logError}`}
+      </p>
     {:else if parsed === null}
       <p>Loading…</p>
     {:else if parsed.groups.length === 0}

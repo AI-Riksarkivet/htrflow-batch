@@ -19,6 +19,9 @@ but only when the schema is evaluated; this fires from any template.
 {{- if not .Values.network }}
 {{- fail "`.Values.network` is missing: upgrade with --reset-then-reuse-values (or a full values file), never plain --reuse-values" }}
 {{- end }}
+{{- if hasKey .Values.web "internalResultsBase" }}
+{{- fail "web.internalResultsBase is gone (chart 0.16.0): the web front reads the bucket through the results proxy; remove the key" }}
+{{- end }}
 {{- if .Values.security.verifyImages.enabled }}
 {{- if or (not .Values.security.verifyImages.issuer) (not .Values.security.verifyImages.subject) }}
 {{- fail "security.verifyImages.issuer and .subject are required when security.verifyImages.enabled" }}
@@ -34,7 +37,7 @@ for a cluster without Kyverno; it has to be said out loud.
 {{- fail "security.policies.enabled is false, so nothing in this namespace refuses an image from any registry, a tag instead of a digest or an unpinned model: install Kyverno and set security.policies.enabled=true (values-prod.yaml does), or set security.policies.allowDisabled=true to accept that" }}
 {{- end }}
 {{- /*
-The web front is an unauthenticated NodePort, and its ingress list defaults
+The web front is a NodePort whose login page anyone can open, and its ingress list defaults
 to every address (2026-09-14, audit). The default stays -- the dev stack and
 the compose smoke rely on it and a narrowed default would cut them off on
 upgrade -- but the operator has to say the exposure is deliberate. Only when
@@ -82,7 +85,7 @@ network.enabled=false to get at the policy objects alone.
 */}}
 {{- if .Values.network.enabled }}
 {{- if and (not .Values.network.s3Cidrs) (not .Values.network.s3InNamespace) }}
-{{- fail "network.s3Cidrs is empty and network.s3InNamespace is false, so campaign pods and the web front have no route to the results bucket and every volume would fail after its GPU time: list the S3 endpoint's ranges in network.s3Cidrs, or set network.s3InNamespace=true when the bucket is the in-namespace RustFS of charts/htrflow-devstack" }}
+{{- fail "network.s3Cidrs is empty and network.s3InNamespace is false, so campaign pods and the results proxy have no route to the results bucket and every volume would fail after its GPU time: list the S3 endpoint's ranges in network.s3Cidrs, or set network.s3InNamespace=true when the bucket is the in-namespace RustFS of charts/htrflow-devstack" }}
 {{- end }}
 {{- if not .Values.network.clusterCidrs }}
 {{- fail "network.clusterCidrs is empty, so no egress range the chart renders would carve the cluster's own pod and service ranges out of itself: list your cluster's pod and service CIDRs" }}
@@ -93,7 +96,7 @@ network.enabled=false to get at the policy objects alone.
 {{- end }}
 {{- if and .Values.network.enabled (not .Values.network.web.allowPublicIngress) (not (or .Values.web.ingress.enabled .Values.network.web.ingressFrom)) }}
 {{- if not .Values.network.web.ingressCidrs }}
-{{- fail "network.web.ingressCidrs is empty, and a NetworkPolicy rule with no sources admits every address, so an empty list would open the unauthenticated web front to everyone rather than close it: list the ranges that may reach it, or set network.web.allowPublicIngress=true to accept that any address may" }}
+{{- fail "network.web.ingressCidrs is empty, and a NetworkPolicy rule with no sources admits every address, so an empty list would open the web front to everyone rather than close it: list the ranges that may reach it, or set network.web.allowPublicIngress=true to accept that any address may" }}
 {{- end }}
 {{- /*
 By prefix, not by string: `0.0.0.0/1` + `128.0.0.0/1` is every address in
@@ -104,7 +107,7 @@ after the slash.
 */}}
 {{- range .Values.network.web.ingressCidrs }}
 {{- if lt (atoi (last (splitList "/" .))) 8 }}
-{{- fail (printf "network.web.ingressCidrs has %s, wider than /8, and the web front has no authentication of its own: list the ranges your clients' addresses are in, or set network.web.allowPublicIngress=true to accept that any address that can route to a node may open the campaign browser, the viewer and the read API" .) }}
+{{- fail (printf "network.web.ingressCidrs has %s, wider than /8, and the network decides who reaches the web front and its login page: list the ranges your clients' addresses are in, or set network.web.allowPublicIngress=true to accept that any address that can route to a node may reach it and try to log in" .) }}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -313,7 +316,7 @@ network, and egress rules are a union. Argument: (list $ <ranges>).
 
 {{/*
 S3 egress, for the two pods that reach the bucket -- the batch Job and the
-web front's progress reader -- as a JSON list of rules: with
+results proxy -- as a JSON list of rules: with
 network.s3InNamespace, the in-namespace `app: rustfs` pod on 9000
 (charts/htrflow-devstack's RustFS; the two charts share no values), plus
 network.s3Cidrs on network.s3Ports -- named ports, not the whole range

@@ -6,6 +6,11 @@ commit; `git apply` skips this preamble. What each file changes:
   it textRightPanelEnabled stays false and the ALTO panel never shows). A
   #?config= is honoured on the page's own origin only: UV writes a
   config's content strings into the page as HTML.
+- uv.html (also): before UV loads a manifest under the site's own
+  /results/, ask for it (a same-origin GET): a 401 shows a link to the
+  login page and back, a 403 says the account may not read the volume;
+  anything else loads as before. Inline, so app.py's uv_csp hashes it
+  like the rest of the page's script.
 - TextRightPanel.ts: scale ALTO coords to the displayed image and convert
   them to viewport coords; and render ALTO line text (and search-hit text)
   as text, never as HTML, so a line reading <img src=x onerror=...> is
@@ -344,51 +349,130 @@ index e9d30db..89dbeed 100644
        }
        if (lines.length > 0) {
 diff --git a/src/uv.html b/src/uv.html
-index e19584d..184d222 100644
+index e19584d..ac5f1c3 100644
 --- a/src/uv.html
 +++ b/src/uv.html
-@@ -34,18 +34,30 @@
-         uv = UV.init("uv", data);
+@@ -31,18 +31,103 @@
+           embedded: true,
+         });
  
+-        uv = UV.init("uv", data);
++        // A manifest under this site's own /results/ sits behind the login.
++        // Ask for it before UV does: not logged in (401) is a link to the
++        // login page and back; a store account that may not read the volume
++        // (403) says so. Anything else -- another origin, a 404, a network
++        // failure -- is UV's to show, as before. GET, not HEAD: a HEAD error
++        // has no body, so the proxy cannot tell a revoked login from a
++        // refusal on one.
++        function stop(words, href) {
++          var page = document.getElementById("uv");
++          var p = document.createElement("p");
++          p.setAttribute("style", "font: 16px/1.5 sans-serif; margin: 2em;");
++          p.appendChild(document.createTextNode(words));
++          if (href) {
++            var a = document.createElement("a");
++            a.setAttribute("href", href);
++            a.textContent = "Log in";
++            p.appendChild(document.createTextNode(" "));
++            p.appendChild(a);
++          }
++          page.replaceChildren(p);
++        }
+ 
++        // Where the login page sends the reader back to: a path on this site
++        // and never the login page itself ($lib/session's safeNext).
++        function loginHref() {
++          var next = "/";
++          try {
++            var here = new URL(
++              location.pathname + location.search + location.hash,
++              location.origin
++            );
++            if (
++              here.origin === location.origin &&
++              here.pathname !== "/login" &&
++              here.pathname.indexOf("/login/") !== 0
++            ) {
++              next = here.pathname + here.search + here.hash;
++            }
++          } catch (e) {}
++          return "/login?next=" + encodeURIComponent(next);
++        }
  
 -        const configUrl = urlAdapter.get('config');
 -        if (configUrl) {
--          uv.on("configure", function({ config, cb }) {
--            cb(
++        function gate(manifest, go) {
++          var url;
++          try {
++            url = new URL(manifest, location.href);
++          } catch (e) {
++            return go();
++          }
++          if (
++            url.origin !== location.origin ||
++            url.pathname.indexOf("/results/") !== 0
++          ) {
++            return go();
++          }
++          fetch(url.href, { credentials: "same-origin", cache: "no-cache" }).then(
++            function (response) {
++              if (response.body) {
++                response.body.cancel();
++              }
++              if (response.status === 401) {
++                stop("Log in to open this volume.", loginHref());
++              } else if (response.status === 403) {
++                stop("Your account may not read this volume.");
++              } else {
++                go();
++              }
++            },
++            go
++          );
++        }
++
++        function start() {
++          uv = UV.init("uv", data);
++
++          // uv-iiif-config.json carries options (e.g. textRightPanelEnabled) that
++          // are not compiled into UV.js and must be supplied via the configure event.
++          // A #?config= is honoured on this origin only: a config's content
++          // strings go into the page as HTML, so one from anywhere else would be
++          // script on this origin. Anything else falls back to the default.
++          let configUrl = 'uv-iiif-config.json';
++          const requested = urlAdapter.get('config');
++          if (requested) {
++            try {
++              const url = new URL(requested, location.href);
++              if (url.origin === location.origin) {
++                configUrl = url.href;
++              }
++            } catch (e) {}
++          }
+           uv.on("configure", function({ config, cb }) {
+             cb(
 -              // new Promise(function (resolve) {
 -              //   fetch(configUrl).then(function (response) {
 -              //     resolve(response.json());
 -              //   });
 -              // })
--            );
--          })
-+        // uv-iiif-config.json carries options (e.g. textRightPanelEnabled) that
-+        // are not compiled into UV.js and must be supplied via the configure event.
-+        // A #?config= is honoured on this origin only: a config's content
-+        // strings go into the page as HTML, so one from anywhere else would be
-+        // script on this origin. Anything else falls back to the default.
-+        let configUrl = 'uv-iiif-config.json';
-+        const requested = urlAdapter.get('config');
-+        if (requested) {
-+          try {
-+            const url = new URL(requested, location.href);
-+            if (url.origin === location.origin) {
-+              configUrl = url.href;
-+            }
-+          } catch (e) {}
++              new Promise(function (resolve) {
++                fetch(configUrl).then(function (response) {
++                  resolve(response.json());
++                });
++              })
+             );
+           })
          }
-+        uv.on("configure", function({ config, cb }) {
-+          cb(
-+            new Promise(function (resolve) {
-+              fetch(configUrl).then(function (response) {
-+                resolve(response.json());
-+              });
-+            })
-+          );
-+        })
+@@ -59,6 +144,8 @@
+         });
  
-         var $UV = document.getElementById("uv");
- 
+         resize();
++
++        gate(data.iiifManifestId, start);
+       });
+     </script>
+   </body>
 diff --git a/src/content-handlers/iiif/modules/uv-openseadragoncenterpanel-module/OpenSeadragonCenterPanel.ts b/src/content-handlers/iiif/modules/uv-openseadragoncenterpanel-module/OpenSeadragonCenterPanel.ts
 index 672f621..f52360e 100644
 --- a/src/content-handlers/iiif/modules/uv-openseadragoncenterpanel-module/OpenSeadragonCenterPanel.ts

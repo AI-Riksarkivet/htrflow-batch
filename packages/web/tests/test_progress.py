@@ -75,7 +75,7 @@ def test_a_running_volume_reads_progress_json():
     r, asked = reader(
         {f"{BASE}/vol0/progress.json": httpx.Response(200, json=PROGRESS)}
     )
-    assert r.fetch(BASE, "vol0", "active") == {
+    assert r.for_session(None).fetch(BASE, "vol0", "active") == {
         "done": 137,
         "total": 638,
         "failed": 1,
@@ -95,7 +95,7 @@ def test_a_pending_volume_is_never_fetched():
     """A volume with no pod has written nothing: a GET per pending row of a
     5 000-volume campaign would be the whole cost of this feature."""
     r, asked = reader({})
-    assert r.fetch(BASE, "vol0", "pending") is None
+    assert r.for_session(None).fetch(BASE, "vol0", "pending") is None
     assert asked == []
 
 
@@ -103,7 +103,7 @@ def test_a_volume_finished_by_an_older_wrapper_falls_back_to_the_manifest():
     r, asked = reader(
         {f"{BASE}/vol0/manifest.json": httpx.Response(200, json=MANIFEST)}
     )
-    assert r.fetch(BASE, "vol0", "done") == {
+    assert r.for_session(None).fetch(BASE, "vol0", "done") == {
         "done": 2,  # ok + skipped: a skipped page is in the bucket
         "total": 3,
         "failed": 1,
@@ -125,7 +125,7 @@ def test_a_volume_that_completed_with_failed_pages_still_reads_done():
     row is done AND says how many pages it lost, never one without the
     other."""
     r, _ = reader({f"{BASE}/vol0/manifest.json": httpx.Response(200, json=MANIFEST)})
-    row = r.fetch(BASE, "vol0", "done")
+    row = r.for_session(None).fetch(BASE, "vol0", "done")
     assert (row["stage"], row["done"], row["total"], row["failed"]) == ("done", 2, 3, 1)
 
 
@@ -138,7 +138,7 @@ def test_a_done_volume_prefers_its_progress_file():
             f"{BASE}/vol0/manifest.json": httpx.Response(200, json=MANIFEST),
         }
     )
-    assert r.fetch(BASE, "vol0", "done")["stage"] == "done"
+    assert r.for_session(None).fetch(BASE, "vol0", "done")["stage"] == "done"
     assert asked == [f"{BASE}/vol0/progress.json"]  # the big document is not read
 
 
@@ -154,7 +154,7 @@ def test_a_done_volume_prefers_its_progress_file():
 )
 def test_anything_unreadable_is_no_progress_never_an_error(response):
     r, _ = reader({f"{BASE}/vol0/progress.json": response})
-    assert r.fetch(BASE, "vol0", "active") is None
+    assert r.for_session(None).fetch(BASE, "vol0", "active") is None
 
 
 def test_a_transport_failure_is_no_progress():
@@ -162,7 +162,7 @@ def test_a_transport_failure_is_no_progress():
         raise httpx.ConnectError("no route to the bucket")
 
     r = ProgressReader(httpx.Client(transport=httpx.MockTransport(handler)))
-    assert r.fetch(BASE, "vol0", "active") is None
+    assert r.for_session(None).fetch(BASE, "vol0", "active") is None
 
 
 def test_one_get_per_volume_per_window():
@@ -170,7 +170,7 @@ def test_one_get_per_volume_per_window():
         {f"{BASE}/vol0/progress.json": httpx.Response(200, json=PROGRESS)}
     )
     for _ in range(5):
-        r.fetch(BASE, "vol0", "active")
+        r.for_session(None).fetch(BASE, "vol0", "active")
     assert len(asked) == 1
 
 
@@ -185,7 +185,7 @@ def test_a_last_error_that_is_not_the_shape_we_write_is_dropped():
             )
         }
     )
-    found = r.fetch(BASE, "vol0", "active")
+    found = r.for_session(None).fetch(BASE, "vol0", "active")
     assert found["lastError"] is None and found["errors"] == 0
 
 
@@ -197,7 +197,7 @@ def test_an_unparseable_timestamp_is_no_age_rather_than_a_crash():
             )
         }
     )
-    found = r.fetch(BASE, "vol0", "active")
+    found = r.for_session(None).fetch(BASE, "vol0", "active")
     assert found["updatedAt"] == "not a date" and found["ageSeconds"] is None
 
 
@@ -211,7 +211,7 @@ def test_age_is_never_negative_even_when_the_clock_disagrees():
             )
         }
     )
-    assert r.fetch(BASE, "vol0", "active")["ageSeconds"] == 0
+    assert r.for_session(None).fetch(BASE, "vol0", "active")["ageSeconds"] == 0
 
 
 def test_a_naive_timestamp_is_read_as_utc_not_local_time():
@@ -224,7 +224,7 @@ def test_a_naive_timestamp_is_read_as_utc_not_local_time():
             )
         }
     )
-    assert r.fetch(BASE, "vol0", "active")["ageSeconds"] == 12
+    assert r.for_session(None).fetch(BASE, "vol0", "active")["ageSeconds"] == 12
 
 
 def test_a_cached_row_ages_with_the_clock(monkeypatch):
@@ -235,10 +235,10 @@ def test_a_cached_row_ages_with_the_clock(monkeypatch):
     r, asked = reader(
         {f"{BASE}/vol0/progress.json": httpx.Response(200, json=PROGRESS)}
     )
-    first = r.fetch(BASE, "vol0", "done")
+    first = r.for_session(None).fetch(BASE, "vol0", "done")
     assert first["ageSeconds"] == 12
     monkeypatch.setattr(progress_mod.time, "time", lambda: NOW + 3000)
-    again = r.fetch(BASE, "vol0", "done")
+    again = r.for_session(None).fetch(BASE, "vol0", "done")
     assert asked == [f"{BASE}/vol0/progress.json"], "still one GET"
     assert again["ageSeconds"] == 3012
     assert again["updatedAt"] == first["updatedAt"]
@@ -252,8 +252,8 @@ def test_a_row_with_no_timestamp_has_no_age_to_recompute():
             f"{BASE}/vol0/manifest.json": httpx.Response(200, json=MANIFEST),
         }
     )
-    assert r.fetch(BASE, "vol0", "done")["ageSeconds"] is None
-    assert r.fetch(BASE, "vol0", "done")["ageSeconds"] is None
+    assert r.for_session(None).fetch(BASE, "vol0", "done")["ageSeconds"] is None
+    assert r.for_session(None).fetch(BASE, "vol0", "done")["ageSeconds"] is None
 
 
 def test_a_body_bigger_than_the_cap_is_no_progress():
@@ -263,13 +263,13 @@ def test_a_body_bigger_than_the_cap_is_no_progress():
     which this module already knows how to answer for."""
     huge = {"pages_total": 1, "pad": "x" * (progress_mod.MAX_BODY + 1)}
     r, _ = reader({f"{BASE}/vol0/progress.json": httpx.Response(200, json=huge)})
-    assert r.fetch(BASE, "vol0", "active") is None
+    assert r.for_session(None).fetch(BASE, "vol0", "active") is None
 
 
 def test_a_body_inside_the_cap_still_reads():
     ok = {**PROGRESS, "pad": "x" * 1000}
     r, _ = reader({f"{BASE}/vol0/progress.json": httpx.Response(200, json=ok)})
-    assert r.fetch(BASE, "vol0", "active")["total"] == 638
+    assert r.for_session(None).fetch(BASE, "vol0", "active")["total"] == 638
 
 
 def _gzipped(doc: bytes) -> httpx.Response:
@@ -288,7 +288,7 @@ def test_a_compressed_body_is_never_inflated(monkeypatch):
     r, _ = reader({f"{BASE}/vol0/progress.json": _gzipped(bomb)})
     tracemalloc.start()
     try:
-        assert r.fetch(BASE, "vol0", "active") is None
+        assert r.for_session(None).fetch(BASE, "vol0", "active") is None
         peak = tracemalloc.get_traced_memory()[1]
     finally:
         tracemalloc.stop()
@@ -303,14 +303,14 @@ def test_the_file_is_asked_for_unencoded():
         return httpx.Response(200, json=PROGRESS)
 
     r = ProgressReader(httpx.Client(transport=httpx.MockTransport(handler)))
-    assert r.fetch(BASE, "vol0", "active")["total"] == 638
+    assert r.for_session(None).fetch(BASE, "vol0", "active")["total"] == 638
     assert seen == ["identity"]
 
 
 def test_an_encoded_answer_is_unreadable_even_when_small():
     small = json.dumps(PROGRESS).encode()
     r, _ = reader({f"{BASE}/vol0/progress.json": _gzipped(small)})
-    assert r.fetch(BASE, "vol0", "active") is None
+    assert r.for_session(None).fetch(BASE, "vol0", "active") is None
 
 
 def test_a_redirect_is_not_followed():
@@ -323,7 +323,7 @@ def test_a_redirect_is_not_followed():
             )
         }
     )
-    assert r.fetch(BASE, "vol0", "active") is None
+    assert r.for_session(None).fetch(BASE, "vol0", "active") is None
     assert asked == [f"{BASE}/vol0/progress.json"]
 
 
@@ -338,7 +338,7 @@ def test_the_strings_a_person_reads_are_clipped():
         "last_error": {"page": long, "error": long},
     }
     r, _ = reader({f"{BASE}/vol0/progress.json": httpx.Response(200, json=doc)})
-    got = r.fetch(BASE, "vol0", "active")
+    got = r.for_session(None).fetch(BASE, "vol0", "active")
     assert len(got["lastPage"]) == progress_mod.MAX_FIELD
     assert len(got["stage"]) == progress_mod.MAX_FIELD
     assert len(got["lastError"]["error"]) == progress_mod.MAX_FIELD
@@ -350,13 +350,13 @@ def test_a_volume_id_cannot_walk_out_of_its_own_prefix():
     git repo. Unencoded, `../..` was normalised by the client into a request
     for somebody else's key (2026-09-14 audit)."""
     r, asked = reader({})
-    r.fetch(BASE, "../../status/logs", "active")
+    r.for_session(None).fetch(BASE, "../../status/logs", "active")
     assert asked == [f"{BASE}/..%2F..%2Fstatus%2Flogs/progress.json"]
 
 
 def test_an_ordinary_volume_id_is_left_as_it_is():
     r, asked = reader({})
-    r.fetch(BASE, "R0001203", "active")
+    r.for_session(None).fetch(BASE, "R0001203", "active")
     assert asked == [f"{BASE}/R0001203/progress.json"]
 
 
@@ -384,10 +384,10 @@ def test_the_cache_is_asked_without_a_get():
     r, asked = reader(
         {f"{BASE}/vol0/progress.json": httpx.Response(200, json=PROGRESS)}
     )
-    assert r.cached(BASE, "vol0", "active") == (False, None)
+    assert r.for_session(None).cached(BASE, "vol0", "active") == (False, None)
     assert asked == []
-    fetched = r.fetch(BASE, "vol0", "active")
-    assert r.cached(BASE, "vol0", "active") == (True, fetched)
+    fetched = r.for_session(None).fetch(BASE, "vol0", "active")
+    assert r.for_session(None).cached(BASE, "vol0", "active") == (True, fetched)
     assert len(asked) == 1
 
 
@@ -397,10 +397,10 @@ def test_a_finished_volume_with_no_file_is_an_answer_kept_for_the_hour(clock):
     every poll, and a campaign of such volumes spent the whole fetch cap on
     them, starving the rest of the campaign's totals."""
     r, asked = reader({})
-    assert r.fetch(BASE, "vol0", "done") is None
+    assert r.for_session(None).fetch(BASE, "vol0", "done") is None
     clock.now += progress_mod.RUNNING_TTL + 1
-    assert r.cached(BASE, "vol0", "done") == (True, None)
-    r.fetch(BASE, "vol0", "done")
+    assert r.for_session(None).cached(BASE, "vol0", "done") == (True, None)
+    r.for_session(None).fetch(BASE, "vol0", "done")
     assert len(asked) == 2, "progress.json and manifest.json, once each"
 
 
@@ -408,16 +408,16 @@ def test_a_failed_volumes_file_is_final_too(clock):
     r, asked = reader(
         {f"{BASE}/vol0/progress.json": httpx.Response(200, json=PROGRESS)}
     )
-    r.fetch(BASE, "vol0", "failed")
+    r.for_session(None).fetch(BASE, "vol0", "failed")
     clock.now += progress_mod.RUNNING_TTL + 1
-    assert r.cached(BASE, "vol0", "failed")[0] is True
+    assert r.for_session(None).cached(BASE, "vol0", "failed")[0] is True
     assert len(asked) == 1
 
 
 def test_a_bucket_that_did_not_answer_is_not_an_answer(clock):
     r, _ = reader({f"{BASE}/vol0/progress.json": httpx.Response(503)})
-    assert r.fetch(BASE, "vol0", "done") is None
-    assert r.cached(BASE, "vol0", "done") == (False, None)
+    assert r.for_session(None).fetch(BASE, "vol0", "done") is None
+    assert r.for_session(None).cached(BASE, "vol0", "done") == (False, None)
 
 
 def test_a_full_cache_drops_its_oldest_entry_not_everything(monkeypatch):
@@ -426,9 +426,11 @@ def test_a_full_cache_drops_its_oldest_entry_not_everything(monkeypatch):
     monkeypatch.setattr(progress_mod, "MAX_ENTRIES", 3)
     r, _ = reader({})
     for i in range(4):
-        r.fetch(BASE, f"vol{i}", "active")
-    assert r.cached(BASE, "vol0", "active")[0] is False
-    assert all(r.cached(BASE, f"vol{i}", "active")[0] for i in (1, 2, 3))
+        r.for_session(None).fetch(BASE, f"vol{i}", "active")
+    assert r.for_session(None).cached(BASE, "vol0", "active")[0] is False
+    assert all(
+        r.for_session(None).cached(BASE, f"vol{i}", "active")[0] for i in (1, 2, 3)
+    )
 
 
 class _Interleaved(dict):
@@ -459,14 +461,16 @@ def test_two_requests_evicting_at_once_do_not_trip_over_each_other(monkeypatch):
 
     def other() -> None:
         try:
-            r.fetch(BASE, "vol-other", "active")
+            r.for_session(None).fetch(BASE, "vol-other", "active")
         except BaseException as e:  # noqa: BLE001 - reported below
             errors.append(e)
 
     r._cache = _Interleaved(other)
-    r.fetch(BASE, "vol0", "active")
-    r.fetch(BASE, "vol1", "active")
-    r.fetch(BASE, "vol2", "active")  # full: evicts, and lets `other` in
+    r.for_session(None).fetch(BASE, "vol0", "active")
+    r.for_session(None).fetch(BASE, "vol1", "active")
+    r.for_session(None).fetch(
+        BASE, "vol2", "active"
+    )  # full: evicts, and lets `other` in
     assert r._cache.thread is not None
     r._cache.thread.join()
     assert errors == []
@@ -563,13 +567,113 @@ def test_progress_and_manifest_both_carry_it():
     assert _from_manifest(manifest, 0.0)["quality"]["scored"] == 3
 
 
-def test_the_reader_verifies_the_bucket_certificate_unless_told_not_to(monkeypatch):
+def test_the_session_cookie_goes_to_the_proxy():
     seen = []
-    real = httpx.Client
-    monkeypatch.setattr(
-        "htrflow_web.progress.httpx.Client",
-        lambda **kw: seen.append(kw.get("verify", True)) or real(**kw),
+
+    def handler(req):
+        seen.append(req.headers.get("cookie"))
+        return httpx.Response(200, json={"pages_done": 1, "pages_total": 2})
+
+    r = ProgressReader(httpx.Client(transport=httpx.MockTransport(handler)))
+    from htrflow_web.sessions import Session
+
+    r.for_session(Session("anna", "tok")).fetch(
+        "http://p/results/ns/demo", "R1", "running"
     )
-    ProgressReader()
-    ProgressReader(verify=False)
-    assert seen == [True, False]
+    assert seen and all(c == "htr_session=tok" for c in seen)
+
+    # A finished volume with no progress.json falls back to manifest.json:
+    # that second request carries the cookie too.
+    seen.clear()
+    urls = []
+
+    def handler2(req):
+        urls.append(str(req.url))
+        seen.append(req.headers.get("cookie"))
+        return httpx.Response(404)
+
+    r2 = ProgressReader(httpx.Client(transport=httpx.MockTransport(handler2)))
+    r2.for_session(Session("anna", "tok")).fetch(
+        "http://p/results/ns/demo", "R1", "done"
+    )
+    assert any(u.endswith("/manifest.json") for u in urls)
+    assert len(seen) == 2 and all(c == "htr_session=tok" for c in seen)
+
+
+def test_one_users_answer_is_never_anothers():
+    def handler(req):
+        if req.headers.get("cookie") == "htr_session=a":
+            return httpx.Response(200, json={"pages_done": 1, "pages_total": 2})
+        return httpx.Response(403)
+
+    r = ProgressReader(httpx.Client(transport=httpx.MockTransport(handler)))
+    from htrflow_web.sessions import Session
+
+    a = r.for_session(Session("anna", "a"))
+    b = r.for_session(Session("bo", "b"))
+    assert a.fetch("http://p/results/ns/demo", "R1", "running") is not None
+    assert b.cached("http://p/results/ns/demo", "R1", "running") == (False, None)
+    assert b.fetch("http://p/results/ns/demo", "R1", "running") is None
+
+
+def test_a_refused_read_on_a_finished_volume_is_not_kept_for_the_hour(clock):
+    status = {"code": 403}
+
+    def handler(req):
+        if status["code"] == 200:
+            return httpx.Response(200, json={"pages_done": 1, "pages_total": 2})
+        return httpx.Response(status["code"])
+
+    r = ProgressReader(httpx.Client(transport=httpx.MockTransport(handler)))
+    p = r.for_session(None)
+    assert p.fetch(BASE, "vol0", "done") is None
+    status["code"] = 200
+    clock.now += progress_mod.RUNNING_TTL + 1
+    assert p.fetch(BASE, "vol0", "done")["total"] == 2
+
+
+# --- a volume the caller's account may not read (spec §7) -----------------
+
+
+def test_a_403_marks_the_volume_forbidden_for_that_caller_only(clock):
+    from htrflow_web.sessions import Session
+
+    def handler(req):
+        if req.headers.get("cookie") == "htr_session=a":
+            return httpx.Response(200, json={"pages_done": 1, "pages_total": 2})
+        return httpx.Response(403)
+
+    r = ProgressReader(httpx.Client(transport=httpx.MockTransport(handler)))
+    a = r.for_session(Session("anna", "a"))
+    b = r.for_session(Session("bo", "b"))
+    assert b.forbidden(BASE, "vol0", "done") is False, "nothing asked yet"
+    assert a.fetch(BASE, "vol0", "done") is not None
+    assert b.fetch(BASE, "vol0", "done") is None
+    assert b.forbidden(BASE, "vol0", "done") is True
+    assert a.forbidden(BASE, "vol0", "done") is False
+    # Still asked again on the short window, never kept for the hour: a
+    # grant made on the store shows on the next poll past it.
+    assert b.cached(BASE, "vol0", "done") == (False, None)
+    clock.now += progress_mod.RUNNING_TTL + 1
+    assert b.forbidden(BASE, "vol0", "done") is False
+
+
+@pytest.mark.parametrize("code", [401, 404, 503])
+def test_only_a_403_is_forbidden(code):
+    r, _ = reader({f"{BASE}/vol0/progress.json": httpx.Response(code)})
+    p = r.for_session(None)
+    p.fetch(BASE, "vol0", "active")
+    assert p.forbidden(BASE, "vol0", "active") is False
+
+
+def test_a_403_on_the_manifest_fallback_is_forbidden_too():
+    r, _ = reader({f"{BASE}/vol0/manifest.json": httpx.Response(403)})
+    p = r.for_session(None)
+    assert p.fetch(BASE, "vol0", "done") is None
+    assert p.forbidden(BASE, "vol0", "done") is True
+
+
+def test_a_pending_volume_is_never_forbidden():
+    r, asked = reader({})
+    assert r.for_session(None).forbidden(BASE, "vol0", "pending") is False
+    assert asked == []

@@ -28,8 +28,22 @@ s3:
   bucket: htr-results
   secretName: htr-batch-s3
   # A private bucket for the image cache (converter.yaml's image_cache.bucket):
-  # created by the init hook with no public policy. Empty: none.
+  # created by the init hook like `bucket`. Empty: none.
   imageCacheBucket: ""
+  # The bucket has no anonymous read: a person reads results by logging in
+  # to the web front, whose results proxy reads with that person's own store
+  # keys. This is the RustFS user to log in as -- the init hook creates it
+  # with a policy that allows s3:GetObject on `bucket` and nothing else (no
+  # listing, no write, no other bucket). With htrflow-batch's
+  # `results.keyDerivation: none`, the login form takes this name as the
+  # access key and the password as the secret key.
+  loginUser: htr-reader
+  # The Secret (key `password`) holding that user's password. The chart
+  # creates it with a random password, keeps it on uninstall and re-reads it
+  # on upgrade (Helm `lookup`); the hook sets RustFS's copy from it on every
+  # install and upgrade, so the Secret is the one source. `helm template`
+  # has no cluster to look up and renders a fresh password each time.
+  loginSecret: htr-results-login
 
 rustfs:
   enabled: false
@@ -49,20 +63,14 @@ rustfs:
   storage:
     size: 5Gi
     storageClass: local-path
-  # Bucket setup Job (Helm post-install/upgrade hook): creates s3.bucket,
-  # sets the anonymous-read policy and CORS.
+  # Bucket setup Job (Helm post-install/upgrade hook): creates s3.bucket
+  # (and s3.imageCacheBucket), the read-only policy and the s3.loginUser.
+  # The image is RustFS's own client, `rc`: the admin calls need it, and the
+  # AWS CLI has none. `rustfs/` is the prefix htrflow-batch's
+  # security.allowedImageRepos already lists for RustFS itself.
   init:
     enabled: true
-    image: docker.io/amazon/aws-cli@sha256:f0dcd994da5c36ab09becf4259bba4c45ed4ecfd03d51c701912f4d8425b2d49
-    corsOrigins: ["*"]   # tighten to the web front's origin beyond the PoC
-  # Anonymous GET on status/logs/* (per-volume run logs). The campaign
-  # browser links them, so the PoC keeps them public; they can carry a
-  # tokenised private IIIF URL on failure (audit X14) — set false and serve
-  # the run-log view through an authenticated proxy to close that.
-  # This is the whole private set: <pipeline>/<volume>/* and sources/* are
-  # always anonymous-readable (the browser fetches them directly), and
-  # status/logs/* is the only other key anything writes.
-  publicLogs: true
+    image: rustfs/rc@sha256:ab024bfebee49a750ce886b4c70963ccd9ddaa03f491704a90710641d7a26699  # v0.1.36
 
 registry:
   enabled: false

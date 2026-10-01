@@ -51,28 +51,58 @@ Where each score is stored is in the
 
 ## Exposing the web front
 
-A browser needs two addresses:
+A browser needs one address, the **web front**, Service `htrflow-web`, on
+NodePort `web.nodePort` (default 30800) or behind an ingress controller. It
+serves the campaign browser, the viewer and, under `/results`, every result
+file: manifests, ALTO, progress and run logs, read from the bucket by the
+results proxy. Page images are not among them; they come from the IIIF
+source. Who may reach the address is set in
+[Deploy → Web front access](deploy.md#web-front-access).
 
-- **The web front**, Service `htrflow-web`, on NodePort `web.nodePort`
-  (default 30800) or behind an ingress controller. It has no
-  authentication; who may reach it is set in
-  [Deploy → Web front access](deploy.md#web-front-access).
-- **The results URL**, for manifests, page images, ALTO and run logs,
-  fetched straight from the bucket. Its CORS rule must allow the web front's
-  origin ([Deploy → Prepare the bucket](deploy.md#3-prepare-the-bucket)).
+## Logging in
+
+Log in with an account on the results store; the
+[deploy page](deploy.md#the-results-bucket-stays-private) says which fields
+your store takes. The session lasts `results.sessionHours` (8 by default).
+**Log out** in the header ends it in this browser.
+
+Without a session, or once it has expired:
+
+- The **campaign browser**, the **run viewer** (`/log`) and `/alto` go to
+  the login page, and back to where you were after you log in.
+- The **viewer** (`/uv.html`) asks for a manifest under the site's own
+  `/results/` before it loads it, and shows **Log in to open this volume.**
+  with a link to the login page that comes back to the same volume. A
+  manifest from anywhere else loads as before.
+- A result URL opened directly answers `401` with a short JSON body.
+
+What you see is what the store lets your account read:
+
+- A volume on a campaign card whose progress file the store refuses your
+  account shows **Your account may not read this volume.** where its
+  progress would be, and its id does not open the viewer. The card asks
+  again every few seconds, so a permission granted on the store shows on a
+  later refresh.
+- The viewer shows **Your account may not read this volume.** instead of
+  loading a refused manifest.
+- The run viewer and `/alto` show **Your account may not read this file.**
+  for a log or ALTO file the store refuses.
+
+A login the proxy refuses says why: the store did not accept the user name
+or password; too many failed attempts; the user name or password is too
+long or malformed; or the store could not be reached.
 
 Keep these in mind:
 
 - **Choose a stable results URL before real campaigns.** It is written into
   every `iiif.json` and `manifest.json` and never rewritten. The chart's
-  `resultsUrl` must equal `converter.yaml`'s `results_url`:
-  the run viewer and `/alto` refuse addresses outside the chart's base.
-- **Behind port forwarding, the base is what the browser sees.** Forward
-  the web front's port and the bucket's port together.
-- **The read API reads progress from inside the cluster.** When
-  `resultsUrl` does not resolve from a pod, set
-  `web.internalResultsBase` to an in-cluster address of the bucket.
-  Otherwise the only symptom is a campaign browser that never shows a
-  running volume's progress.
+  `resultsUrl` (`https://<web front host>/results`) must equal
+  `converter.yaml`'s `results_url`: the run viewer and `/alto` refuse
+  addresses outside the chart's base.
+- **Volumes published under another results URL must be run again** to open
+  in the viewer through the proxy, since their manifests still carry the old
+  address.
+- **Behind port forwarding, the base is what the browser sees.** Forward the
+  web front's port; the results come through it.
 - **Campaign-file URLs are fetched by the campaign pod**, not your browser:
   they must resolve in-cluster and be inside `network.iiifCidrs`.

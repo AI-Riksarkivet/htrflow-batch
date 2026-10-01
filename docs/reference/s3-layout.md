@@ -48,13 +48,12 @@ namespace-free, since the browser resolves run-log links against the bucket
 root. Two namespaces sharing one bucket therefore share run-log keys: the
 same pipeline id and volume id in both write one log
 ([Roadmap](../roadmap/index.md#queueing-and-fairness)). Nothing else in this system writes to S3 at all. The read API only
-reads `progress.json` and `manifest.json`, through its own address for the
-bucket ([View Results](../getting-started/viewing.md)).
+reads `progress.json` and `manifest.json`, through the results proxy with the
+caller's session ([View Results](../getting-started/viewing.md)).
 
-Anonymous read and listing are set by the bucket policy, described in
-[Security](../how-it-works/security.md#the-bucket-policy): with the
-devstack's store, everything is readable except `status/logs/*` when
-`rustfs.publicLogs` is `false`, and listing is always denied.
+Nothing is anonymous: the results proxy reads each key with the logged-in
+person's own store keys, and never lists
+([Security](../how-it-works/security.md#the-results-boundary)).
 
 ## `manifest.json` (completion marker)
 
@@ -129,9 +128,9 @@ correctness dependency: a miss, a cache error or a bad cached object always
 falls back to the ordinary download, and nothing it does can fail a page.
 
 This bucket is a separate, **private** bucket. It is never the results
-bucket, which is public-read: a wrapper whose `IMAGE_CACHE_BUCKET` names the
+bucket, which holds the results people read: a wrapper whose `IMAGE_CACHE_BUCKET` names the
 results bucket turns the cache off and logs why. It is never covered by a
-public-read policy and never linked from the viewer or the read API.
+public policy and never linked from the viewer or the read API.
 
 ## `progress.json` (live, and never a completion marker)
 

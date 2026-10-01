@@ -1,8 +1,9 @@
 # htrflow-batch (Helm chart)
 
 Kueue-gated batch HTR platform around htrflow: queues, the model-cache PVC
-and the web front (campaign browser, Universal Viewer and the status API in
-one Deployment).
+the web front (campaign browser, Universal Viewer and the status API in
+one Deployment) and the results proxy that serves result files behind a
+login.
 
 **Campaigns are Kubernetes Indexed Jobs, not objects this chart renders.**
 `packages/converter` (`htrflow-campaigns render <repo-dir> --out <dir>`)
@@ -35,6 +36,8 @@ device plugin) is a separate chart:
   not render a `Namespace` object for its own release namespace, so the Pod
   Security labels are applied once with `make psa-labels` (reads
   `security.psaEnforce`).
+- A session Secret (`results.sessionSecret`, required) with a `key`: 32
+  random bytes, base64. It seals login sessions for the results proxy.
 - An S3 Secret (`s3.existingSecret`, default `htr-batch-s3`) with a
   `credentials` key in AWS ini format plus `S3_BUCKET` (and `S3_ENDPOINT`
   unless real AWS; optional `S3_VERIFY_TLS: "false"` skips the endpoint's
@@ -76,6 +79,38 @@ ConfigMap the nginx viewer mounted, is describing the version it names — `api.
 `htrflow-web` / `templates/web.yaml` they became in 0.4.0. Renaming them
 here would make the upgrade notes wrong for anyone actually on that
 version.
+
+### From 0.15.0 to 0.16.0 — results behind a login
+
+Results are read through a new pod, the results proxy (`htrflow-results`,
+Deployment and Service on the web image), with each logged-in person's own
+store keys. A campaign Job renders as before. Only a missing
+`results.sessionSecret`, or a leftover `web.internalResultsBase`, stops the
+render; `resultsUrl` is not checked, and an unchanged one silently leaves
+the viewer and `/alto` pointing at the old address. So, in one change
+window:
+
+1. Set `results.sessionSecret` and change `resultsUrl` by hand to
+   `https://<web front host>/results`.
+2. In **every campaigns repo**, set `converter.yaml`'s `results_url` to the
+   same URL. It becomes each campaign Job's `RESULTS_URL`, and so the URL
+   written into every manifest that Job publishes.
+
+| Change | What to do |
+|---|---|
+| **`results.sessionSecret` is required**: the name of a Secret with key `key`, 32 random bytes, base64. It seals the login cookie; rotating it logs everyone out. | `kubectl -n <namespace> create secret generic htr-session --from-literal=key="$(openssl rand -base64 32)"`, then set `results.sessionSecret=htr-session`. |
+| **`resultsUrl` points at the proxy**: `https://<web front host>/results`. Not validated: the chart renders with the old value. | Change it by hand, and set the same value as `converter.yaml`'s `results_url` in every campaigns repo in the same window. Volumes published under the old URL keep it: run them again to open them in the viewer. |
+| **`web.internalResultsBase` is refused**, in words that name this change. The web front reads progress through the proxy. | Remove the key from your values. |
+| **`results.keyDerivation`** (`hcp` by default) says how a login becomes S3 keys. | For a store that issues S3 keys (RustFS, MinIO, AWS) set `none`: the login form takes the access key and the secret key. |
+| **The bucket no longer needs anonymous read or CORS.** | After the upgrade, remove both from the bucket. |
+| **Store accounts need read permission** on the release's namespace prefix and on `status/logs/`: they are the logins. | Create or adjust the accounts on the store. |
+| **The web front no longer reads the S3 Secret**, and its NetworkPolicy loses its S3 egress; the proxy gets the S3 egress (`network.s3Cidrs`, `network.s3InNamespace`) and an ingress from the web front only. | Nothing. |
+| **`HTRFLOW_S3_VERIFY_TLS` is gone** from the web front; the Secret's `S3_VERIFY_TLS` key now applies to the proxy. | Nothing. |
+
+Behind an Ingress, the chart expects one more forwarding hop in front of the
+proxy, for the login's rate limit; the controller must pass the client's
+address in `X-Forwarded-For` and not believe one the browser sent (see
+[docs/getting-started/deploy.md](../../docs/getting-started/deploy.md#web-front-access)).
 
 ### From 0.14.0 to 0.15.0 — chart first, then the converter
 
@@ -236,6 +271,27 @@ value keys **as they were at that version** — `api.*`, `viewer.*`,
 `htrflow-web` / `templates/web.yaml` they became in 0.4.0. Renaming them
 here would make the upgrade notes wrong for anyone actually on that
 version.
+
+### 0.16.0 — unreleased (results behind a login)
+
+**Breaking, on purpose** — see *From 0.15.0 to 0.16.0* above.
+
+Added:
+- **The results proxy**: Deployment and Service `htrflow-results` (port 8082)
+  on the web image, with no ServiceAccount token, no Role and no S3
+  credentials mounted, and NetworkPolicy `htr-results` (ingress from
+  `htrflow-web` only; egress to DNS and the S3 endpoint).
+- **`results.*`**: `replicas` (1), `sessionSecret` (required),
+  `sessionHours` (8), `keyDerivation` (`hcp` or `none`), `resources`.
+- The web front's `HTRFLOW_RESULTS_PROXY`, and its `HTRFLOW_INTERNAL_RESULTS_BASE`
+  set to the proxy's Service.
+
+Changed:
+- **`resultsUrl`** is `https://<web front host>/results`.
+- **The web front no longer touches the S3 Secret** (`HTRFLOW_S3_VERIFY_TLS`
+  is gone) and its NetworkPolicy has no S3 egress.
+- **`web.internalResultsBase`** is refused by name.
+- **The S3-nowhere refusal** names the results proxy, not the web front.
 
 ### 0.15.0 — 2026-09-29 (v0.8.0: S3_VERIFY_TLS)
 

@@ -23,9 +23,9 @@ generated table of every key is [Configuration](configuration.md). Source:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `s3.existingSecret` | `htr-batch-s3` | The S3 Secret you create in the release namespace: key `credentials` (AWS ini), mounted as a file, plus `S3_BUCKET` (the bucket's name: the chart has no value for it), optional `S3_ENDPOINT` and optional `S3_VERIFY_TLS` (`false` skips the endpoint's certificate check in campaign pods and the web front). Must match `converter.yaml`'s `s3_secret` ([Deploy](../getting-started/deploy.md)) |
+| `s3.existingSecret` | `htr-batch-s3` | The S3 Secret you create in the release namespace: key `credentials` (AWS ini), mounted as a file, plus `S3_BUCKET` (the bucket's name: the chart has no value for it), optional `S3_ENDPOINT` and optional `S3_VERIFY_TLS` (`false` skips the endpoint's certificate check in campaign pods and the results proxy). Must match `converter.yaml`'s `s3_secret` ([Deploy](../getting-started/deploy.md)) |
 | `hfToken.existingSecret` | `""` | The Hugging Face token Secret (key `token`) a warm-up may read, for a private or gated model. Must match `converter.yaml`'s `hf_token_secret`. Empty = none |
-| `resultsUrl` | `""` | **Required.** The browser-reachable base of the results bucket. Must match `converter.yaml`'s `results_url` ([View Results](../getting-started/viewing.md)) |
+| `resultsUrl` | `""` | **Required.** The results proxy's address on the web front's origin, `https://<web front host>/results`. Must match `converter.yaml`'s `results_url` ([View Results](../getting-started/viewing.md)) |
 
 ## Model cache (`modelCache.*`)
 
@@ -79,10 +79,25 @@ egress rule. Always rendered. What it serves is in
 | `web.ingress.tlsSecretName` | `""` | TLS Secret for `web.ingress.host`, terminated at the Ingress; `""` = no `tls` block |
 | `web.ingress.annotations` | `{}` | Annotations on the Ingress, e.g. the controller's source-range allow-list (`nginx.ingress.kubernetes.io/whitelist-source-range`) |
 | `web.resources` | requests cpu 50m / 128Mi, limits cpu 500m / 256Mi | |
-| `web.internalResultsBase` | `""` | Where this pod reaches the bucket to read progress. Empty = `resultsUrl`. Set it when that address does not work from inside the cluster, or the page shows no progress ([View Results](../getting-started/viewing.md)) |
+| `web.internalResultsBase` | removed | The chart refuses it by name: the web front reads progress through the results proxy, `http://htrflow-results:8082/results`, which the chart sets |
 
 Its security headers and `/config.js` are described in
 [Web front & read API](web.md#content-security-policy).
+
+## Results proxy (`results.*`)
+
+The second Deployment and Service `htrflow-results` (port 8082) on the web
+image, with its own NetworkPolicy: ingress only from the web front, egress
+to DNS and the S3 endpoint. It mounts no ServiceAccount token and no S3
+credentials ([Security → The results boundary](../how-it-works/security.md#the-results-boundary)).
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `results.sessionSecret` | `""` | **Required.** The name of a Secret in the release namespace with key `key`: 32 random bytes, base64. It seals login sessions, and rotating it logs everyone out |
+| `results.sessionHours` | `8` | How long a login lasts |
+| `results.keyDerivation` | `hcp` | `hcp`: the login takes a store account's user name and password and derives its S3 keys. `none`: the login takes the S3 access key and secret key as they are (RustFS, MinIO, AWS) |
+| `results.replicas` | `1` | Proxy replicas. Sessions need no shared state; the login limits are kept per replica |
+| `results.resources` | requests cpu 50m / 128Mi, limits cpu 500m / 256Mi | |
 
 ## Apply identity (`apply.*`)
 

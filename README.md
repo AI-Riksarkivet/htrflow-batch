@@ -45,8 +45,9 @@ make compose-up
 docker compose -f .docker/docker-compose.yml logs -f wrapper    # returns after "COMPLETE 1 pages"
 ```
 
-Then open
-<http://localhost:8080/uv.html#?manifest=http://localhost:19000/htr-results/demo-v1/mock-vol/iiif.json>,
+Then log in at <http://localhost:8080/login> as `htr-reader` / `htr-reader-pass`,
+open
+<http://localhost:8080/uv.html#?manifest=http://localhost:8080/results/htr-batch/demo-v1/mock-vol/iiif.json>,
 and `make compose-down` when you are done. Ports taken, or anything else
 unexpected: [Quickstart](https://ai-riksarkivet.github.io/htrflow-batch/getting-started/try-it/).
 

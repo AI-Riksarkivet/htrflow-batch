@@ -149,13 +149,6 @@ web:
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: 500m, memory: 256Mi }
-  # Where the API pod itself reaches the results bucket, for its own
-  # ProgressReader -- "" (default) means the same address as
-  # resultsUrl, correct on real AWS. Set this whenever that is not
-  # true, e.g. the PoC, where resultsUrl is a browser-facing
-  # `localhost` URL the pod cannot resolve to anything but itself:
-  # http://rustfs.<namespace>.svc.cluster.local:9000/<bucket>
-  internalResultsBase: ""
   service:
     # ClusterIP is for an ingress controller in front (web.ingress below);
     # NodePort is the browser's direct way in and stays the default.
@@ -169,6 +162,23 @@ web:
     host: ""
     tlsSecretName: ""
     annotations: {}
+
+# The results proxy (templates/results.yaml): result files on the web
+# front's origin, read with each logged-in user's own store keys.
+results:
+  replicas: 1
+  # A Secret with key `key`: 32 random bytes, base64. It seals login
+  # sessions; rotating it logs everyone out. Required.
+  #   kubectl create secret generic htr-session --from-literal=key="$(openssl rand -base64 32)"
+  sessionSecret: ""
+  sessionHours: 8
+  # hcp: the login takes the store account's user name and password and
+  # derives its S3 keys (HCP). none: the login takes the S3 access key and
+  # secret key as they are (RustFS, MinIO, AWS).
+  keyDerivation: hcp
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
 
 # `htrflow-campaigns apply` (packages/converter) run INSIDE the cluster — an
 # Argo CD PostSync hook, a CI Job — needs an identity with write access to
@@ -264,11 +274,11 @@ network:                   # NetworkPolicies (docs: development/security, D14)
   # range here, in s3Cidrs and in apply.gitCidrs loses the internal ranges
   # that lie inside it (the ones below, link-local and loopback).
   iiifCidrs: []
-  # S3 endpoint(s) for batch Jobs and the web front's progress reader. A
+  # S3 endpoint(s) for batch Jobs and the results proxy. A
   # real endpoint goes here.
   s3Cidrs: []
   # The results bucket is the in-namespace RustFS of charts/htrflow-devstack:
-  # the batch Job and the web front may reach any `app: rustfs` pod here on
+  # the batch Job and the results proxy may reach any `app: rustfs` pod here on
   # 9000. Off, that rule is not rendered -- any pod carrying the label would
   # otherwise be a destination -- and s3Cidrs must name the endpoint, since
   # a campaign pod with no route to S3 fails every volume after its GPU time.
@@ -309,8 +319,8 @@ network:                   # NetworkPolicies (docs: development/security, D14)
     # Anything wider than /8, or an empty list, needs allowPublicIngress.
     # 0.0.0.0/0 keeps "any browser that can reach the node".
     ingressCidrs: ["0.0.0.0/0"]
-    # The catch-all above is in front of a NodePort with no authentication
-    # of its own, so the chart refuses to render it unless this says the
+    # The catch-all above is in front of a NodePort whose login page anyone
+    # can open, so the chart refuses to render it unless this says the
     # exposure is deliberate. Narrowing the default instead would break
     # every dev stack on upgrade; making it loud does not.
     allowPublicIngress: false

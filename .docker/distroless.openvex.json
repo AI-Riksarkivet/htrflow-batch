@@ -115,7 +115,7 @@
       ],
       "status": "not_affected",
       "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
-      "impact_statement": "Only html.parser.HTMLParser is affected, and the only HTML either image parses is its own build output: the web service reads the pages baked into its static directory (the viewer and the campaign browser) to hash their inline scripts for its Content-Security-Policy, one feed() per page. No request data or other outside input reaches the parser; the converter image does not use it."
+      "impact_statement": "Only html.parser.HTMLParser is affected. The web service parses HTML from its own static directory (the viewer and campaign browser) to hash inline scripts for Content-Security-Policy. The converter image does not use html.parser. botocore imports html.parser only in botocore/docs/bcdoc/docstringparser.py on its own bundled service-model documentation, never on network input."
     },
     {
       "vulnerability": {
@@ -135,9 +135,9 @@
           "@id": "pkg:deb/debian/python3.13-venv@3.13.5-2%2Bdeb13u5"
         }
       ],
-      "status": "not_affected",
-      "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "Expat is reached only through Python's xml.parsers.expat / xml.etree. Nothing in the image parses XML: neither the service's own packages nor any installed dependency imports an XML parser (it speaks JSON to the Kubernetes API and over HTTP)."
+      "status": "affected",
+      "impact_statement": "The web image's results proxy parses S3 store XML responses using botocore's XML parser (xml.etree.ElementTree → libexpat). Store access is HTTPS but S3_VERIFY_TLS may be false. Keep TLS verification on where the store certificate can be verified. Upgrade to fixed libpython3.13 packages when released.",
+      "action_statement": "The web image parses S3 store's XML responses with expat. Keep S3 TLS verification enabled. Upgrade to fixed Debian libpython3.13 packages when released; libexpat1 fixes follow. The converter image does not parse XML and is unaffected."
     },
     {
       "vulnerability": {
@@ -148,9 +148,9 @@
           "@id": "pkg:deb/debian/libexpat1@2.8.3-1~deb13u1"
         }
       ],
-      "status": "not_affected",
-      "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "Expat is reached only through Python's xml.parsers.expat / xml.etree. Nothing in the image parses XML: neither the service's own packages nor any installed dependency imports an XML parser (it speaks JSON to the Kubernetes API and over HTTP)."
+      "status": "affected",
+      "impact_statement": "The web image's results proxy parses S3 store XML responses using libexpat. Keep S3 TLS verification on where possible.",
+      "action_statement": "Upgrade to fixed Debian libexpat1 when released. The converter image does not parse XML and is unaffected."
     },
     {
       "vulnerability": {
@@ -161,9 +161,9 @@
           "@id": "pkg:deb/debian/libexpat1@2.8.3-1~deb13u1"
         }
       ],
-      "status": "not_affected",
-      "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "Expat is reached only through Python's xml.parsers.expat / xml.etree. Nothing in the image parses XML: neither the service's own packages nor any installed dependency imports an XML parser (it speaks JSON to the Kubernetes API and over HTTP)."
+      "status": "affected",
+      "impact_statement": "The web image's results proxy parses S3 store XML responses using libexpat. Keep S3 TLS verification on where possible.",
+      "action_statement": "Upgrade to fixed Debian libexpat1 when released. The converter image does not parse XML and is unaffected."
     },
     {
       "vulnerability": {
@@ -174,9 +174,9 @@
           "@id": "pkg:deb/debian/libexpat1@2.8.3-1~deb13u1"
         }
       ],
-      "status": "not_affected",
-      "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "Expat is reached only through Python's xml.parsers.expat / xml.etree. Nothing in the image parses XML: neither the service's own packages nor any installed dependency imports an XML parser (it speaks JSON to the Kubernetes API and over HTTP)."
+      "status": "affected",
+      "impact_statement": "The web image's results proxy parses S3 store XML responses using libexpat. Keep S3 TLS verification on where possible.",
+      "action_statement": "Upgrade to fixed Debian libexpat1 when released. The converter image does not parse XML and is unaffected."
     },
     {
       "vulnerability": {
@@ -187,9 +187,9 @@
           "@id": "pkg:deb/debian/libexpat1@2.8.3-1~deb13u1"
         }
       ],
-      "status": "not_affected",
-      "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "Expat is reached only through Python's xml.parsers.expat / xml.etree. Nothing in the image parses XML: neither the service's own packages nor any installed dependency imports an XML parser (it speaks JSON to the Kubernetes API and over HTTP)."
+      "status": "affected",
+      "impact_statement": "The web image's results proxy parses S3 store XML responses using libexpat. Keep S3 TLS verification on where possible.",
+      "action_statement": "Upgrade to fixed Debian libexpat1 when released. The converter image does not parse XML and is unaffected."
     }
   ]
 }

@@ -14,7 +14,7 @@
 -include .env
 export HTR_RELEASE HTR_NAMESPACE HTR_REGISTRY HTR_REGISTRY_NODEPORT HTR_S3_ENDPOINT HTR_S3_NODEPORT \
        HTR_BUCKET HTR_WEB_NODEPORT HTR_DEV_S3_ACCESS_KEY HTR_DEV_S3_SECRET_KEY HTRFLOW_DIR \
-       HTR_COMPOSE_S3_PORT HTR_COMPOSE_WEB_PORT
+       HTR_COMPOSE_S3_PORT HTR_COMPOSE_WEB_PORT HTR_DEV_LOGIN_USER HTR_DEV_LOGIN_PASSWORD
 
 # On RA hosts dagger containers need the corp CA; harmless elsewhere if the file exists.
 CA_BUNDLE ?= /etc/ssl/certs/ca-certificates.crt
@@ -116,13 +116,25 @@ compose-smoke: build-wrapper build-web
 
 # The smoke on its own, against whatever WRAPPER_IMAGE and WEB_IMAGE name:
 # the images compose-smoke just built, or a published release by digest.
-# The stack comes down (volumes included) however the run ends.
+# The stack comes down (volumes included) however the run ends. After the
+# site answers it takes the path a person does: the volume's iiif.json is a
+# 401 without a login, the login is a cookie, and the cookie reads it; and
+# it is a 401 again for a request without that cookie.
+COMPOSE_WEB := http://localhost:$(HTR_COMPOSE_WEB_PORT)
+COMPOSE_IIIF := $(COMPOSE_WEB)/results/$(HTR_NAMESPACE)/demo-v1/mock-vol/iiif.json
 compose-smoke-run:
-	cd .docker && trap 'docker compose down -v' EXIT && \
+	cd .docker && jar=$$(mktemp) && trap 'rm -f "$$jar"; docker compose down -v' EXIT && \
 	export HTR_WRAPPER_IMAGE=$(WRAPPER_IMAGE) HTR_WEB_IMAGE=$(WEB_IMAGE) && \
 	docker compose up --no-build --abort-on-container-exit --exit-code-from wrapper wrapper && \
-	docker compose up --no-build -d web && \
-	curl -fsS --retry 15 --retry-delay 2 --retry-all-errors -o /dev/null http://localhost:$(HTR_COMPOSE_WEB_PORT)/uv.html
+	docker compose up --no-build -d --wait web results && \
+	curl -fsS --retry 15 --retry-delay 2 --retry-all-errors -o /dev/null $(COMPOSE_WEB)/uv.html && \
+	test "$$(curl -sS --retry 15 --retry-delay 2 --retry-all-errors -o /dev/null -w '%{http_code}' $(COMPOSE_IIIF))" = 401 && \
+	curl -fsS -c "$$jar" -o /dev/null -H 'Origin: http://localhost:$(HTR_COMPOSE_WEB_PORT)' \
+	  -H 'Content-Type: application/json' \
+	  -d '{"username":"$(HTR_DEV_LOGIN_USER)","password":"$(HTR_DEV_LOGIN_PASSWORD)"}' \
+	  $(COMPOSE_WEB)/results/_login && \
+	curl -fsS -b "$$jar" -o /dev/null $(COMPOSE_IIIF) && \
+	test "$$(curl -sS -o /dev/null -w '%{http_code}' $(COMPOSE_IIIF))" = 401
 
 compose-down:
 	cd .docker && docker compose down -v
@@ -157,6 +169,9 @@ campaigns-apply:
 # Failed Job or a kubectl that cannot read the cluster (finding 3102).
 # The failure-path steps (a 404 manifest, the pod deadline, pause/resume, prune)
 # are campaigns and kubectl in the run log, not this target.
+# The API is behind the login: the last step checks it answers 401 without one,
+# logs in as the devstack's read-only user (its password from the cluster
+# Secret, else HTR_DEV_LOGIN_PASSWORD) and reads the campaign list with the cookie.
 CAMPAIGN_TIMEOUT ?= 3600
 e2e:
 	@test -n "$(DIR)" || (echo "usage: make e2e DIR=<campaigns-repo-dir>"; exit 2)
@@ -164,7 +179,14 @@ e2e:
 	$(MAKE) campaigns-apply DIR=$(DIR)
 	@sel=$$(uv run python -c "from htrflow_converter.render import CAMPAIGN_SELECTOR; print(CAMPAIGN_SELECTOR)") \
 	  && scripts/e2e-wait.sh $(HTR_NAMESPACE) "$$sel" $(CAMPAIGN_TIMEOUT)
-	@curl -fsS http://localhost:$(HTR_WEB_NODEPORT)/api/v1/jobs
+	@web=http://localhost:$(HTR_WEB_NODEPORT); jar=$$(mktemp); trap 'rm -f "$$jar"' EXIT; \
+	  test "$$(curl -sS -o /dev/null -w '%{http_code}' $$web/api/v1/jobs)" = 401 \
+	    || { echo "::error::/api/v1/jobs answered without a login"; exit 1; }; \
+	  pw=$$(kubectl -n $(HTR_NAMESPACE) get secret htr-results-login -o jsonpath='{.data.password}' 2>/dev/null | base64 -d); \
+	  pw=$${pw:-$(HTR_DEV_LOGIN_PASSWORD)}; \
+	  curl -fsS -c "$$jar" -o /dev/null -H "Origin: $$web" -H 'Content-Type: application/json' \
+	    -d "{\"username\":\"$(HTR_DEV_LOGIN_USER)\",\"password\":\"$$pw\"}" $$web/results/_login \
+	  && curl -fsS -b "$$jar" $$web/api/v1/jobs
 
 # Chart: lint + render on defaults and on ci/full-values.yaml (every feature
 # on, no cluster lookups), then kubeconform when it is installed. The local

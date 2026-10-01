@@ -28,6 +28,13 @@ måste vara på plats innan B12 (DEV-klustret) gör tjänsten nåbar från
 arbetsnätet.
 
 ## Vad som levereras
+- **Beslutat (2026-09-30): inloggningen använder resultatlagrets egna
+  konton**, och resultat-proxyn (`htrflow-results`, samma web-image) läser
+  bucketen med varje användares egna S3-nycklar, förseglade i en `HttpOnly`-
+  cookie som bara proxyn kan öppna. Det ersätter tills vidare Dex och
+  oauth2-proxy nedan (GitHub-/Hugging Face-medlemskap); raderna nedan står
+  kvar som storyns historik. Design:
+  `docs/superpowers/specs/2026-09-30-results-proxy-login-design.md`.
 - Beslutet nedskrivet i `docs/how-it-works/decision-log.md`: allt kräver
   inloggning — status-sidan, `/api/v1/*`, viewern, ALTO/PAGE, `iiif.json`,
   `manifest.json` och run-loggar — och konton som räknas är medlemmar i

@@ -225,9 +225,10 @@ status records above. Routes, fields and phases are in
    ([Security → NetworkPolicy](security.md#networkpolicy)), and whatever
    your own network's egress rules allow. A source outside both fails the
    volume at setup.
-5. **Run logs may be world-readable.** The browser needs them, and a log can
+5. **Run logs are readable by every account that may read `status/logs/`.**
+   The browser needs them, and a log can
    carry the redacted host and path of a private IIIF source
-   ([Security → The bucket policy](security.md#the-bucket-policy)).
+   ([Security → The results boundary](security.md#the-results-boundary)).
 6. **A permanently failed volume has no "retry" or "skip".** A rendered
    campaign's volume list cannot change, and its failed indexes do not get a
    fresh retry budget. To run a failed volume again, list it in a new

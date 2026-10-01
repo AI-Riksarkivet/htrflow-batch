@@ -100,21 +100,17 @@ class Config(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     results_url: str = Field("", alias="HTRFLOW_RESULTS_URL")
-    #: Where THIS POD reaches the results bucket -- not necessarily the same
-    #: address a browser can resolve. On the PoC `results_url` is a
-    #: `localhost` URL reached through an SSH forward (docs:
-    #: development/local-k3s "Two S3 endpoints"): the API pod's own
-    #: ProgressReader would resolve that `localhost` to itself and never
-    #: reach RustFS. Defaults to `results_url` (real AWS, or any
-    #: deployment where the same URL really does work from inside the
-    #: cluster); the chart sets it explicitly for the PoC
-    #: (`web.internalResultsBase`).
+    #: Where THIS POD reads progress files: the chart sets it to the results
+    #: proxy's Service (there is no chart value for it), because `results_url`
+    #: is the browser's address and may not resolve from a pod. Defaults to
+    #: `results_proxy` outside a chart: progress is read with the caller's
+    #: session, which only the proxy honours.
     internal_results_base: str = Field("", alias="HTRFLOW_INTERNAL_RESULTS_BASE")
-    #: false skips the certificate check on the bucket this pod reads
-    #: progress from -- for a store whose certificate no client can verify
-    #: yet. The chart fills it from the S3 Secret's optional S3_VERIFY_TLS
-    #: key, the same key the campaign pods read.
-    s3_verify_tls: bool = Field(True, alias="HTRFLOW_S3_VERIFY_TLS")
+    #: The results proxy's Service, e.g. http://htrflow-results:8082/results:
+    #: the web front asks it whether a request is logged in, reads progress
+    #: through it, and passes /results through to it. Required outside
+    #: site-only mode; in it, optional, and only /results uses it.
+    results_proxy: str = Field("", alias="HTRFLOW_RESULTS_PROXY")
     namespaces: tuple[str, ...] = Field((), alias="HTRFLOW_NAMESPACES")
     static_dir: str = Field("", alias="HTRFLOW_WEB_STATIC")
     site_only: bool = Field(False, alias="HTRFLOW_WEB_SITE_ONLY")
@@ -126,15 +122,19 @@ class Config(BaseModel):
     def from_env(cls, env: Mapping[str, str] | None = None) -> Config:
         get = os.environ.get if env is None else env.get
         base = (get("HTRFLOW_RESULTS_URL") or "").rstrip("/")
-        internal_base = (get("HTRFLOW_INTERNAL_RESULTS_BASE") or "").rstrip("/") or base
         site_only = bool(get("HTRFLOW_WEB_SITE_ONLY"))  # any non-empty value
         if not base and not site_only:  # site-only builds no result URL
             raise RuntimeError("HTRFLOW_RESULTS_URL is required")
+        proxy = (get("HTRFLOW_RESULTS_PROXY") or "").rstrip("/")
+        if not proxy and not site_only:
+            raise RuntimeError("HTRFLOW_RESULTS_PROXY is required")
+        internal = get("HTRFLOW_INTERNAL_RESULTS_BASE") or ""
+        internal_base = internal.rstrip("/") or proxy
         names = [n.strip() for n in (get("HTRFLOW_NAMESPACES") or "").split(",")]
         return cls(
             HTRFLOW_RESULTS_URL=base,
             HTRFLOW_INTERNAL_RESULTS_BASE=internal_base,
-            HTRFLOW_S3_VERIFY_TLS=get("HTRFLOW_S3_VERIFY_TLS") or "true",
+            HTRFLOW_RESULTS_PROXY=proxy,
             HTRFLOW_NAMESPACES=tuple(filter(None, names)) or (_own_namespace(),),
             HTRFLOW_WEB_STATIC=get("HTRFLOW_WEB_STATIC") or "",
             HTRFLOW_WEB_SITE_ONLY=site_only,

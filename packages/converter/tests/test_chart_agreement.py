@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from htrflow_web.results import ResultsConfig
 
 from htrflow_converter.models import ConverterConfig, ImageCacheSettings, Size
 from htrflow_converter.render import CAMPAIGN_SELECTOR
@@ -46,12 +47,14 @@ from config_reference import (  # noqa: E402
     LOCAL_ONLY,
     PAGE,
     PAIRS,
+    RESULTS_SET_BY,
     SECURITY,
     SURFACES,
     WEB_DEFAULT_DOC,
     _chart_rows,
     _model_rows,
     chart_web_env,
+    chart_web_fixed_env,
     chart_web_secret_env,
     frontend_rows,
     image_env,
@@ -815,6 +818,9 @@ def test_a_web_setting_the_page_says_the_chart_sets_is_set_by_that_value():
     plain = _rendered("Deployment", "htrflow-web")
     env = plain["spec"]["template"]["spec"]["containers"][0]["env"]
     by_name = {e["name"]: e for e in env}
+    for name, literal in chart_web_fixed_env().items():
+        assert name in names, name
+        assert by_name[name]["value"] == literal, name
     for name, paths in chart_web_env().items():
         assert name in names, name
         if name in chart_web_secret_env():
@@ -838,6 +844,45 @@ def test_a_web_setting_the_page_says_the_chart_sets_is_set_by_that_value():
     for name in names:
         if web_set_by(name).startswith(LOCAL_ONLY):
             assert name not in by_name, name
+
+
+def test_a_results_setting_the_page_says_the_chart_sets_is_set_that_way():
+    """`RESULTS_SET_BY` is hand-written beside `ResultsConfig`: every setting
+    of the model has an entry, and the rendered proxy Deployment carries each
+    one the way the entry says (a fixed value, a Secret key, a chart value)."""
+    names = [n for n, _ in _model_rows(ResultsConfig)]
+    assert set(RESULTS_SET_BY) == set(names)
+
+    def env(*sets: str) -> dict:
+        dep = _rendered("Deployment", "htrflow-results", *sets)
+        return {
+            e["name"]: e
+            for e in dep["spec"]["template"]["spec"]["containers"][0]["env"]
+        }
+
+    plain = env()
+    assert plain["HTRFLOW_RESULTS_NAMESPACE"]["valueFrom"] == {
+        "fieldRef": {"fieldPath": "metadata.namespace"}
+    }
+    for name in ("S3_ENDPOINT", "S3_BUCKET", "S3_VERIFY_TLS"):
+        ref = plain[name]["valueFrom"]["secretKeyRef"]
+        assert ref["name"] == "htr-batch-s3" and ref["key"] == name
+        assert f"its `{name}` key" in RESULTS_SET_BY[name]
+    assert plain["HTRFLOW_SESSION_KEY_FILE"]["value"] == "/secrets/session/key"
+    assert plain["HTRFLOW_TRUSTED_HOPS"]["value"] == "1"
+    assert (
+        env(
+            "web.service.type=ClusterIP",
+            "web.ingress.enabled=true",
+            "web.ingress.host=h.example.org",
+            "network.web.ingressFrom[0].podSelector.matchLabels.x=y",
+        )["HTRFLOW_TRUSTED_HOPS"]["value"]
+        == "2"
+    )
+    assert env("results.sessionHours=3")["HTRFLOW_SESSION_HOURS"]["value"] == "3"
+    assert (
+        env("results.keyDerivation=none")["HTRFLOW_KEY_DERIVATION"]["value"] == "none"
+    )
 
 
 def test_every_image_env_the_page_explains_is_one_an_image_sets():

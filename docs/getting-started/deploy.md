@@ -61,7 +61,7 @@ that you create; no chart does. It has three keys:
 - `S3_ENDPOINT`: the endpoint URL, for anything but AWS itself.
 - `S3_VERIFY_TLS` (optional): `false` skips the check of the endpoint's
   TLS certificate, for a store whose certificate no client can verify yet.
-  Campaign pods and the web front then send the bucket's credentials to
+  Campaign pods and the results proxy then send the bucket's credentials to
   whatever answers at that address, so treat it as a stopgap until the
   certificate can be verified. Absent, the certificate is checked.
 
@@ -73,32 +73,40 @@ kubectl -n <namespace> create secret generic htr-batch-s3 \
   --from-literal=S3_ENDPOINT=<s3-endpoint-url>
 ```
 
-Browsers fetch manifests, ALTO and run logs straight from the bucket, so it
-needs anonymous `s3:GetObject` on these keys, with listing denied:
+### The results bucket stays private
 
-| Keys | Anonymous read |
-|---|---|
-| `<namespace>/<pipeline>/<volume>/*` (results, `iiif.json`, `progress.json`, `manifest.json`) | always |
-| `<namespace>/sources/*` (manifests for `images:` volumes) | always |
-| `status/logs/*` (run logs) | only if the campaign browser should link them. A run log can carry the redacted form of a private IIIF URL and whatever htrflow prints; otherwise keep it private and serve logs through an authenticated proxy |
+The bucket needs no anonymous read, no bucket policy for browsers and no
+CORS rule. Browsers never talk to it: the results proxy reads it on the
+web front's own origin, with each logged-in person's own store keys.
 
-And a CORS rule that allows `GET` and `HEAD` from the web front's origin:
+- **Store accounts are the logins.** Everyone who should see results needs
+  an account on the store with read permission on the release's namespace
+  prefix and on `status/logs/`. What an account may read is the store's
+  decision, on every request. For a store that issues S3 keys (RustFS,
+  MinIO, AWS), the login form takes the access key as the user name and the
+  secret key as the password: set `results.keyDerivation=none`. For a store
+  that derives keys from the account (HCP), keep the default `hcp`.
+- **Create the session Secret.** It holds the key the proxy seals login
+  sessions with, and rotating it logs everyone out:
 
-```json
-{
-  "CORSRules": [
-    {
-      "AllowedOrigins": ["<web-front-origin>"],
-      "AllowedMethods": ["GET", "HEAD"],
-      "AllowedHeaders": ["*"],
-      "MaxAgeSeconds": 3600
-    }
-  ]
-}
-```
+    ```bash
+    kubectl -n <namespace> create secret generic htr-session \
+      --from-literal=key="$(openssl rand -base64 32)"
+    ```
+
+    Name it in `results.sessionSecret` (required).
+- **`resultsUrl` is `https://<web front host>/results`.** The results
+  proxy answers under `/results` on the web front's address, so one origin
+  serves the site and the results. The chart does not check the value
+  against `/results`: a wrong one installs cleanly and silently breaks the
+  viewer and `/alto`.
+- **Writes must be able to overwrite.** The wrapper rewrites keys such as
+  `progress.json`, so the bucket has to accept a write over an existing
+  key. Where the store needs it for that (HCP), turn versioning on and
+  prune old versions.
 
 [S3 layout](../reference/s3-layout.md) lists every key;
-[Security](../how-it-works/security.md#the-bucket-policy) explains the split.
+[Security](../how-it-works/security.md#the-results-boundary) explains the boundary.
 
 ## 4. Install the chart
 
@@ -116,7 +124,9 @@ make psa-labels HTR_RELEASE=htr HTR_NAMESPACE=<namespace>
 
 | Value | What to set it to |
 |---|---|
-| `resultsUrl` | The results URL: where browsers reach the bucket, with the bucket in the path. |
+| `resultsUrl` | The results URL: `https://<web front host>/results`. |
+| `results.sessionSecret` | The name of the session Secret from [the results bucket stays private](#the-results-bucket-stays-private). |
+| `results.keyDerivation` | `hcp` (default), or `none` for a store that issues S3 keys. |
 | `network.apiServer.cidr` | The kube-apiserver address as pods reach it. Further HA API servers go in `network.apiServer.cidrs`; with both empty, it is looked up from the cluster. |
 | `network.iiifCidrs` | Your IIIF source, and any host `images:` volumes point at. |
 | `network.s3Cidrs` | The S3 endpoint, on `network.s3Ports` (default 443). |
@@ -128,8 +138,8 @@ the Kyverno policies, the image allow-list (the published images only),
 revision-pinned models, signature verification, and Pod Security
 `restricted`. An install that misses a value fails asking for it. Every
 other value, and its default, is in [Chart values](../reference/chart.md).
-If `resultsUrl` does not resolve from inside the cluster, also set
-`web.internalResultsBase` to an address that does
+`resultsUrl` need not resolve from inside the cluster: the web front reads
+progress through the results proxy, never through that address
 ([View results](viewing.md#exposing-the-web-front)).
 
 `make psa-labels` sets the namespace's Pod Security labels, which Helm
@@ -164,7 +174,10 @@ this chart created, and they must agree:
 
 ## Web front access
 
-The web front has no authentication. In the default NodePort mode
+Every campaign, API and result answer needs a login
+([the results bucket stays private](#the-results-bucket-stays-private)), but
+the page that asks for it is served to anyone who can reach the web front, so
+the network still decides who gets that far. In the default NodePort mode
 (`web.nodePort`, default 30800) `network.web.ingressCidrs` is who may reach
 it. The chart refuses every address, an empty list, or an entry wider than
 `/8`, unless `network.web.allowPublicIngress=true` says that is intended.
@@ -192,6 +205,16 @@ web:
 The controller must see the browser's own address (its Service with
 `externalTrafficPolicy: Local`, or the PROXY protocol), or the allow-list
 matches the wrong one.
+
+The login limits failed attempts per client address, reading the address
+from `X-Forwarded-For`. The chart counts the hops it expects: the web front,
+plus the controller in ingress mode. So the controller must put the address
+it saw into that header, and must not believe one the browser sent. For an
+ingress-nginx controller that nothing sits in front of, leave
+`use-forwarded-headers` off (or turn `compute-full-forwarded-for` on), so the
+address the limiter keys on is the one nginx saw. Behind a further proxy or
+load balancer that appends its own hop, the count is off by one and the
+limiter keys on the wrong address.
 
 ## Options
 
@@ -245,9 +268,9 @@ for nothing. It is optional and off by default.
    `s3:PutObject` and `s3:ListBucket` on it. Without `s3:ListBucket`, S3
    answers a key that is not there with 403 instead of 404, and the wrapper
    logs the bucket once as unreadable. It must be a separate, private
-   bucket, **never the results bucket**: that one is public-read, and a pod
-   told to cache there switches the cache off and logs why. Give it **no**
-   public policy and no CORS: nothing links to it, and source images can
+   bucket, **never the results bucket**: that one holds results people read, and a
+   pod told to cache there switches the cache off and logs why. Give it **no**
+   public policy: nothing links to it, and source images can
    carry access rules the ALTO does not. The wrapper never creates it.
 
     ```bash
