@@ -180,3 +180,64 @@ grep -Eq 'pass: ([%d-9]|[1-9][0-9]+), fail: 0, warn: 0, error: 0' /out.txt`, pin
 		Stdout(ctx)
 	return skipped.String() + out, err
 }
+
+// publishedEntrypoints are the programs this tree starts from each pinned
+// image's venv: the web image's own entrypoint and the results proxy's
+// command (templates/results.yaml, .docker/docker-compose.yml), and the
+// converter image's entrypoint. packages/converter/tests/test_entrypoints.py
+// holds the tree to its pyproject scripts and this list to the tree; this
+// holds the pinned digests to this list. The wrapper image (~10 GB) is left
+// out: its entrypoint is `python -m htrflow_batch`, which no release renames.
+var publishedEntrypoints = map[string][]string{
+	"web":       {"htrflow-web", "htrflow-results"},
+	"campaigns": {"htrflow-campaigns"},
+}
+
+// EntrypointsPublished checks that every program this commit's chart,
+// compose stack and hook start from an image is in the digest it pins. A
+// chart that runs a program its pinned image predates installs a pod that
+// crash-loops (audit 1001 R1): the results proxy's command once named a
+// program the pinned web image did not have yet. This fails on main from
+// the moment such a change lands until the release commit re-pins
+// (docs/development/releasing.md), which is why published.yml runs it
+// -- on the release commit's pin push and weekly -- and ci.yml does not. A
+// file naming its image by a release tag is reported as not yet published.
+func (m *HtrflowBatch) EntrypointsPublished(
+	ctx context.Context,
+	// +defaultPath="/"
+	// +optional
+	source *dagger.Directory,
+) (string, error) {
+	var report strings.Builder
+	var missing []string
+	for _, image := range []string{"web", "campaigns"} {
+		ref, err := publishedImage(ctx, source, image)
+		if errors.Is(err, errUnpublished) {
+			fmt.Fprintf(&report, "not checked: %v\n", err)
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		entries, err := dag.Container().From(ref).Directory("/app/.venv/bin").Entries(ctx)
+		if err != nil {
+			return "", fmt.Errorf("listing /app/.venv/bin in %s: %w", ref, err)
+		}
+		have := map[string]bool{}
+		for _, e := range entries {
+			have[strings.TrimSuffix(e, "/")] = true
+		}
+		for _, program := range publishedEntrypoints[image] {
+			if have[program] {
+				fmt.Fprintf(&report, "%s: /app/.venv/bin/%s\n", ref, program)
+			} else {
+				missing = append(missing, fmt.Sprintf("%s has no /app/.venv/bin/%s", ref, program))
+			}
+		}
+	}
+	if len(missing) > 0 {
+		return report.String(), fmt.Errorf("the pinned images predate programs this commit starts "+
+			"(re-pin them in the release commit): %s", strings.Join(missing, "; "))
+	}
+	return report.String(), nil
+}

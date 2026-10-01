@@ -143,3 +143,15 @@ def test_a_renamed_entrypoint_is_caught(argv: list[str]):
     (match,) = _KEY.finditer(text)
     assert _argv(text, match) == argv
     assert not _started(argv)
+
+
+def test_the_release_gate_checks_every_program_the_tree_starts():
+    """`dagger call entrypoints-published` holds each pinned digest to
+    .dagger/published.go's `publishedEntrypoints`; this holds that list to
+    the tree, so a new command cannot slip past the release gate."""
+    go = (REPO / ".dagger" / "published.go").read_text(encoding="utf-8")
+    block = go[go.index("var publishedEntrypoints") :]
+    block = block[: block.index("\n}\n")]
+    gated = set(re.findall(r'"([a-z][a-z-]+)"', block)) - {"web", "campaigns"}
+    started = {_ours(argv) for _, argv in OURS} - {None}
+    assert {s for s in started if not s.startswith("-m ")} <= gated
