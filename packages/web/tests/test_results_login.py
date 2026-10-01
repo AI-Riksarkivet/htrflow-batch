@@ -84,6 +84,43 @@ def test_a_foreign_origin_is_refused_even_with_good_keys(app):
     assert login(c, headers={}).status_code == 403
 
 
+#: What the web front adds to every request it passes through: the proxy
+#: itself is reached at a pod address over plain HTTP.
+EDGE = {"X-Forwarded-Proto": "https", "X-Forwarded-Host": "site.example"}
+
+
+def test_a_forwarded_login_is_judged_against_the_browsers_origin(app):
+    c = TestClient(app, base_url="http://htrflow-results:8082")
+    r = login(c, headers={**EDGE, "Origin": "https://site.example"})
+    assert r.status_code == 204
+    cookie = r.headers["set-cookie"]
+    assert cookie.startswith(f"__Host-{COOKIE}=") and "secure" in cookie.lower()
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://evil.example",
+        "http://site.example",  # the scheme is part of the origin
+        "http://htrflow-results:8082",  # the pod's own origin is not the site's
+    ],
+)
+def test_a_forwarded_login_from_any_other_origin_is_refused(app, origin):
+    c = TestClient(app, base_url="http://htrflow-results:8082")
+    r = login(c, headers={**EDGE, "Origin": origin})
+    assert r.status_code == 403
+    assert "set-cookie" not in r.headers
+
+
+def test_a_forwarded_plain_http_login_is_not_secure(app):
+    c = TestClient(app, base_url="https://htrflow-results:8082")
+    edge = {"X-Forwarded-Proto": "http", "X-Forwarded-Host": "site.example:30800"}
+    r = login(c, headers={**edge, "Origin": "http://site.example:30800"})
+    assert r.status_code == 204
+    assert r.headers["set-cookie"].startswith(f"{COOKIE}=")
+    assert "secure" not in r.headers["set-cookie"].lower()
+
+
 def test_wrong_keys_are_401_with_a_sentence(app, monkeypatch):
     c = TestClient(app, base_url="https://testserver")
 
