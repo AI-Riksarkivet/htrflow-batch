@@ -411,19 +411,13 @@ def _transient(
     as a failed run, a bare `transient failure in <stage>:` as one whose
     retry is coming (frontend runlog.ts)."""
     stop.set()
-    trace = traceback.format_exc()
     if last_attempt:
+        where = f"{state.stage} on the last attempt"
         advice = "no retry follows: this was the index's last attempt"
-        log.error(
-            "transient failure in %s on the last attempt: %s — %s\n%s",
-            state.stage,
-            e,
-            advice,
-            trace,
-        )
     else:
-        advice = _advice(False, str(e))
-        log.error("transient failure in %s: %s — %s\n%s", state.stage, e, advice, trace)
+        where, advice = state.stage, _advice(False, str(e))
+    trace = traceback.format_exc()
+    log.error("transient failure in %s: %s — %s\n%s", where, e, advice, trace)
     terminate(env, {"stage": state.stage, "permanent": False, "error": str(e)})
     return EXIT_TRANSIENT
 
