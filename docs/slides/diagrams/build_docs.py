@@ -69,7 +69,7 @@ lane = g3 - 32
 d.arrow([(MID[2], g2 + 56 + H1), (MID[2], lane), (MID[0] + 70, lane), (MID[0] + 70, r1 - GAP)])
 r2 = r1 + H1 + ROWGAP
 d.tall(C[1], r2, COLW, "Pods", "one per volume", "k8s-pod", logo=True, strong=True)
-d.tall(C[2], r2, COLW, "Web front", "status · viewer", L("layout-dashboard"))
+d.tall(C[2], r2, COLW, "Web front", "login · status · viewer", L("layout-dashboard"))
 d.arrow([(MID[1] - 40, r1 + H1), (MID[1] - 40, r2 - GAP)])
 d.arrow([(MID[2] - 60, r1 + H1), (MID[2] - 60, r2 - 36), (MID[1] + 60, r2 - 36), (MID[1] + 60, r2 - GAP)], label="models", at=((MID[2] - 60 + MID[1] + 60) / 2, r2 - 36))
 g4 = g3 + 56 + H1 + ROWGAP + H1 + 24 + 64
@@ -81,7 +81,7 @@ group_around(d, [1, 2], g5, 56 + H1 + 24, "Outside", L("globe"), outside=True)
 d.tall(C[0], r3, COLW, "S3 bucket", "ALTO · PAGE", L("database"))
 d.tall(C[1], r3, COLW, "Image cache", "optional, private", L("database"))
 d.tall(C[1], r4, COLW, "IIIF servers", "the page images", L("images"), outside=True)
-d.tall(C[2], r4, COLW, "Browser", "anyone reading", L("globe"), outside=True)
+d.tall(C[2], r4, COLW, "Browser", "after a login", L("globe"), outside=True)
 lane = g4 - 32
 d.arrow([(MID[1] - 60, r2 + H1), (MID[1] - 60, lane), (MID[0] + 50, lane), (MID[0] + 50, r3 - GAP)], label="results", at=((MID[0] + 50 + MID[1] - 60) / 2, lane))
 d.arrow([(MID[1] + 40, r3), (MID[1] + 40, r2 + H1 + GAP)], label="pages", at=(MID[1] + 40, lane))
@@ -108,7 +108,7 @@ tall_row(d, r1, [(0, "Kyverno", "checks every Job, Pod\nand pipeline ConfigMap",
 d.tall(C[2], r1, COLW, "Warm-up Job", "one per pipeline, on\nCPU, not queued", L("hard-drive-download"))
 d.arrow([(MID[2], g2 + 56 + H2), (MID[2], g3 - 32), (MID[0] + 110, g3 - 32), (MID[0] + 110, r1 - GAP)])
 d.tall(C[1], r2, COLW, "Campaign pods", "an Indexed Job,\none pod per volume", "k8s-pod", logo=True, strong=True)
-d.tall(C[2], r2, COLW, "Web front", "status page, read API\nand the viewer", L("layout-dashboard"))
+d.tall(C[2], r2, COLW, "Web front", "login, read API, viewer;\nits proxy reads S3", L("layout-dashboard"))
 d.arrow([(MID[1] - 40, r1 + H2), (MID[1] - 40, r2 - GAP)], label="admits", at=(MID[1] - 40, r1 + H2 + ROWGAP / 2))
 d.arrow([(MID[2] - 60, r1 + H2), (MID[2] - 60, r2 - 36), (MID[1] + 60, r2 - 36), (MID[1] + 60, r2 - GAP)], dashed=True)
 d.arrow([(C[2], r2 + H2 / 2), (C[1] + COLW + GAP, r2 + H2 / 2)])
@@ -121,7 +121,7 @@ group_around(d, [1, 2], g5, 56 + H2 + 24, "Outside", L("globe"), outside=True)
 d.tall(C[0], r3, COLW, "S3 bucket", "PAGE, ALTO, run log,\nmanifest.json, quality", L("database"))
 d.tall(C[1], r3, COLW, "Image cache", "optional, private:\nsource images by page", L("database"))
 d.tall(C[1], r4, COLW, "IIIF servers", "width-capped\nimage GETs", L("images"), outside=True)
-d.tall(C[2], r4, COLW, "Browser", "the status page\nand the viewer", L("globe"), outside=True)
+d.tall(C[2], r4, COLW, "Browser", "logs in, then the\nstatus page and viewer", L("globe"), outside=True)
 lane = g4 - 32
 d.arrow([(MID[1] - 60, r2 + H2), (MID[1] - 60, lane), (MID[0] + 50, lane), (MID[0] + 50, r3 - GAP)], label="results", at=((MID[0] + 50 + MID[1] - 60) / 2, lane))
 d.arrow([(MID[1] + 40, r3), (MID[1] + 40, r2 + H2 + GAP)], label="pages", at=(MID[1] + 40, lane))
@@ -170,15 +170,14 @@ tall_row(d, ys[1], [(0, "Kueue", "queue-name label:\nwaits for GPUs", "kueue", {
                     (2, "Apply", "Argo CD, or\nhtrflow-campaigns apply", "argo", {"logo": True})], reverse=True)
 d.arrow([(MID[2], ys[0] + H2), (MID[2], ys[1] - GAP)])
 d.tall(C[0], ys[2], COLW, "Wrapper pods", "one per volume,\nup to the window", "k8s-pod", logo=True, strong=True)
-d.tall(C[2], ys[2], COLW, "htrflow-web", "reads Jobs and Pods,\nserves the viewer", L("layout-dashboard"))
+d.tall(C[2], ys[2], COLW, "htrflow-web", "Jobs and Pods; its\nresults proxy reads S3", L("layout-dashboard"))
 d.arrow([(MID[0], ys[1] + H2), (MID[0], ys[2] - GAP)], label="admits", at=(MID[0], ys[1] + H2 + ROWGAP / 2))
 d.arrow([(MID[2], ys[2]), (MID[2], ys[2] - 36), (MID[1], ys[2] - 36), (MID[1], ys[1] + H2 + GAP)])
 d.tall(C[0], ys[3], COLW, "S3 results bucket", "page/, alto/, progress,\nmanifest.json, run log", L("database"))
-d.tall(C[2], ys[3], COLW, "Browser", "the status page\nand the viewer", L("globe"), outside=True)
+d.tall(C[2], ys[3], COLW, "Browser", "logs in, then the\nstatus page and viewer", L("globe"), outside=True)
 d.arrow([(MID[0], ys[2] + H2), (MID[0], ys[3] - GAP)])
 d.arrow([(MID[2] - 60, ys[2] + H2), (MID[2] - 60, ys[3] - 36), (MID[0] + 60, ys[3] - 36), (MID[0] + 60, ys[3] - GAP)])
 d.arrow([(MID[2] + 40, ys[3]), (MID[2] + 40, ys[2] + H2 + GAP)])
-d.arrow([(C[2], ys[3] + H2 / 2), (C[0] + COLW + GAP, ys[3] + H2 / 2)])
 d.save(OUT + "campaigns.svg")
 
 # ---------------------------------------------------------------- page flow: one page, from image to transcription
@@ -288,6 +287,7 @@ A = {
     "shim": ("iiif-shim", L("server"), False), "origin": ("IIIF origin", L("images"), True),
     "fuse": ("Pod via FUSE", "k8s-pod", False),
     "cache": ("Cache (optional)", L("database"), False),
+    "proxy": ("Results proxy", L("lock"), False),
 }
 
 Steps(W, A, [
@@ -346,7 +346,7 @@ Steps(W, A, [
         ("msg", "wrapper", "s3", "page XML, then ALTO XML — the ALTO carries the provenance block and, when scored, the page score (PC)"),
         ("msg", "wrapper", "s3", "progress.json every page, iiif.json every 10th"),
     ]),
-    ("note", "The read API polls progress.json here too, on its own path to the bucket, not the browser's."),
+    ("note", "The read API reads progress.json too, through the results proxy with the caller's session."),
     ("msg", "wrapper", "s3", "iiif.json, pipeline.yaml, then manifest.json last, with the quality summary and the image cache's counts"),
     ("msg", "wrapper", "kubelet", "exit 0"),
     ("msg", "kubelet", "jobc", "the container's exit code"),
@@ -360,8 +360,11 @@ Steps(W, A, [
     ("loop", "Every LOG_SHIP_SECONDS (15 s), if the buffer changed", [
         ("msg", "wrapper", "log", "PUT the whole buffer"),
     ]),
-    ("msg", "browser", "readapi", "GET the campaign detail: per-index state and logUrl"),
-    ("msg", "browser", "log", "GET the log every 15 s, ETag-revalidated, until the terminal line"),
+    ("msg", "browser", "readapi", "GET the campaign detail, with the session cookie: per-index state and logUrl"),
+    ("loop", "Every 15 s, until the terminal line", [
+        ("msg", "browser", "proxy", "GET logUrl, under the web front's /results, with the session cookie; ETag-revalidated"),
+        ("msg", "proxy", "log", "GET the key with the logged-in person's own store keys"),
+    ]),
     ("msg", "wrapper", "log", "PUT once more on exit: the complete log, on SIGTERM too"),
 ], "The live run log", L("scroll-text")).draw(OUT + "seq-run-log.svg")
 
