@@ -1,10 +1,5 @@
 <script lang="ts">
-  import {
-    login,
-    loginError,
-    safeNext,
-    type LoginResult,
-  } from "$lib/session.js";
+  import { LOGIN_UNREACHABLE, login, safeNext } from "$lib/session.js";
 
   let username = $state("");
   let password = $state("");
@@ -15,20 +10,20 @@
     e.preventDefault();
     busy = true;
     error = "";
-    let result: LoginResult;
+    let refused: string | null;
     try {
-      result = await login(username, password);
+      refused = await login(username, password);
     } catch {
-      result = { outcome: "unavailable" };
+      refused = LOGIN_UNREACHABLE;
     }
     busy = false;
     password = "";
-    if (result.outcome === "ok") {
+    if (refused === null) {
       location.assign(
         safeNext(new URLSearchParams(location.search).get("next")),
       );
     } else {
-      error = loginError(result);
+      error = refused;
     }
   }
 </script>
