@@ -1127,7 +1127,7 @@ def _read_progress(
     on_screen = ahead | shown
     deadline = time.monotonic() + PROGRESS_FETCH_BUDGET
     misses = counted = 0
-    live = PageTotals()
+    running: list[dict] = []
     for row in order:
         over = row["state"] in OVER_STATES
         if over and id(row) not in on_screen and tally.has(row["index"]):
@@ -1146,13 +1146,15 @@ def _read_progress(
         counted += known
         if over and known:
             tally.add(row)
-        elif not over and row["progress"]:
-            live.add(row)
+        elif not over:
+            running.append(row)
     for row in [*page, *lead]:
         row.setdefault("progress", None)  # pending: nothing to read
-    live.merge(tally.totals())  # running volumes first, as in ``order``
+    totals = tally.totals()
+    for row in running:
+        totals.add(row)
     return {
-        **live.result(),
+        **totals.result(),
         "pagesCoverage": {"counted": counted, "of": len(order)},
     }
 
@@ -1217,24 +1219,6 @@ class PageTotals:
             [e for e in self.lowest if (e["volume"], e["page"]) != key] + [entry],
             key=lambda e: (e["quality"], e["volume"], e["page"]),
         )[:CAMPAIGN_LOWEST]
-
-    def merge(self, other: "PageTotals") -> None:
-        out = self
-        out.done += other.done
-        out.total += other.total
-        out.failed += other.failed
-        out.errors += other.errors
-        if other.last_error is not None and (
-            out.last_error is None or other.last_error[0] > out.last_error[0]
-        ):
-            out.last_error = other.last_error
-        out.scored += other.scored
-        out.scored_volumes += other.scored_volumes
-        out.weighted += other.weighted
-        if other.low is not None:
-            out.low = other.low if out.low is None else min(out.low, other.low)
-        for entry in other.lowest:
-            out._rank(entry)
 
     def quality(self) -> dict | None:
         if not self.scored_volumes:

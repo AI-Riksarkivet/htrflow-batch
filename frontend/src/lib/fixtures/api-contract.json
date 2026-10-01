@@ -48,9 +48,9 @@
       "jobGone": false,
       "lastError": {
         "error": "the worker thread died",
-        "logUrl": "https://results.example.org/htr-test/status/logs/demo-v1/vol1.txt",
+        "logUrl": "https://results.example.org/htr-test/status/logs/demo-v1/vol2.txt",
         "page": "0044",
-        "volume": "vol1"
+        "volume": "vol2"
       },
       "latest": {
         "altoPrefix": "https://results.example.org/htr-test/demo-v1/vol1/alto/",
