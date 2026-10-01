@@ -14,16 +14,17 @@ apply of each campaign's status ConfigMap (`campaign-<name>-status`), which
 keeps a campaign on the page once its Job is past `ttlSecondsAfterFinished`.
 The chart's Role grants get/list on Jobs and Pods and get/list/create/patch on
 ConfigMaps (a server-side apply of an object that does not exist yet is a
-create), no watch; a test greps the source for any other create, patch,
-replace or delete call. Every `/api/v1` route needs a session on the results
+create), no watch; a test greps `kube.py`, the one module with a Kubernetes
+client, for any other create, patch, replace or delete call. Every `/api/v1` route needs a session on the results
 store; the static site, which asks for the login, needs none.
 
 The package has a second entrypoint, `htrflow-results`, the **results proxy**
 (`results.py`, `results_rules.py`, `session.py`): it serves the login and, under
 `/results`, result files read from S3 with each logged-in user's own keys,
 sealed in an encrypted `HttpOnly` cookie. The web front never opens that
-cookie: `sessions.py` asks the proxy whether a cookie is valid, and
-`passthrough.py` passes `/results` through to it. The design is in
+cookie: `login_check.py` asks the proxy whether a cookie is valid, and
+`passthrough.py` passes `/results` through to it. `cookie.py` holds what both
+pods share: the cookie's name and the browser's forwarded origin. The design is in
 [Results behind a login](../../docs/superpowers/specs/2026-09-30-results-proxy-login-design.md).
 
 - Design: [Campaigns as Indexed Jobs](../../docs/superpowers/specs/2026-09-01-indexed-jobs-design.md),

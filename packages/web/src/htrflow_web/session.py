@@ -1,5 +1,5 @@
 """The results proxy's session: the logged-in user's store keys, sealed into
-the ``htr_session`` cookie with AES-GCM. Never the password; never readable
+the session cookie (``cookie.COOKIE``) with AES-GCM. Never the password; never readable
 by JavaScript (the cookie is HttpOnly) or by the web front (it has no key).
 """
 
@@ -17,8 +17,9 @@ from typing import Callable, Literal
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-COOKIE = "htr_session"
 _NONCE = 12
+#: Binds a sealed session to this use. Not the cookie's name, which may
+#: change without logging anyone out; changing this would.
 _ASSOCIATED_DATA = b"htr_session"
 
 

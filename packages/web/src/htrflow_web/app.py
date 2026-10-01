@@ -34,10 +34,11 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import projection
+from .cookie import COOKIE
 from .kube import ApplyConflict, ClusterUnavailable, is_campaign
+from .login_check import Session, SessionChecker, SessionsUnavailable
 from .passthrough import results_route
 from .progress import ProgressReader
-from .sessions import COOKIE, Session, SessionChecker, SessionsUnavailable
 
 _LOG = logging.getLogger(__name__)
 
