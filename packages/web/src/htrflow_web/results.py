@@ -30,7 +30,13 @@ from starlette.background import BackgroundTask
 
 from .cookie import browser_cookie, forwarded, session_token
 from .results_rules import FILE_HEADERS, allowed_key, served_type
-from .session import SessionCodec, SessionData, derive_keys
+from .session import (
+    KeyFileCodec,
+    SessionCodec,
+    SessionData,
+    SessionKeyUnavailable,
+    derive_keys,
+)
 
 _LOG = logging.getLogger("htrflow_web.results")
 
@@ -212,7 +218,9 @@ def _secure(request: Request) -> bool:
     return forwarded(request.headers, request.url.scheme)[0] == "https"
 
 
-def session_of(request: Request, codec: SessionCodec) -> SessionData | None:
+def session_of(
+    request: Request, codec: SessionCodec | KeyFileCodec
+) -> SessionData | None:
     token = session_token(request)
     return codec.open(token) if token else None
 
@@ -252,7 +260,7 @@ MAX_PROBES = 4
 
 def create_results_app(
     cfg: ResultsConfig,
-    codec: SessionCodec,
+    codec: SessionCodec | KeyFileCodec,
     clients: ClientCache | None = None,
     limiter: LoginLimiter | None = None,
     max_probes: int = MAX_PROBES,
@@ -351,13 +359,22 @@ def create_results_app(
             )
         finally:
             probes.release()
+        try:
+            sealed = codec.seal(body.username, ak, sk)
+        except SessionKeyUnavailable:
+            return unjudged(
+                JSONResponse(
+                    {"detail": "logins are unavailable: the session key is unreadable"},
+                    status_code=503,
+                )
+            )
         clients.put(ak, sk, client)
         limiter.succeeded(addr)
         user_limiter.succeeded(body.username)
         response = Response(status_code=204)
         response.set_cookie(
             browser_cookie(request.headers, request.url.scheme),
-            codec.seal(body.username, ak, sk),
+            sealed,
             max_age=int(cfg.session_hours * 3600),
             path="/",
             secure=_secure(request),

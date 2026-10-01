@@ -1996,6 +1996,17 @@ def test_the_results_proxy_holds_no_token_and_no_bucket_credential():
     )
 
 
+def test_the_session_key_is_mounted_so_a_rotation_reaches_the_proxy():
+    """The proxy re-reads its key file when it changes, which ends every
+    session sealed under the old key. The kubelet updates a Secret volume
+    in place, but never one mounted by subPath."""
+    objs = render(sets=DEFAULT_SETS)
+    spec = named(objs, "Deployment", "htrflow-results")["spec"]["template"]["spec"]
+    mounts = {m["name"]: m for m in spec["containers"][0]["volumeMounts"]}
+    assert mounts["session"]["mountPath"] == "/secrets/session"
+    assert "subPath" not in mounts["session"]
+
+
 @pytest.mark.parametrize(
     "extra,hops",
     [

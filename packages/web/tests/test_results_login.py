@@ -436,3 +436,20 @@ def test_clients_share_one_session(cfg):
     finally:
         tracemalloc.stop()
     assert grown / 10 < 2_000_000, f"{grown / 10 / 1e6:.1f} MB per client"
+
+
+def test_a_login_while_the_session_key_is_unreadable_is_503(cfg, tmp_path):
+    import base64  # noqa: PLC0415
+
+    from htrflow_web.session import KeyFileCodec  # noqa: PLC0415
+
+    key = tmp_path / "key"
+    key.write_text(base64.b64encode(KEY).decode())
+    codec = KeyFileCodec(str(key), hours=8)
+    key.unlink()
+    with mock_aws():
+        boto3.client("s3", region_name="us-east-1").create_bucket(Bucket="htr-results")
+        c = TestClient(create_results_app(cfg, codec), base_url="https://testserver")
+        r = login(c)
+    assert r.status_code == 503
+    assert "set-cookie" not in r.headers
