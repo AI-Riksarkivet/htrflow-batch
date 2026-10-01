@@ -7,6 +7,11 @@ rendering and nothing noticed. These tests take every `helm install` /
 placeholders in with documentation addresses, and render it as
 `helm template`: a value the chart starts to require fails here, not on an
 operator's first install.
+
+The CI templates `htrflow-campaigns init --ci` writes render the chart's
+policies the same way, at the release the campaigns repo pins: their
+command is rendered against this checkout's chart, which a release pins
+them to.
 """
 
 from __future__ import annotations
@@ -77,3 +82,40 @@ def test_the_documented_install_renders(page: str, command: str):
         ["helm", "template", *argv[verb:]], cwd=REPO, capture_output=True, text=True
     )
     assert result.returncode == 0, f"{page}: {command}\n{result.stderr}"
+
+
+#: The chart's policy render in each CI template, with the paths it checks
+#: the chart out to.
+CI_TEMPLATES = {
+    "github": (
+        "packages/converter/src/htrflow_converter/ci/github/.github/workflows/render.yml",
+        ".htrflow-batch/charts/htrflow-batch",
+    ),
+    "azure": (
+        "packages/converter/src/htrflow_converter/ci/azure/azure-pipelines.yml",
+        "$AGENT_TEMPDIRECTORY/htrflow-batch/charts/htrflow-batch",
+    ),
+}
+
+
+@pytest.mark.parametrize("flavour", CI_TEMPLATES)
+def test_the_ci_templates_policy_render_renders(flavour: str):
+    path, chart = CI_TEMPLATES[flavour]
+    text = (REPO / path).read_text(encoding="utf-8")
+    start = text.index("helm template htrflow-batch")
+    command = re.sub(
+        r"\\\n\s*",
+        " ",
+        text[start : text.index("\n", text.index("--show-only", start))],
+    )
+    env = dict(
+        re.findall(r"^\s*(POLICY_[A-Z_]+):\s*\"?([^\"\n]*)\"?", text, re.MULTILINE)
+    )
+    command = command.replace(chart, "charts/htrflow-batch").replace('"${sets[@]}"', "")
+    for name, value in env.items():
+        command = command.replace(f"${name}", value)
+    argv = shlex.split(command.split(" > ")[0])
+    result = subprocess.run(
+        ["helm", *argv[1:]], cwd=REPO, capture_output=True, text=True
+    )
+    assert result.returncode == 0, f"{path}: {command}\n{result.stderr}"
