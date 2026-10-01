@@ -1391,6 +1391,16 @@ class ConverterConfig(BaseModel):
                 f'resultsUrl (got "{_shown_url(v)}": {why}) — write the whole '
                 "URL, e.g. https://htr.example.org/results"
             )
+        # The chart refuses the same (htrflow-batch.validate): only the web
+        # front's /results reaches the results proxy, and every manifest a
+        # campaign publishes keeps this URL for good.
+        if not urlsplit(v).path.rstrip("/").endswith("/results"):
+            raise ValueError(
+                "must end in /results: browsers read results through the "
+                "results proxy on the web front, at https://<web front "
+                f'host>/results, never from the bucket (got "{_shown_url(v)}"); '
+                "set it to the chart's resultsUrl"
+            )
         return v
 
     @field_validator("source_template")

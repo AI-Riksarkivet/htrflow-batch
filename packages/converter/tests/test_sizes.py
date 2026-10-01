@@ -177,7 +177,7 @@ def test_the_lookahead_is_half_the_sizes_workdir(tmp_path):
 
 
 def _config(text: str) -> ConverterConfig:
-    base = {"results_url": "https://results.example.org"}
+    base = {"results_url": "https://htr.example.org/results"}
     return ConverterConfig.model_validate({**base, **yaml.safe_load(text)})
 
 

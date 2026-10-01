@@ -16,7 +16,7 @@ GOOD = Path(__file__).parent / "fixtures" / "good"
 #: codes sets, and the one setting every repo must.
 _TEMPLATE = (
     'source_template: "https://iiif.example.org/{ref}/manifest"\n'
-    "results_url: https://results.example.org\n"
+    "results_url: https://htr.example.org/results\n"
 )
 
 
@@ -547,7 +547,7 @@ def test_quality_prediction_settings_move_the_recipe():
     assert a.recipe_sha256 != b.recipe_sha256
 
 
-BASE = {"namespace": "htr-test", "results_url": "https://results.example.org"}
+BASE = {"namespace": "htr-test", "results_url": "https://htr.example.org/results"}
 
 
 @pytest.mark.parametrize("bucket", ["images-batch", "img.cache-01", "abc"])

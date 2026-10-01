@@ -507,11 +507,36 @@ def test_results_url_must_be_an_http_url(tmp_path, base):
     ), exc_info.value.problems
 
 
-def test_results_url_takes_an_http_url(tmp_path):
+@pytest.mark.parametrize(
+    "base", ["http://192.0.2.20:30800/results", "https://htr.example.org/results/"]
+)
+def test_results_url_takes_the_web_fronts_results_url(tmp_path, base):
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
-    _setting(root / "converter.yaml", "results_url: http://localhost:30900/r")
-    assert _load(root)[2].results_url == "http://localhost:30900/r"
+    _setting(root / "converter.yaml", f"results_url: {base}")
+    assert _load(root)[2].results_url == base
+
+
+@pytest.mark.parametrize(
+    "base", ["https://s3.example.org/htr-results", "https://htr.example.org/"]
+)
+def test_results_url_off_the_results_proxy_is_refused_before_any_gpu_time(
+    tmp_path, base
+):
+    """Every manifest a campaign publishes carries this URL for good, and the
+    viewer refuses anything outside the chart's resultsUrl: a bucket URL
+    would cost a re-run of every volume. Refused as the chart refuses it."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    _setting(root / "converter.yaml", f"results_url: {base}")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert any(
+        'converter.yaml: "results_url"' in p
+        and "must end in /results" in p
+        and "https://<web front host>/results" in p
+        for p in exc_info.value.problems
+    ), exc_info.value.problems
 
 
 @pytest.mark.parametrize(
