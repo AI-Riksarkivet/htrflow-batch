@@ -42,8 +42,10 @@ spec:
             # Forwarding hops in front of this service, for the login's rate
             # limit: the web front always appends to X-Forwarded-For, and an
             # ingress controller does too -- the chart's (web.ingress) or the
-            # operator's own, admitted through network.web.ingressFrom.
-            - { name: HTRFLOW_TRUSTED_HOPS, value: {{ ternary "2" "1" (or .Values.web.ingress.enabled (not (empty .Values.network.web.ingressFrom))) | quote }} }
+            # operator's own, admitted through network.web.ingressFrom. Only
+            # in front of a ClusterIP Service: a NodePort also takes browsers
+            # directly, and they must not choose the entry that is counted.
+            - { name: HTRFLOW_TRUSTED_HOPS, value: {{ ternary "2" "1" (and (eq .Values.web.service.type "ClusterIP") (or .Values.web.ingress.enabled (not (empty .Values.network.web.ingressFrom)))) | quote }} }
             {{- range list "S3_ENDPOINT" "S3_BUCKET" "S3_VERIFY_TLS" }}
             - name: {{ . }}
               valueFrom:
