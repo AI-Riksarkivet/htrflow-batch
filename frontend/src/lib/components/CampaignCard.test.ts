@@ -75,6 +75,7 @@ const volumeDone = {
   logUrl: "https://pub/status/logs/demo-v1/vol0.txt",
   sourceUrl: "https://iiif.example.org/vol0/manifest",
   progress: null,
+  forbidden: false,
 };
 
 const volumeFailed = {
@@ -88,6 +89,7 @@ const volumeFailed = {
   sourceUrl: "https://iiif.example.org/vol1/manifest",
   reason: { stage: "load", permanent: true, error: "model not found" },
   progress: null,
+  forbidden: false,
 };
 
 // Every detail response carries these; a fixture without them would only
@@ -256,6 +258,43 @@ describe("CampaignCard", () => {
     expect(
       images.getByRole("link", { name: "run log for vol2" }),
     ).toBeInTheDocument();
+  });
+
+  test("a volume the results proxy refused says the account may not read it, in place of its results", async () => {
+    const refused = { ...volumeDone, forbidden: true };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, failures: [], volumes: [refused] }),
+      ),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    await expand();
+
+    const row = within(screen.getAllByRole("row").slice(1)[0] as HTMLElement);
+    expect(
+      row.getByText("Your account may not read this volume."),
+    ).toBeInTheDocument();
+    // No viewer link: the published manifest would only answer 403.
+    expect(row.queryByRole("link", { name: "vol0" })).toBeNull();
+    expect(
+      row.getByTitle(/your account may not read this volume/),
+    ).toHaveTextContent("vol0");
+    expect(row.queryByRole("progressbar")).toBeNull();
+  });
+
+  test("a volume the proxy did not refuse carries no such sentence", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, failures: [], volumes: [volumeDone] }),
+      ),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    await expand();
+    expect(screen.queryByText(/may not read this volume/)).toBeNull();
   });
 
   test("a running volume says how many pages it has done, and of how many", async () => {

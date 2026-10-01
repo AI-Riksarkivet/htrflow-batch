@@ -4,6 +4,9 @@
 # the Makefile's helm targets and `dagger call check-chart` all render with
 # this file. Never an install.
 resultsUrl: https://results.example.org/htr-results
+results:
+  sessionSecret: htr-session
+
 web:
   image: docker.io/riksarkivet/htrflow-web@sha256:0000000000000000000000000000000000000000000000000000000000000000
 network:

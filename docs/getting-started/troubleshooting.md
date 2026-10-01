@@ -146,15 +146,18 @@ new pipeline id it starts at once.
 
 ## The campaign browser shows no progress for a running volume
 
-The read API reads each running volume's `progress.json` from the bucket
-itself. When `resultsUrl` does not resolve from inside the cluster,
-that read fails silently.
+The read API reads each running volume's `progress.json` through the results
+proxy, with your session. A volume shows nothing when the proxy cannot reach
+the store or your account may not read that volume.
 
-**Check**: `curl` the volume's `progress.json` from your machine. If it
-answers there but the card shows nothing, the pod cannot reach that address.
+**Check**: open the volume's `progress.json` under `/results/` in the same
+browser session. A `403` means the store refuses your account; a `502` or
+`504` means the proxy cannot reach the store (check `network.s3Cidrs` and the
+S3 Secret's `S3_ENDPOINT`, and `S3_VERIFY_TLS` for a certificate the proxy
+does not accept); a `401` means the session ended, so log in again.
 
-**Fix**: set `web.internalResultsBase` to an in-cluster address of the
-bucket ([View results](viewing.md#exposing-the-web-front)).
+**Fix**: whichever the answer names. Nothing about `resultsUrl` has to
+resolve from inside the cluster.
 
 ## Logs or ALTO views are refused
 

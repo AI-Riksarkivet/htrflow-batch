@@ -95,3 +95,69 @@ def test_the_preamble_says_the_lines_draw_their_polygons():
     assert any("polygon" in b.lower() for b in panel)
     styles = preamble[preamble.index("- styles.less:") :]
     assert "polygon" in styles.lower()
+
+
+# --- the viewer's login gate (spec §7) -------------------------------------
+
+#: uv.html as the fork ships it at UV4_REF, byte for byte; the frontend's
+#: uv-gate.test.ts runs the patched page's script against it.
+UPSTREAM_UV = PATCH.parents[1] / "frontend" / "src" / "lib" / "fixtures" / "uv4-uv.html"
+
+
+def _patched_uv(tmp_path):
+    """uv.html as the web image builds it: the fork's page with the patch
+    applied by ``git apply``, the same tool the Dockerfile uses."""
+    import shutil
+    import subprocess
+
+    (tmp_path / "src").mkdir()
+    shutil.copyfile(UPSTREAM_UV, tmp_path / "src" / "uv.html")
+    subprocess.run(
+        ["git", "apply", "--include=src/uv.html", str(PATCH)],
+        cwd=tmp_path,
+        check=True,
+    )
+    return (tmp_path / "src" / "uv.html").read_text()
+
+
+def test_the_gate_asks_for_a_results_manifest_before_uv_loads_it():
+    added = _file_added("src/uv.html")
+    gate = added[added.index("function gate") :]
+    assert '"/results/"' in gate and "location.origin" in gate
+    assert 'credentials: "same-origin"' in gate
+    # GET, not HEAD: a HEAD error has no body, and the proxy then cannot
+    # tell a revoked login (401) from a refusal (403).
+    assert '"HEAD"' not in added
+    assert "status === 401" in gate and "status === 403" in gate
+    assert "Your account may not read this volume." in added
+    assert '"/login?next=" + encodeURIComponent(' in added
+    # Built as nodes: no markup string carries the URL into the page.
+    for marker in (".html(", "innerHTML", "outerHTML"):
+        assert marker not in added, marker
+    # UV starts only through the gate.
+    assert added.count('UV.init("uv", data)') == 1
+    assert "gate(data.iiifManifestId, start)" in added
+
+
+def test_the_patched_viewer_runs_its_gate_under_its_hashed_policy(tmp_path):
+    """The gate is inline script in uv.html, so it runs only because
+    uv_csp hashes every inline block of the page it serves. No file is
+    added beside it either: the image's site step refuses a reference UV's
+    build did not produce."""
+    import base64
+    import hashlib
+
+    from htrflow_web.app import _page, uv_csp
+
+    page = _patched_uv(tmp_path)
+    bodies = _page(page).bodies
+    assert len(bodies) == 1 and "function gate" in bodies[0]
+    digest = base64.b64encode(hashlib.sha256(bodies[0].encode()).digest()).decode()
+    csp = uv_csp(tmp_path / "src")
+    assert csp is not None and f"'sha256-{digest}'" in csp
+    assert "src=" not in _file_added("src/uv.html")
+
+
+def test_the_preamble_says_what_the_gate_does():
+    preamble = PATCH.read_text().split("diff --git", 1)[0]
+    assert "/results/" in preamble and "401" in preamble and "403" in preamble

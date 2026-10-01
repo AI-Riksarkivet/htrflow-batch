@@ -91,7 +91,7 @@ build-wrapper` and `build-web` ([Releasing](releasing.md)). `make typecheck`
 ```bash
 make compose-up      # background: S3 (RustFS) + fixtures + wrapper + web front
 make compose-smoke   # foreground: runs the wrapper to completion, then
-                     # checks that the web image serves /uv.html
+                     # checks /uv.html and reads the result, logged in
 make compose-down
 ```
 
@@ -100,8 +100,10 @@ digest (the same digests as the chart and the demo pipeline); it never
 builds. `make compose-smoke` builds both images from the checkout with the
 same recipes as the images that ship (`build-wrapper`, `build-web`, tagged
 `<registry>/…:<IMAGE_TAG>` like every local build), runs the wrapper to
-completion on them, then brings the web service up and fetches its
-`/uv.html` — the default local check. The compose file takes the two
+completion on them, then brings the web front and the results proxy up,
+fetches `/uv.html`, and reads the volume's `iiif.json` through `/results`:
+refused without a login, served after logging in as the stack's read-only
+user — the default local check. The compose file takes the two
 images from `HTR_WRAPPER_IMAGE` and `HTR_WEB_IMAGE`, which is how the smoke
 runs what it built. `make compose-smoke-run WRAPPER_IMAGE=<ref>
 WEB_IMAGE=<ref>` runs the same smoke on any two images. The stack is torn

@@ -1,9 +1,9 @@
 """FastAPI wiring: the read API plus the built site it is served with.
 
-``/api/v1/…`` is GET-only over a ``kube.Reader`` (no auth — see the package
-docstring / D8). ``reader`` is duck-typed — ``list_jobs``, ``get_job``,
-``get_configmap``, ``list_pods`` and a ``cfg`` attribute — so tests wire a
-fake and never touch a cluster.
+``/api/v1/…`` is GET-only over a ``kube.Reader``, behind the results proxy's
+session check (see the package docstring). ``reader`` is duck-typed —
+``list_jobs``, ``get_job``, ``get_configmap``, ``list_pods`` and a ``cfg``
+attribute — so tests wire a fake and never touch a cluster.
 
 Everything else on the port is the web front: the campaign browser SPA, the
 Universal Viewer at ``/uv.html`` and the runtime ``/config.js``, mounted from
@@ -28,14 +28,16 @@ from importlib import metadata
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import projection
 from .kube import ApplyConflict, ClusterUnavailable, is_campaign
+from .passthrough import results_route
 from .progress import ProgressReader
+from .sessions import COOKIE, Session, SessionChecker, SessionsUnavailable
 
 _LOG = logging.getLogger(__name__)
 
@@ -51,6 +53,11 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Content-Security-Policy": "frame-ancestors 'none'",
 }
+
+#: Every /api/v1 answer, errors included: each is one logged-in person's
+#: view (the progress the store lets their account read), so no shared
+#: cache may keep it and no browser cache may keep it past the page.
+API_CACHE_CONTROL = "private, no-store"
 
 #: The Universal Viewer is a third-party page with no <meta> CSP of its own,
 #: and until the 2026-09-14 audit the only thing forbidden on it was framing.
@@ -355,6 +362,8 @@ def create_app(
     static_dir: Path | str | None = None,
     batch_version: str = DEV_VERSION,
     progress=None,
+    sessions=None,
+    results_proxy: str = "",
 ) -> FastAPI:
     """``batch_version`` is the deployed image's tag, passed in by
     ``__main__`` from ``kube.Config`` -- this module reads no environment of
@@ -367,17 +376,35 @@ def create_app(
     Not built at all in site-only mode (``reader.cfg is None``, ``NoCluster``
     below): every route that would use it 503s before reaching
     ``progress.fetch`` (``reader.get_job`` raises first), so the HTTP client
-    it would open has nothing to ever ask."""
+    it would open has nothing to ever ask.
+
+    ``results_proxy`` is where /results is passed through to: the reader's
+    ``cfg.results_proxy`` when it has one, else this (site-only mode has no
+    ``cfg``, and the compose stack still runs a results proxy beside it)."""
     app = FastAPI()
     site_only = reader.cfg is None
     if progress is None and not site_only:
-        verify = getattr(reader.cfg, "s3_verify_tls", True)
-        if not verify:
-            _LOG.warning(
-                "HTRFLOW_S3_VERIFY_TLS=false: "
-                "the results bucket's certificate is not checked"
-            )
-        progress = ProgressReader(verify=verify)
+        progress = ProgressReader()
+
+    if sessions is None and not site_only and getattr(reader.cfg, "results_proxy", ""):
+        sessions = SessionChecker(reader.cfg.results_proxy)
+
+    def current_session(request: Request) -> Session | None:
+        """Every /api/v1 route depends on this. No checker means no gate:
+        only a hand-built cfg (tests) lacks results_proxy -- Config.from_env
+        refuses to start without one."""
+        if sessions is None:
+            return None
+        try:
+            found = sessions.check(request.cookies.get(COOKIE))
+        except SessionsUnavailable as e:
+            _LOG.warning("session check failed: %s", e)
+            raise HTTPException(
+                status_code=502, detail="the results service did not answer"
+            ) from e
+        if found is None:
+            raise HTTPException(status_code=401, detail="not logged in")
+        return found
 
     viewer_csp = uv_csp(Path(static_dir or DEFAULT_STATIC_DIR))
 
@@ -395,6 +422,9 @@ def create_app(
             )
         for name, value in SECURITY_HEADERS.items():
             response.headers.setdefault(name, value)
+        path = request.url.path
+        if path == "/api/v1" or path.startswith("/api/v1/"):
+            response.headers["Cache-Control"] = API_CACHE_CONTROL
         return response
 
     @app.exception_handler(ClusterUnavailable)
@@ -437,7 +467,7 @@ def create_app(
         return {"ok": True}
 
     @app.api_route("/api/v1/version", methods=GET_HEAD)
-    def version() -> dict:
+    def version(session: Session | None = Depends(current_session)) -> dict:
         return {"version": batch_version, "web": WEB_VERSION}
 
     # Namespaces whose last write was refused, and when. A denied RBAC grant
@@ -537,6 +567,7 @@ def create_app(
     @app.api_route("/api/v1/jobs", methods=GET_HEAD)
     def list_jobs(
         response: Response,
+        session: Session | None = Depends(current_session),
         reaped: int = Query(REAPED_SHOWN, ge=0, le=REAPED_MAX),
     ) -> list[dict]:
         """Every live campaign Job, and the ``reaped`` newest campaigns
@@ -625,6 +656,7 @@ def create_app(
         name: str,
         offset: int = Query(0, ge=0),
         limit: int = Query(200, ge=1, le=1000),
+        session: Session | None = Depends(current_session),
     ) -> dict:
         if not _serves(namespace, name):
             raise HTTPException(status_code=404, detail="job not found")
@@ -632,13 +664,14 @@ def create_app(
         # A Job that is not a campaign is no campaign's Job: the name is
         # answered as though it were absent, from a record or not at all.
         if job is None or not is_campaign(job):
-            return _reaped_detail(namespace, name, offset, limit)
+            return _reaped_detail(namespace, name, offset, limit, session)
         cm_name = projection.configmap_ref(job)
         configmap = reader.get_configmap(namespace, cm_name) if cm_name else None
         pipe_name = projection.configmap_ref(job, "pipeline")
         pipeline_cm = reader.get_configmap(namespace, pipe_name) if pipe_name else None
         pods = reader.list_pods(namespace, name)
         warmup = _warmup_status(job, reader.list_warmups(), {})
+        bound = progress.for_session(session) if progress is not None else None
         body = projection.detail(
             job,
             configmap,
@@ -648,15 +681,22 @@ def create_app(
             limit,
             pipeline_cm,
             warmup=warmup,
-            fetch_progress=progress.fetch if progress is not None else None,
-            cached_progress=progress.cached if progress is not None else None,
+            fetch_progress=bound.fetch if bound is not None else None,
+            cached_progress=bound.cached if bound is not None else None,
+            forbidden_progress=bound.forbidden if bound is not None else None,
         )
         status_name = f"{cm_name or 'campaign-' + name}{projection.STATUS_SUFFIX}"
         live = reader.get_configmap(namespace, status_name)
         _record(body, job, live, body["failures"])
         return body
 
-    def _reaped_detail(namespace: str, name: str, offset: int, limit: int) -> dict:
+    def _reaped_detail(
+        namespace: str,
+        name: str,
+        offset: int,
+        limit: int,
+        session: Session | None,
+    ) -> dict:
         """The campaign page of a campaign whose Job is gone. The pipeline
         ConfigMap is asked for by name here -- the one place this package
         rebuilds the converter's ``htr-pipeline-<id>`` convention instead of
@@ -678,6 +718,7 @@ def create_app(
         if row is None:
             raise HTTPException(status_code=404, detail="job not found")
         pipe = reader.get_configmap(namespace, f"htr-pipeline-{row['pipeline']}")
+        bound = progress.for_session(session) if progress is not None else None
         return projection.record_detail(
             row,
             record,
@@ -686,8 +727,9 @@ def create_app(
             pipe,
             offset,
             limit,
-            fetch_progress=progress.fetch if progress is not None else None,
-            cached_progress=progress.cached if progress is not None else None,
+            fetch_progress=bound.fetch if bound is not None else None,
+            cached_progress=bound.cached if bound is not None else None,
+            forbidden_progress=bound.forbidden if bound is not None else None,
         )
 
     def _warmup_status(
@@ -712,6 +754,10 @@ def create_app(
             )
         reason = reasons[namespace, name]
         return {"phase": phase, "reason": reason} if reason else {"phase": phase}
+
+    proxy = getattr(reader.cfg, "results_proxy", "") or results_proxy
+    if proxy:
+        results_route(app, proxy)
 
     # Last, so the routes above win over any file of the same name. Absent
     # outside the image (a local `uv run htrflow-web` builds no site), which

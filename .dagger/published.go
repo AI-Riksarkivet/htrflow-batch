@@ -172,7 +172,8 @@ func (m *HtrflowBatch) VerifyPublished(
 	out, err := container.
 		WithExec([]string{"sh", "-c", fmt.Sprintf(`set -eu
 helm template htr /chart -n htr-batch -f /chart/values-prod.yaml \
-  --set resultsUrl=https://ci.invalid/ --set network.enabled=false \
+  --set resultsUrl=https://ci.invalid/ --set results.sessionSecret=ci-session \
+  --set network.enabled=false \
   --show-only templates/policies/verify-images.yaml > /policy.yaml
 kyverno apply /policy.yaml --resource /pods.yaml --remove-color | tee /out.txt
 grep -Eq 'pass: ([%d-9]|[1-9][0-9]+), fail: 0, warn: 0, error: 0' /out.txt`, pinned)}).

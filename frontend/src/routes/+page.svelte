@@ -1,5 +1,6 @@
 <script lang="ts">
   import CampaignCard from "$lib/components/CampaignCard.svelte";
+  import LogoutButton from "$lib/components/LogoutButton.svelte";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
   // fetchJobs reads GET /api/v1/jobs (the read API); RELOAD_MS is the poll
   // cadence, both documented in $lib/config / $lib/api.
@@ -7,6 +8,7 @@
     fetchJobs,
     fetchVersion,
     moreReaped,
+    NotLoggedIn,
     REAPED_PAGE,
     reapedHidden,
     type JobSummary,
@@ -99,6 +101,9 @@
   // One request in flight at a time, nothing polled while the tab is in the
   // background, and a run of failures backing off — all of it in
   // $lib/poll, so the list, each card and the run log cannot disagree.
+  // Set once a 401 has sent the browser to /login: nothing more is asked.
+  let leaving = false;
+
   async function load(signal: AbortSignal): Promise<boolean> {
     try {
       const result = await fetchJobs(signal, reapedShown);
@@ -119,6 +124,7 @@
       return true;
     } catch (e) {
       if (signal.aborted) return true;
+      if (e instanceof NotLoggedIn) return (leaving = true);
       // One sentence for the reader: what is wrong, that the list on
       // screen is the older one, and that it retries on its own. The
       // transport detail (a fetch error string, a ZodError) never reaches
@@ -138,6 +144,7 @@
     void reapedShown;
     return untrack(() =>
       startPolling(load, RELOAD_MS, {
+        until: () => leaving,
         onWait: (ms) => (retryAt = new Date(Date.now() + ms)),
       }),
     );
@@ -178,6 +185,7 @@
           /></svg
         >
       </a>
+      <LogoutButton />
       <ThemeToggle />
     </div>
   </header>

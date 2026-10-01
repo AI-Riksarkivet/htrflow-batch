@@ -676,3 +676,33 @@ describe("/ nothing moves as the page loads", () => {
     vi.restoreAllMocks();
   });
 });
+
+describe("/ campaign page, not logged in", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  test("a 401 goes to the login page and stops polling", async () => {
+    const fetchMock = vi.fn(
+      async () => new Response(null, { status: 401 }),
+    ) as unknown as typeof fetch;
+    const assign = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("location", {
+      pathname: "/",
+      search: "",
+      hash: "",
+      assign,
+    });
+    render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(assign).toHaveBeenCalledWith("/login?next=%2F");
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    const calls = vi.mocked(fetchMock).mock.calls.length;
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 3);
+    expect(vi.mocked(fetchMock).mock.calls.length).toBe(calls);
+  });
+});

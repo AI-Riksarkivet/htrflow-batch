@@ -135,6 +135,17 @@ describe("/alto", () => {
     );
   });
 
+  test("a 403: the account may not read this file, not 'HTTP 403'", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 403 })),
+    );
+    render(AltoPage);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /^Your account may not read this file\.$/,
+    );
+  });
+
   test("a non-XML response: one sentence, 'not XML'", async () => {
     vi.stubGlobal("fetch", fetchOk("this is not xml <<<"));
     render(AltoPage);

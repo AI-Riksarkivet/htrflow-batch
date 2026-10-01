@@ -9,6 +9,7 @@ devstack chart's init hook, which this script mirrors (module docstring).
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,6 +26,8 @@ class FakeS3:
         self.created: list[str] = []
         self.policies: dict[str, str] = {}
         self.cors: dict[str, dict] = {}
+        self.deleted_policies: list[str] = []
+        self.deleted_cors: list[str] = []
         self.exceptions = SimpleNamespace(BucketAlreadyOwnedByYou=RuntimeError)
 
     def create_bucket(self, Bucket: str) -> None:
@@ -38,6 +41,12 @@ class FakeS3:
 
     def put_bucket_cors(self, Bucket: str, CORSConfiguration: dict) -> None:
         self.cors[Bucket] = CORSConfiguration
+
+    def delete_bucket_policy(self, Bucket: str) -> None:
+        self.deleted_policies.append(Bucket)
+
+    def delete_bucket_cors(self, Bucket: str) -> None:
+        self.deleted_cors.append(Bucket)
 
 
 class FakeResponse:
@@ -73,12 +82,38 @@ def test_the_image_cache_bucket_is_created_with_no_policy_or_cors(
     assert "images-batch" in s3.created
     assert "images-batch" not in s3.policies
     assert "images-batch" not in s3.cors
-    # the other two buckets keep their own policy and CORS, unaffected
-    assert set(s3.policies) == {
-        compose_init.FIXTURES_BUCKET,
-        compose_init.RESULTS_BUCKET,
-    }
-    assert set(s3.cors) == {compose_init.FIXTURES_BUCKET, compose_init.RESULTS_BUCKET}
+    # only the fixtures bucket (the stand-in IIIF server) is public
+    assert set(s3.policies) == {compose_init.FIXTURES_BUCKET}
+    assert set(s3.cors) == {compose_init.FIXTURES_BUCKET}
+
+
+def test_the_results_bucket_is_private_and_the_fixtures_stay_public(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Results are read through the results proxy, logged in: the results
+    bucket gets no policy and no CORS, and loses any an earlier stack set on
+    the same volume. The fixtures bucket plays an external IIIF server, which
+    the wrapper and the viewer read anonymously, so it keeps both."""
+    monkeypatch.delenv("IMAGE_CACHE_BUCKET", raising=False)
+    s3 = _run_main(monkeypatch)
+
+    results = compose_init.RESULTS_BUCKET
+    assert results not in s3.policies and results not in s3.cors
+    assert s3.deleted_policies == [results] and s3.deleted_cors == [results]
+
+    fixtures = compose_init.FIXTURES_BUCKET
+    policy = json.loads(s3.policies[fixtures])
+    assert policy["Statement"] == [
+        {
+            "Sid": "AnonymousReadFixtures",
+            "Effect": "Allow",
+            "Principal": {"AWS": ["*"]},
+            "Action": ["s3:GetObject"],
+            "Resource": [f"arn:aws:s3:::{fixtures}/*"],
+        }
+    ]
+    assert s3.cors[fixtures]["CORSRules"][0]["AllowedMethods"] == ["GET", "HEAD"]
+    assert not hasattr(compose_init, "PUBLIC_LOGS")
 
 
 def test_without_the_env_var_no_third_bucket_is_created(

@@ -133,8 +133,9 @@ class FakeProgress:
     """Stands in for the bucket: create_app's real one would make an HTTP
     call per volume row, and these tests have no bucket to answer it."""
 
-    def __init__(self, known: dict | None = None) -> None:
+    def __init__(self, known: dict | None = None, refused: set | None = None) -> None:
         self.known = known or {}
+        self.refused = refused or set()
 
     def fetch(self, results_base: str, volume_id: str, state: str) -> dict | None:
         return self.known.get(volume_id)
@@ -144,10 +145,90 @@ class FakeProgress:
     ) -> tuple[bool, dict | None]:
         return False, None
 
+    def forbidden(self, results_base: str, volume_id: str, state: str) -> bool:
+        return volume_id in self.refused
+
+    def for_session(self, session):
+        return self
+
 
 @pytest.fixture
 def client() -> TestClient:
     return TestClient(create_app(FakeReader(), progress=FakeProgress()))
+
+
+class FakeSessions:
+    def __init__(self, users=None):
+        self.users = users if users is not None else {"tok": "anna"}
+
+    def check(self, cookie):
+        from htrflow_web.sessions import Session
+
+        user = self.users.get(cookie or "")
+        return Session(user, cookie) if user else None
+
+
+def test_the_api_is_401_without_a_session():
+    c = TestClient(
+        create_app(FakeReader(), progress=FakeProgress(), sessions=FakeSessions())
+    )
+    assert c.get("/api/v1/jobs").status_code == 401
+    assert c.get("/api/v1/version").status_code == 401
+    c.cookies.set("htr_session", "tok")
+    assert c.get("/api/v1/jobs").status_code == 200
+
+
+def test_every_api_answer_is_private_and_unstored():
+    """Each /api/v1 answer is one person's view: no shared cache may keep
+    it, and no browser cache past the page -- the 401 and 502 included."""
+    from htrflow_web.sessions import SessionsUnavailable
+
+    c = TestClient(
+        create_app(FakeReader(), progress=FakeProgress(), sessions=FakeSessions())
+    )
+    answers = [c.get("/api/v1/jobs"), c.get("/api/v1/version")]  # 401
+    c.cookies.set("htr_session", "tok")
+    answers += [
+        c.get("/api/v1/jobs"),
+        c.get("/api/v1/jobs/htr-test/kyrk"),
+        c.get("/api/v1/version"),
+        c.head("/api/v1/jobs"),
+        c.get("/api/v1/jobs/htr-test/nonesuch"),  # 404
+    ]
+
+    class Down:
+        def check(self, cookie):
+            raise SessionsUnavailable("proxy down")
+
+    down = TestClient(
+        create_app(FakeReader(), progress=FakeProgress(), sessions=Down())
+    )
+    answers.append(down.get("/api/v1/jobs"))  # 502
+    assert {r.status_code for r in answers} == {200, 401, 404, 502}
+    for r in answers:
+        assert r.headers["cache-control"] == "private, no-store", r.request.url
+    # The site's own files keep their caching.
+    assert "cache-control" not in c.get("/config.js").headers
+
+
+def test_the_site_itself_needs_no_session():
+    c = TestClient(
+        create_app(FakeReader(), progress=FakeProgress(), sessions=FakeSessions())
+    )
+    assert c.get("/healthz").status_code == 200
+    assert c.get("/config.js").status_code == 200
+
+
+def test_a_session_check_that_cannot_be_made_is_502():
+    from htrflow_web.sessions import SessionsUnavailable
+
+    class Down:
+        def check(self, cookie):
+            raise SessionsUnavailable("proxy down")
+
+    c = TestClient(create_app(FakeReader(), progress=FakeProgress(), sessions=Down()))
+    c.cookies.set("htr_session", "tok")
+    assert c.get("/api/v1/jobs").status_code == 502
 
 
 class _Hung(FakeReader):
@@ -361,6 +442,15 @@ def test_job_detail_carries_each_volume_progress_and_the_campaign_total():
     assert (body["pagesFailed"], body["errors"]) == (1, 2)
     assert body["lastError"]["volume"] == "vol0"
     assert body["lastError"]["logUrl"].endswith("/status/logs/demo-v1/vol0.txt")
+
+
+def test_a_volume_the_proxy_refused_is_forbidden_in_the_answer():
+    client = TestClient(
+        create_app(FakeReader(), progress=FakeProgress(refused={"vol0", "vol1"}))
+    )
+    body = client.get("/api/v1/jobs/htr-test/kyrk").json()
+    # vol1 is pending: nothing of it was read, so nothing was refused.
+    assert [v["forbidden"] for v in body["volumes"]] == [True, False]
 
 
 def test_job_detail_carries_the_pipeline_steps_and_yaml(client: TestClient):

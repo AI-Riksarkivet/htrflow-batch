@@ -5,8 +5,8 @@ every question is answered from a signal something else already emits:
 Kubernetes' own bookkeeping while the Job exists, and objects in the bucket
 after it is gone. There are two exceptions. **How far a running pod has got**
 is answered by the wrapper itself, in `progress.json` beside the volume's
-results, which the read API fetches anonymously from inside the cluster
-([View results](../getting-started/viewing.md) covers the address it uses).
+results, which the read API fetches through the results proxy, with the caller's
+session ([View results](../getting-started/viewing.md)).
 **How a campaign ended** is kept in one small ConfigMap,
 `campaign-<name>-status`, written by the read API and by `apply`
 ([The record a campaign leaves](campaigns.md#the-record-a-campaign-leaves)).
@@ -127,8 +127,9 @@ or set `LOG_SHIP_SECONDS=0`.
   recent attempt. The read API's per-index `reason`, the wrapper's own
   termination message, is the failure summary for as long as the failed pod
   exists.
-- **Access.** The bucket policy decides whether anyone can read
-  `status/logs/*` anonymously ([Security](security.md#the-bucket-policy)).
+- **Access.** Run logs are read through the results proxy, so a person needs a
+  login and an account the store lets read `status/logs/*`
+  ([Security](security.md#the-results-boundary)).
 
 ### Browser side
 

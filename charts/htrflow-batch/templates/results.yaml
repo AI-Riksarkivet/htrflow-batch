@@ -1,0 +1,115 @@
+{{- /* charts/htrflow-batch/templates/results.yaml
+The results proxy: result files on the web front's origin, read from the
+bucket with each logged-in user's own store keys (docs: security,
+"Results"). No credentials of its own, no ServiceAccount token. */}}
+{{- $sessionSecret := .Values.results.sessionSecret | required "results.sessionSecret is required: the name of a Secret with key `key` (32 random bytes, base64) that seals login sessions" }}
+{{- include "htrflow-batch.requireDigest" (list . .Values.web.image "web.image") }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: htrflow-results
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "htrflow-batch.labels" . | nindent 4 }}
+    app: htrflow-results
+spec:
+  replicas: {{ .Values.results.replicas }}
+  selector:
+    matchLabels: { app: htrflow-results }
+  template:
+    metadata:
+      labels: { app: htrflow-results }   # NetworkPolicy selector (this file, web.yaml)
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "htrflow-batch.restrictedPod" 1000 | nindent 8 }}
+      containers:
+        - name: results
+          image: {{ .Values.web.image }}
+          imagePullPolicy: {{ include "htrflow-batch.pullPolicy" .Values.web.image }}
+          command: ["/app/.venv/bin/htrflow-results"]
+          ports:
+            - { name: http, containerPort: 8082 }
+          securityContext:
+            {{- include "htrflow-batch.restrictedContainer" . | nindent 12 }}
+          env:
+            - { name: HOME, value: /tmp }
+            - name: HTRFLOW_RESULTS_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - { name: HTRFLOW_SESSION_KEY_FILE, value: /secrets/session/key }
+            - { name: HTRFLOW_SESSION_HOURS, value: {{ .Values.results.sessionHours | quote }} }
+            - { name: HTRFLOW_KEY_DERIVATION, value: {{ .Values.results.keyDerivation | quote }} }
+            # Forwarding hops in front of this service, for the login's rate
+            # limit: the web front always appends to X-Forwarded-For, and an
+            # Ingress controller does too. Not a value: it follows web.ingress.
+            - { name: HTRFLOW_TRUSTED_HOPS, value: {{ ternary "2" "1" .Values.web.ingress.enabled | quote }} }
+            {{- range list "S3_ENDPOINT" "S3_BUCKET" "S3_VERIFY_TLS" }}
+            - name: {{ . }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.s3.existingSecret }}
+                  key: {{ . }}
+                  {{- if ne . "S3_BUCKET" }}
+                  optional: true
+                  {{- end }}
+            {{- end }}
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.results.resources | nindent 12 }}
+          volumeMounts:
+            - { name: session, mountPath: /secrets/session, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: session
+          secret: { secretName: {{ $sessionSecret | quote }}, defaultMode: 0440 }
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: htrflow-results
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector: { app: htrflow-results }
+  ports:
+    - { name: http, port: 8082, targetPort: http }
+{{- if .Values.network.enabled }}
+---
+{{- $s3 := include "htrflow-batch.s3Egress" . | fromJsonArray }}
+# Only the web front talks to the proxy (it passes /results through); the
+# proxy talks only to DNS and the store.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: htr-results
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app: htrflow-results }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: htrflow-web } }
+      ports:
+        - { port: 8082 }
+  egress:
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+    {{- range $s3 }}
+    - {{ toJson . }}
+    {{- end }}
+{{- end }}

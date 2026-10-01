@@ -15,7 +15,6 @@ rustfs:
   secretKey: ci-secret-key-0123456789
   console:
     enabled: true
-  publicLogs: false
 
 registry:
   enabled: true

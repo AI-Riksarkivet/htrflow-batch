@@ -86,6 +86,10 @@ func (m *HtrflowBatch) frontend(source *dagger.Directory, caBundle *dagger.File)
 			// this container mounts.
 			Exclude: []string{"node_modules", "dist", "coverage", ".svelte-kit", "build"},
 		}).
+		// The viewer's patch, beside frontend/ as in the checkout
+		// (../.docker from /app): src/lib/uv-gate.test.ts applies it to
+		// the fork's uv.html and runs the patched page's script.
+		WithFile("/.docker/uv4-uv-html.patch", source.File(".docker/uv4-uv-html.patch")).
 		WithWorkdir("/app")
 	spa = m.withCaBundle(spa, caBundle)
 	return spa.WithExec([]string{"bun", "install", "--frozen-lockfile"})

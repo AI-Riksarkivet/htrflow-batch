@@ -24,10 +24,15 @@ import math
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 from urllib.parse import quote
 
 import httpx
+
+from .sessions import no_cookie_jar
+
+if TYPE_CHECKING:
+    from .sessions import Session
 
 #: A running volume rewrites its file after every page, so a few seconds of
 #: staleness is at most a page or two; a finished one never changes again.
@@ -47,6 +52,10 @@ _FINISHED = ("done", "unknown")
 #: ...and so whose answer is kept for the hour, an absent file included: a
 #: failed index is final too, and its pod wrote what it ever will.
 _OVER = (*_FINISHED, "failed")
+
+#: The two files a volume's progress is read from, in the order they are
+#: asked for (``ProgressReader._read``).
+_FILES = ("progress.json", "manifest.json")
 
 #: Short: a slow bucket must not hold the API's own response open.
 TIMEOUT = 2.0
@@ -251,40 +260,83 @@ def _encoded(response: httpx.Response) -> bool:
 
 
 class _NoAnswer(Exception):
-    """The bucket did not answer: unreachable, timed out, busy, or a 5xx."""
+    """The bucket did not answer: unreachable, timed out, busy, or a 5xx --
+    or the proxy refused the caller (401, 403). A refusal is not an answer
+    about the volume either, so it is asked again soon, but a 403 is kept
+    as a fact: the caller's store account may not read this volume, and the
+    card says so in place of its progress."""
+
+    def __init__(self, status: int | None = None) -> None:
+        super().__init__(status)
+        self.forbidden = status == 403
+
+
+class SessionProgress:
+    """The reader, bound to one caller's session: their cookie goes to the
+    proxy and their answers stay in their own cache entries."""
+
+    def __init__(self, reader: "ProgressReader", user: str, cookie: str | None):
+        self._r, self._user, self._cookie = reader, user, cookie
+
+    def fetch(self, results_base: str, volume_id: str, state: str) -> dict | None:
+        """This volume's progress, or ``None``. ``results_base`` is the row's
+        own (``<results_url>/<namespace>/<pipeline>``)."""
+        return self._r._read(
+            self._user, self._cookie, results_base, volume_id, state, True
+        )[1]
+
+    def cached(
+        self, results_base: str, volume_id: str, state: str
+    ) -> tuple[bool, dict | None]:
+        """``(known, progress)`` from the cache alone, never a GET. Known is
+        an answer the proxy gave, an absent file included."""
+        return self._r._read(
+            self._user, self._cookie, results_base, volume_id, state, False
+        )
+
+    def forbidden(self, results_base: str, volume_id: str, state: str) -> bool:
+        """Whether the proxy's last answer for this volume, still in the
+        cache, was a 403 for this caller. From the cache alone, never a
+        GET: ``fetch`` or ``cached`` has always been asked first."""
+        if state == "pending":
+            return False
+        return self._r._forbidden(self._user, results_base, volume_id)
 
 
 class ProgressReader:
     """One HTTP client and one small cache for the life of the app."""
 
-    def __init__(
-        self, client: httpx.Client | None = None, *, verify: bool = True
-    ) -> None:
-        # verify=False: the bucket's certificate is not checked
-        # (HTRFLOW_S3_VERIFY_TLS); only this reader's requests are affected.
-        self._client = client or httpx.Client(timeout=TIMEOUT, verify=verify)
-        #: url -> (expiry, progress, whether the bucket answered at all)
-        self._cache: dict[str, tuple[float, dict | None, bool]] = {}
+    def __init__(self, client: httpx.Client | None = None) -> None:
+        self._client = client or httpx.Client(timeout=TIMEOUT, cookies=no_cookie_jar())
+        #: (user, url) -> (expiry, progress, whether the proxy answered at
+        #: all, whether it refused this user with a 403)
+        self._cache: dict[tuple[str, str], tuple[float, dict | None, bool, bool]] = {}
         #: Held around every touch of the cache, never across a GET. The
         #: reader is shared by every thread of the pool, and once the cache
         #: is full -- the normal state at scale -- two requests evicting
         #: the same oldest key raised a KeyError (2026-09-23 audit).
         self._lock = threading.Lock()
 
-    def fetch(self, results_base: str, volume_id: str, state: str) -> dict | None:
-        """This volume's progress, or ``None``. ``results_base`` is the row's
-        own (``<results_url>/<namespace>/<pipeline>``)."""
-        return self._read(results_base, volume_id, state, network=True)[1]
+    def for_session(self, session: Session | None) -> SessionProgress:
+        if session is None:
+            return SessionProgress(self, "", None)
+        return SessionProgress(self, session.user, session.cookie)
 
-    def cached(
-        self, results_base: str, volume_id: str, state: str
-    ) -> tuple[bool, dict | None]:
-        """``(known, progress)`` from the cache alone, never a GET. Known is
-        an answer the bucket gave, an absent file included."""
-        return self._read(results_base, volume_id, state, network=False)
+    def _forbidden(self, user: str, results_base: str, volume_id: str) -> bool:
+        base = f"{results_base}/{quote(volume_id, safe='')}"
+        monotonic_now = time.monotonic()
+        with self._lock:
+            hits = [self._cache.get((user, f"{base}/{f}")) for f in _FILES]
+        return any(h is not None and h[0] > monotonic_now and h[3] for h in hits)
 
     def _read(
-        self, results_base: str, volume_id: str, state: str, network: bool
+        self,
+        user: str,
+        cookie: str | None,
+        results_base: str,
+        volume_id: str,
+        state: str,
+        network: bool,
     ) -> tuple[bool, dict | None]:
         if state == "pending":
             return True, None  # no pod has run: there is nothing in the bucket
@@ -298,18 +350,26 @@ class ProgressReader:
         # (2026-09-14 audit).
         base = f"{results_base}/{quote(volume_id, safe='')}"
         known, found = self._cached(
-            f"{base}/progress.json", _from_progress, state, now, network
+            user, cookie, f"{base}/progress.json", _from_progress, state, now, network
         )
         if known and found is None and state in _FINISHED:
             # Written by a wrapper that predates progress.json. One GET more,
             # cached for the hour: a finished volume is finished.
             known, found = self._cached(
-                f"{base}/manifest.json", _from_manifest, state, now, network
+                user,
+                cookie,
+                f"{base}/manifest.json",
+                _from_manifest,
+                state,
+                now,
+                network,
             )
         return known, found
 
     def _cached(
         self,
+        user: str,
+        cookie: str | None,
         url: str,
         parse: Callable[[dict, float], dict | None],
         state: str,
@@ -318,37 +378,42 @@ class ProgressReader:
     ) -> tuple[bool, dict | None]:
         monotonic_now = time.monotonic()
         with self._lock:
-            hit = self._cache.get(url)
+            hit = self._cache.get((user, url))
         if hit is not None and hit[0] > monotonic_now:
             return hit[2], _aged(hit[1], now)
         if not network:
             return False, None
-        answered, value = self._get(url, parse, now)
+        answered, value, forbidden = self._get(cookie, url, parse, now)
         # Only an answer about a volume that is over is kept for the hour --
         # an absent file included, since its pod wrote what it ever will. A
         # bucket that did not answer is asked again soon.
         ttl = DONE_TTL if state in _OVER and answered else RUNNING_TTL
         with self._lock:
-            self._cache.pop(url, None)
+            self._cache.pop((user, url), None)
             if len(self._cache) >= MAX_ENTRIES:
                 del self._cache[next(iter(self._cache))]  # the oldest answer
-            self._cache[url] = (monotonic_now + ttl, value, answered)
+            self._cache[(user, url)] = (monotonic_now + ttl, value, answered, forbidden)
         return answered, value
 
     def _get(
-        self, url: str, parse: Callable[[dict, float], dict | None], now: float
-    ) -> tuple[bool, dict | None]:
-        """``(answered, progress)``: a 404 is an answer, a 5xx or a
-        connection that failed is not."""
+        self,
+        cookie: str | None,
+        url: str,
+        parse: Callable[[dict, float], dict | None],
+        now: float,
+    ) -> tuple[bool, dict | None, bool]:
+        """``(answered, progress, forbidden)``: a 404 is an answer, a 5xx, a
+        refusal or a connection that failed is not; a 403 is also
+        ``forbidden``."""
         try:
-            doc = self._body(url)
-        except _NoAnswer:
-            return False, None
+            doc = self._body(cookie, url)
+        except _NoAnswer as e:
+            return False, None, e.forbidden
         except Exception:
-            return True, None  # not JSON at all: the bucket did answer
-        return True, parse(doc, now) if isinstance(doc, dict) else None
+            return True, None, False  # not JSON at all: the bucket did answer
+        return True, parse(doc, now) if isinstance(doc, dict) else None, False
 
-    def _body(self, url: str) -> object:
+    def _body(self, cookie: str | None, url: str) -> object:
         """The document at ``url``, read in chunks and abandoned past
         ``MAX_BODY``. Redirects are not followed: the URL is built from an
         operator's results base, and a bucket answering it with a Location
@@ -364,10 +429,18 @@ class ProgressReader:
             with self._client.stream(
                 "GET",
                 url,
-                headers={"Accept-Encoding": "identity"},
+                headers={
+                    "Accept-Encoding": "identity",
+                    **({"Cookie": f"htr_session={cookie}"} if cookie else {}),
+                },
                 follow_redirects=False,
             ) as response:
-                if response.status_code >= 500 or response.status_code in (408, 429):
+                if response.status_code >= 500 or response.status_code in (
+                    401,
+                    403,
+                    408,
+                    429,
+                ):
                     raise _NoAnswer(response.status_code)
                 if response.status_code != 200 or _encoded(response):
                     return None

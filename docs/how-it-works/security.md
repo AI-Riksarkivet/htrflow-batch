@@ -97,33 +97,68 @@ read-only model cache. Its egress is limited to DNS, S3 and the IIIF origin,
 and it holds no API credential. The read API is the one exception, covered
 below.
 
-### The bucket policy
+### The results boundary
 
-Browsers read the results bucket anonymously, so the real question is which
-keys they may read. Listing is never allowed.
+Nothing in the results bucket is anonymous. Browsers never talk to the
+bucket; the **results proxy** (`htrflow-results`) serves `GET` and `HEAD`
+under `/results` on the web front's origin and reads each file with the
+logged-in person's own store keys. So the store's accounts decide who reads
+what, key by key, and listing is never offered.
 
-| Keys | Anonymous read |
+| Piece | What it holds |
 |---|---|
-| `[<namespace>/]<pipeline>/<volume>/*` (results, `iiif.json`, `manifest.json`, `progress.json`), `[<namespace>/]sources/*` | Always. The browser fetches these directly from the results base, never through the platform |
-| `status/logs/*` (run logs) | Only if your policy allows it. The campaign browser links to run logs, but a log can carry the redacted form of a private IIIF URL and anything htrflow prints. Keep them private once the run-log view sits behind an authenticated proxy |
+| Results proxy | No bucket credential of its own and no Kubernetes token. It reads the store's endpoint, bucket and TLS switch from the S3 Secret's non-secret keys (the `credentials` key is not mounted), and the session key from its own Secret |
+| Session cookie `htr_session` | The derived access key, secret key, user name and an expiry, never the password. Encrypted and authenticated with AES-GCM under the session key, `HttpOnly`, `SameSite=Strict`, `Secure` unless the request arrived over plain HTTP |
+| Web front | No session key and no S3 key. It cannot open the cookie: it asks the proxy whether a cookie is a valid session (cached for a short time per cookie) and passes `/results` through to the proxy |
+| Everything else | A campaign pod holds the write credential for its own prefix; warm-up pods hold none |
 
-That is the complete list. `status/logs/<pipeline>/<volume>.txt` is the only
-key anything writes under `status/` (`ResultStore.run_log_key`), so the
-private set is either empty or that one prefix. A production bucket needs the
-same shape, written for your S3 implementation.
+- **One login for everything.** Without a valid session the campaign
+  browser's API, the viewer's files and every `/results/…` URL answer `401`.
+  A cookie that fails to decrypt, is past its expiry or predates a rotation
+  of the session Secret counts as no session.
+- **The keys are as sensitive as the password.** Anyone holding the derived
+  secret key can read what the account can, so it is never handed to
+  JavaScript: it exists inside the encrypted cookie and, for one request, in
+  the proxy's memory. A login is checked against the store with one ranged
+  request; a wrong user name or password is `401`, an answer such as `403` or
+  `404` means the keys are valid.
+- **Logins are rate limited, in memory per replica:** 5 failures per client
+  address per minute and 10 per user name per five minutes, then `429`
+  naming which limit. The address is the `X-Forwarded-For` element the
+  chart's hop count selects. A login also needs the site's own `Origin`, or
+  it is `403` even with valid credentials, and the web front forwards only
+  the `htr_session` cookie and caps the posted body.
+- **What revoking ends, and what it does not.** File reads use the user's
+  own keys, so a store account that is revoked or disabled stops reading at
+  once: the next file read is `401` and clears the cookie. The session
+  itself is a stateless cookie, and nothing server-side records it. The
+  campaign browser's API asks the proxy only whether a cookie decrypts and
+  is unexpired, so `/api/v1` accepts any such cookie, a copied one
+  included, until it expires (`results.sessionHours`). Logging out clears
+  the browser's copy and nothing else. Rotating the session Secret ends
+  every session.
+- **Only allowed keys are asked for.** A key must start with the release's
+  namespace or `status/logs/`, and is refused before the store is asked when
+  a segment is empty, `.` or `..`, contains a backslash, or the path held an
+  encoded slash.
+- **The content-type rule.** Result files are served from the campaign
+  browser's own origin, and some of what lies in the bucket comes from
+  outside (text htrflow printed into a run log, data copied from an IIIF
+  source). Only `application/json`, `application/xml`, `text/xml` and
+  `text/plain` pass as stored; anything else is sent as
+  `application/octet-stream` with `Content-Disposition: attachment`, so it is
+  never rendered as a page.
+- **Every file answer is sandboxed:** `Content-Security-Policy: default-src
+  'none'; sandbox`, `X-Content-Type-Options: nosniff` and `Cache-Control:
+  private, no-cache`.
 
-The devstack chart's `rustfs-init` hook renders this policy from
-`rustfs.publicLogs`, which defaults to `true`:
-
-- With `publicLogs` true, the policy is a plain `Allow` on `s3:GetObject`
-  for `*`.
-- With `publicLogs` false, it is an `Allow` with
-  `NotResource: status/logs/*`.
-
-It uses `NotResource` because RustFS applies a `Deny` statement to the
-credentialed principals as well, and ignores a condition that targets only
-anonymous callers. `scripts/compose_init.py` mirrors the same policy for the
-compose stack.
+`status/logs/<pipeline>/<volume>.txt` is the only key anything writes under
+`status/` (`ResultStore.run_log_key`). A run log can carry the redacted form
+of a private IIIF URL and whatever htrflow prints, so give accounts read
+access to it only where that is acceptable. The devstack's `rustfs-init` hook
+takes any bucket policy and CORS rule off its buckets and creates a read-only
+login user; `scripts/compose_init.py` does the same for the compose stack,
+except for the fixtures bucket that plays the IIIF server.
 
 ### Source URLs are not secrets
 
@@ -148,9 +183,11 @@ writes under its own `[<namespace>/]<pipeline>/<volume>/` prefix and
 covers the bucket.
 
 - **Warm-up pods** mount no S3 Secret.
-- **The read API** holds no S3 credential. It reads `progress.json` with
-  anonymous HTTP GETs through `HTRFLOW_INTERNAL_RESULTS_BASE`, using the same
-  public-read policy a browser relies on.
+- **The read API and the results proxy** hold no S3 credential. The read API
+  reads `progress.json` through the proxy with the caller's session
+  (`HTRFLOW_INTERNAL_RESULTS_BASE`), and the proxy reads with the user's own
+  keys, sealed in the cookie ([The results boundary](#the-results-boundary)).
+  The proxy mounts only the session Secret and the S3 Secret's non-secret keys.
 
 ### Who holds a Hugging Face token
 
@@ -163,7 +200,7 @@ object ([Deploy](../getting-started/deploy.md#options)).
 
 Every pod the platform runs meets Pod Security **`restricted`**: the
 converter-rendered campaign pods, the per-pipeline warm-up pods, the web
-front, and the devstack chart's RustFS and its init Job. The devstack registry
+front, and the devstack chart's RustFS and its init Job, and the results proxy. The devstack registry
 is the one exception. Its registry container is restricted, but with
 `registry.fixOwnership` (the default) a `fix-ownership` init container runs
 as root, with `CHOWN`, `FOWNER` and `DAC_OVERRIDE`, to chown the registry's
@@ -193,17 +230,17 @@ data volume.
   credential: a namespace-scoped Role that reads `jobs`, `pods` and
   `configmaps` and may `create` and `patch` ConfigMaps, for the per-campaign
   status record ([The record a campaign leaves](campaigns.md#the-record-a-campaign-leaves)).
-  The name scope on that grant is the `rbac-scope` policy. The web front has
-  no authentication of its own, and code execution in it could write
-  ConfigMaps as far as admission allows: one status object with the policies
-  on, any ConfigMap (pipelines included) without them. So it belongs behind
-  an authenticated proxy before anyone outside a trusted network can reach
-  it, with `security.policies.enabled` on.
+  The name scope on that grant is the `rbac-scope` policy. Its API is behind the login, but code
+  execution in it could write ConfigMaps as far as admission allows: one
+  status object with the policies on, any ConfigMap (pipelines included)
+  without them. So keep `security.policies.enabled` on, and let the network
+  limit who can reach it at all. The results proxy mounts no token and has
+  no Role.
 - **Secrets are files, not environment variables.** The S3 Secret's
   `credentials` key (AWS ini format) is mounted at `/secrets/s3` (mode `0440`)
   and reaches boto3 through `AWS_SHARED_CREDENTIALS_FILE`. Only the non-secret
   `S3_ENDPOINT`, `S3_BUCKET` and the optional `S3_VERIFY_TLS` are passed as
-  env. Nothing uses `envFrom` on a Secret. The one credential that does travel as env is the optional
+  env (the last to the results proxy, which reads the store). Nothing uses `envFrom` on a Secret. The one credential that does travel as env is the optional
   `HF_TOKEN`, because `huggingface_hub` reads its token from the environment;
   it is confined to the warm-up pod, which mounts no S3 Secret, holds no
   campaign data and exits when its download is done.
@@ -274,15 +311,16 @@ S3 endpoint keeps working by being named.
 |---|---|---|---|
 | campaign pod (`app=htrflow-batch`) | none | S3 (the in-namespace `app=rustfs` pod on 9000, or `network.s3Cidrs` on `network.s3Ports`); the IIIF origins in `network.iiifCidrs` on 443/80 | Hugging Face Hub, the API server, the registry, anything else in-cluster, the rest of the internet |
 | warm-up pod (`app=htrflow-warmup`) | none | the public internet on 443, minus the carve-out above (Hugging Face Hub is a CDN, so there is no CIDR to pin) | S3, the API server, anything in-cluster, link-local and private addresses |
-| web front (`app=htrflow-web`) | `network.web.ingressCidrs` on 8081, matched on the client's own address (the Service's `externalTrafficPolicy: Local` keeps it); in ingress mode (`web.ingress.enabled`), the peers in `network.web.ingressFrom` instead: selectors on the ingress controller's pods only, never an address range | every API server (`network.apiServer.cidr` / `cidrs`, or all `kubernetes` Endpoints addresses); S3 (same targets as the campaign pod) for its `progress.json` reader | the IIIF origin, Hugging Face Hub, anything else in-cluster |
+| web front (`app=htrflow-web`) | `network.web.ingressCidrs` on 8081, matched on the client's own address (the Service's `externalTrafficPolicy: Local` keeps it); in ingress mode (`web.ingress.enabled`), the peers in `network.web.ingressFrom` instead: selectors on the ingress controller's pods only, never an address range | every API server (`network.apiServer.cidr` / `cidrs`, or all `kubernetes` Endpoints addresses); the results proxy (`app=htrflow-results`) on 8082 | the IIIF origin, S3, Hugging Face Hub, anything else in-cluster |
+| results proxy (`app=htrflow-results`) | `app=htrflow-web` pods on 8082 | DNS; S3 (same targets as the campaign pod) | the API server, the IIIF origin, anything else in-cluster |
 | apply pod (`app=htrflow-campaigns`, only with `apply.rbac.enabled`) | none | every API server (`network.apiServer.cidr` / `cidrs`); the git host in `apply.gitCidrs` on `apply.gitPorts` (443 by default), which the Argo CD hook clones the campaigns repo from over HTTPS. Empty by default | S3, the IIIF origin, Hugging Face Hub, anything else in-cluster |
 | RustFS (`app=rustfs`, devstack) | 9000 from anywhere (and 9001 when the console is on) | none | — |
 | rustfs-init hook (`app=rustfs-init`, devstack) | none | RustFS on 9000 | — |
 
 The web front's ingress list defaults to every address, because the dev
 stack and the compose stack are reached from wherever the operator's browser
-is. That default is in front of a NodePort with no authentication, so the
-chart refuses to render it unless `network.web.allowPublicIngress` says the
+is. That default is in front of a NodePort, where the login page is served to
+anyone who reaches it, so the chart refuses to render it unless `network.web.allowPublicIngress` says the
 exposure is deliberate. So do an empty list, which a NetworkPolicy reads
 as every source, and any entry wider than `/8`. Listing the ranges that may
 reach it needs no such flag. In ingress mode none of these guards apply:
