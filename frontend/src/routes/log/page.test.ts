@@ -156,6 +156,45 @@ describe("/log live mode", () => {
     expect(fetchMock).toHaveBeenCalledTimes(calls);
   });
 
+  test("a transient failure is an attempt that failed: the retry is followed", async () => {
+    let body =
+      "2026-09-08 09:00:00,000 ERROR transient failure in stream: SIGTERM\n";
+    const fetchMock = vi.fn(async () => new Response(body));
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    render(LogPage);
+    await vi.advanceTimersByTimeAsync(0);
+    const badge = screen.getByRole("status");
+    expect(badge).toHaveTextContent("attempt failed · retry pending");
+    expect(badge).not.toHaveTextContent("finished");
+    // The retry ships its own log to the same key, and finishes.
+    body =
+      "2026-09-08 09:10:00,000 INFO [v1] COMPLETE 1 pages " +
+      "(1 processed, 0 failed) in 1.0s, viewer: x\n";
+    await vi.advanceTimersByTimeAsync(LIVE_MS);
+    expect(screen.getByRole("status")).toHaveTextContent("finished");
+    const calls = fetchMock.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(LIVE_MS * 5);
+    expect(fetchMock).toHaveBeenCalledTimes(calls);
+  });
+
+  test("a permanent failure says failed, not finished, and stops", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          "2026-09-08 09:00:00,000 ERROR permanent failure in setup: bad\n",
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    render(LogPage);
+    await vi.advanceTimersByTimeAsync(0);
+    const badge = screen.getByRole("status");
+    expect(badge).toHaveTextContent(/^failed ·/);
+    expect(badge).toHaveClass("failed");
+    const calls = fetchMock.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(LIVE_MS * 5);
+    expect(fetchMock).toHaveBeenCalledTimes(calls);
+  });
+
   test("a non-http log URL is refused before any fetch", async () => {
     window.history.replaceState(null, "", "/log?log=javascript:alert(1)");
     const fetchMock = fetch404();

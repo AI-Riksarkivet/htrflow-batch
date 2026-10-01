@@ -17,12 +17,13 @@
     type RunManifest,
   } from "$lib/run.js";
   import {
-    isTerminalLog,
+    logOutcome,
     LOG_TAIL_BYTES,
     parseRunLog,
     splitLogLine,
     tailOf,
     type LogGroup,
+    type RunOutcome,
   } from "$lib/runlog.js";
 
   // The route is opened as /log?log=<url>&manifest=<url> on a prerendered,
@@ -55,6 +56,8 @@
   let logError = $state<string | null>(null);
   let manifest = $state<RunManifest | null>(null);
   let live = $state(startedLive);
+  /** How the attempt in the log ended, as its tail says (`logOutcome`). */
+  let outcome = $state<RunOutcome | null>(null);
   /** ISO timestamp of the last content change (shown via shortDate). */
   let updatedAt = $state<string | null>(null);
   let failures = $state(0);
@@ -94,7 +97,11 @@
         logText = text;
         updatedAt = new Date().toISOString();
       }
-      if (live && isTerminalLog(text)) live = false;
+      outcome = logOutcome(text);
+      // A transient failure ends only the attempt: the retry is followed.
+      if (live && (outcome === "complete" || outcome === "permanent")) {
+        live = false;
+      }
       return true;
     } catch (e) {
       if (signal.aborted) return true;
@@ -134,7 +141,10 @@
       if (parsed.success) {
         manifest = parsed.data;
         // The wrapper writes manifest.json once, at the end of the run.
-        if (live && isTerminalManifest(parsed.data)) live = false;
+        if (live && isTerminalManifest(parsed.data)) {
+          outcome = "complete";
+          live = false;
+        }
       }
     } catch {
       // Missing/failed manifest fetch → skip the summary card gracefully;
@@ -217,8 +227,20 @@
       {#if startedLive}
         <!-- role=status: a polite live region, so the switch to "finished"
              and each update are announced without stealing focus. -->
-        <span class="live-badge" class:finished={!live} role="status">
-          {#if live}
+        <span
+          class="live-badge"
+          class:finished={!live && outcome === "complete"}
+          class:failed={!live && outcome === "permanent"}
+          class:retrying={live && outcome === "transient"}
+          class:stopped={!live &&
+            outcome !== "complete" &&
+            outcome !== "permanent"}
+          role="status"
+        >
+          {#if live && outcome === "transient"}
+            <span class="pulse" aria-hidden="true"></span>attempt failed · retry
+            pending
+          {:else if live}
             <span class="pulse" aria-hidden="true"></span>live
             {#if updatedAt !== null}
               · updated <time datetime={updatedAt} title={updatedAt}
@@ -227,10 +249,13 @@
             {:else}
               · waiting for first upload
             {/if}
-          {:else if updatedAt !== null}
-            finished · <time datetime={updatedAt} title={updatedAt}
-              >{shortDate(updatedAt)}</time
-            >
+          {:else if outcome === "complete" || outcome === "permanent"}
+            {outcome === "complete" ? "finished" : "failed"}
+            {#if updatedAt !== null}
+              · <time datetime={updatedAt} title={updatedAt}
+                >{shortDate(updatedAt)}</time
+              >
+            {/if}
           {:else}
             stopped
           {/if}
@@ -349,6 +374,21 @@
   .live-badge.finished {
     color: var(--success);
     background: var(--success-soft);
+  }
+
+  .live-badge.failed {
+    color: var(--destructive);
+    background: var(--destructive-soft);
+  }
+
+  .live-badge.retrying {
+    color: var(--warning);
+    background: var(--warning-soft);
+  }
+
+  .live-badge.stopped {
+    color: var(--muted-foreground);
+    background: var(--muted);
   }
 
   .pulse {
