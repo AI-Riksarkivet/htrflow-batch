@@ -131,9 +131,8 @@ def _write_key(path, key: bytes, bump: int) -> None:
 
 
 def test_a_rotated_key_file_ends_every_session_sealed_under_the_old_one(tmp_path):
-    """Rotating the session Secret is how an operator ends a leaked session.
-    The key used to be read once at start, so the old cookies stayed valid
-    until the pods restarted."""
+    """Rotating the session Secret is how an operator ends a leaked session:
+    the running proxy follows the new key, with no restart."""
     path = tmp_path / "key"
     _write_key(path, KEY, 1)
     codec = KeyFileCodec(str(path), hours=8)

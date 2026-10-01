@@ -374,9 +374,9 @@ def _concurrently(app, headers_list, gate, turned_away):
 def test_concurrent_attempts_from_one_address_are_counted_before_the_probe(
     cfg, monkeypatch
 ):
-    """The limiter used to check before the probe and record after it, so
-    forty attempts in flight from one address all reached the store. Each
-    attempt now counts the moment it starts."""
+    """An attempt counts the moment it starts, so attempts in flight at once
+    from one address count together: past the limit they never reach the
+    store."""
     import threading  # noqa: PLC0415
 
     started: list[int] = []
@@ -426,9 +426,9 @@ def test_a_login_the_store_could_not_judge_is_not_counted(cfg, monkeypatch):
 
 
 def test_clients_share_one_session(cfg):
-    """A botocore Session holds the whole S3 service model, ~12 MB: one per
-    client let a login flood, or about fifteen logged-in users, push the
-    proxy past its memory limit. Clients now come from one Session."""
+    """A botocore Session holds the whole S3 service model, ~12 MB. Clients
+    come from one shared Session, so each cached client (one per logged-in
+    user) costs well under a megabyte."""
     import gc  # noqa: PLC0415
     import tracemalloc  # noqa: PLC0415
 
