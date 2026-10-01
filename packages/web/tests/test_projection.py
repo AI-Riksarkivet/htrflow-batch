@@ -11,7 +11,7 @@ from htrflow_converter.models import ConverterConfig
 
 from htrflow_web import projection
 from htrflow_web.progress import MAX_SCORED
-from htrflow_web.projection import _campaign_quality
+from htrflow_web.projection import PageTotals
 
 CFG = SimpleNamespace(results_url="https://results.example.org")
 #: `warmup` is required (Task 28 fix round item 4) -- this is what every
@@ -1981,6 +1981,26 @@ def _row(vid, q):
     }
 
 
+def _campaign_quality(rows: list[dict]) -> dict | None:
+    totals = PageTotals()
+    for row in rows:
+        totals.add({"logUrl": "", **row, "progress": _quality_only(row["progress"])})
+    return totals.quality()
+
+
+def _quality_only(partial: dict) -> dict:
+    """A progress row with nothing but its quality block to say."""
+    return {
+        "done": 0,
+        "total": 0,
+        "failed": 0,
+        "errors": 0,
+        "lastError": None,
+        "updatedAt": None,
+        **partial,
+    }
+
+
 def test_the_campaign_mean_is_weighted_by_scored_pages():
     rows = [
         _row(
@@ -2108,3 +2128,79 @@ def test_a_pipeline_just_under_the_cap_is_still_read():
     head = "steps:\n- step: QualityPrediction\n"
     pad = "#" * (projection.MAX_PIPELINE_YAML - len(head) - 1) + "\n"
     assert projection.quality_prediction(_pipeline(head + pad)) is True
+
+
+def _over_row(index: int, done: int, state: str = "done") -> dict:
+    return {
+        "index": index,
+        "id": f"vol{index}",
+        "state": state,
+        "logUrl": "",
+        "iiifUrl": "",
+        "progress": {**_quality_only({"quality": None}), "done": done, "total": done},
+    }
+
+
+def test_a_tally_sums_each_volume_once_however_often_it_is_added():
+    from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+
+    from htrflow_web.projection import Tally  # noqa: PLC0415
+
+    tally = Tally()
+    rows = [_over_row(i, 2) for i in range(300)]
+    with ThreadPoolExecutor(8) as pool:
+        list(pool.map(tally.add, rows * 4))
+    assert tally.totals().result()["pagesDone"] == 600
+    assert tally.has(299) and not tally.has(300)
+
+
+def test_a_tally_of_thousands_of_volumes_stays_small():
+    import tracemalloc  # noqa: PLC0415
+
+    from htrflow_web.projection import Tally  # noqa: PLC0415
+
+    rows = [_over_row(i, 2) for i in range(3076)]
+    tracemalloc.start()
+    try:
+        tally = Tally()
+        for row in rows:
+            tally.add(row)
+        size, _ = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert size < 20_000, f"{size} bytes"
+
+
+def test_a_volume_that_finishes_is_another_tally():
+    from htrflow_web.projection import tally_key  # noqa: PLC0415
+
+    rows = [_over_row(0, 1), _over_row(1, 1, state="active")]
+    before = tally_key(rows)
+    assert tally_key([dict(r) for r in rows]) == before
+    rows[1]["state"] = "done"
+    assert tally_key(rows) != before
+
+
+def test_the_lowest_pages_merge_across_tallied_and_running_volumes():
+    a, b = PageTotals(), PageTotals()
+    q = {"mean": 0.5, "min": 0.1, "scored": 2}
+    a.add(
+        {
+            **_over_row(0, 1),
+            "progress": _quality_only(
+                {"quality": {**q, "lowest": [{"page": "1", "quality": 0.3}]}}
+            ),
+        }
+    )
+    b.add(
+        {
+            **_over_row(0, 1),
+            "progress": _quality_only(
+                {"quality": {**q, "lowest": [{"page": "1", "quality": 0.1}]}}
+            ),
+        }
+    )
+    a.merge(b)
+    assert [(e["volume"], e["page"], e["quality"]) for e in a.quality()["lowest"]] == [
+        ("vol0", "1", 0.1)
+    ]

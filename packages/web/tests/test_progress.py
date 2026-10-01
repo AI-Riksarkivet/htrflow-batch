@@ -698,3 +698,32 @@ def test_a_pending_volume_is_never_forbidden():
     r, asked = reader({})
     assert r.for_session(None).forbidden(BASE, "vol0", "pending") is False
     assert asked == []
+
+
+# --- a caller's tally over a campaign's finished volumes ------------------
+
+
+def test_a_tally_is_one_callers_and_kept_for_the_hour(clock):
+    from htrflow_web.login_check import Session
+
+    r, _ = reader({})
+    anna = r.for_session(Session("anna", "a"))
+    bo = r.for_session(Session("bo", "b"))
+    t = anna.tally(BASE, "k")
+    assert anna.tally(BASE, "k") is t
+    assert bo.tally(BASE, "k") is not t, "one caller's sums are never another's"
+    assert anna.tally(BASE, "other volumes") is not t
+    clock.now += progress_mod.DONE_TTL + 1
+    assert anna.tally(BASE, "k") is not t
+
+
+def test_the_tallies_kept_are_bounded(monkeypatch):
+    monkeypatch.setattr(progress_mod, "MAX_TALLIES", 2)
+    r, _ = reader({})
+    p = r.for_session(None)
+    first = p.tally(BASE, "a")
+    p.tally(BASE, "b")
+    p.tally(BASE, "a")  # used again: now the most recent
+    p.tally(BASE, "c")
+    assert p.tally(BASE, "a") is first
+    assert len(r._tallies) == 2

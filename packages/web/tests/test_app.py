@@ -30,7 +30,7 @@ from htrflow_web.kube import (
     ClusterUnavailable,
 )
 from htrflow_web.progress import ProgressReader
-from htrflow_web.projection import FAILURES_MANAGER
+from htrflow_web.projection import FAILURES_MANAGER, Tally
 
 JOB = {
     "metadata": {
@@ -148,6 +148,9 @@ class FakeProgress:
 
     def forbidden(self, results_base: str, volume_id: str, state: str) -> bool:
         return volume_id in self.refused
+
+    def tally(self, results_base: str, key: str) -> Tally:
+        return Tally()  # nothing outlives the request: every read counts anew
 
     def for_session(self, session):
         return self
@@ -529,6 +532,39 @@ def test_a_finished_campaign_the_caller_may_not_read_settles():
     assert body["pagesCoverage"] == {"counted": 300, "of": 300}
     assert len(body["volumes"]) == 200
     assert all(v["forbidden"] for v in body["volumes"])
+
+
+def test_two_readers_of_a_large_finished_campaign_both_settle(monkeypatch):
+    """The progress cache is per user, and its cap was sized for one reader:
+    with two, a campaign past half the cap thrashed, never settled, and
+    cost 100 GETs a read for good. Scaled down ten times here: a cap of
+    2000 answers, 1200 volumes, two readers."""
+    from htrflow_web import progress as progress_mod  # noqa: PLC0415
+
+    monkeypatch.setattr(progress_mod, "MAX_ENTRIES", 2000)
+    asked: list[str] = []
+
+    def handler(req):
+        asked.append(req.headers.get("cookie", ""))
+        return httpx.Response(200, json={"pages_total": 2, "pages_done": 2})
+
+    app = create_app(
+        FinishedReader(1200),
+        progress=ProgressReader(httpx.Client(transport=httpx.MockTransport(handler))),
+        sessions=FakeSessions({"a": "anna", "b": "bo"}),
+    )
+    readers = {}
+    for cookie in ("a", "b"):
+        readers[cookie] = TestClient(app)
+        readers[cookie].cookies.set("htr_session", cookie)
+    last = {}
+    for _ in range(40):
+        for cookie, client in readers.items():
+            asked.clear()
+            body = client.get("/api/v1/jobs/htr-test/kyrk").json()
+            last[cookie] = (len(asked), body["pagesCoverage"]["counted"])
+    assert last == {"a": (0, 1200), "b": (0, 1200)}
+    assert body["pagesDone"] == 2400
 
 
 def test_job_detail_carries_the_pipeline_steps_and_yaml(client: TestClient):
