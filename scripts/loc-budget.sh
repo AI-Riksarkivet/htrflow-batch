@@ -814,7 +814,8 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 4766
 # comment, and _reject_moved_settings collecting the moved and the renamed
 # keys into one error, so converter.yaml's old public_results_base is
 # refused naming results_url instead of as a spelling mistake.
-check converter "$(count packages/converter/src -name '*.py')" 5074
+# 5074 -> 5084 (audit 1001 review 1B): results_url must end in /results, as the chart's resultsUrl.
+check converter "$(count packages/converter/src -name '*.py')" 5084
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
