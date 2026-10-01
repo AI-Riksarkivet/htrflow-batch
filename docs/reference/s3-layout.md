@@ -35,19 +35,18 @@ beside its results as `progress.json`.
                              # by the wrapper itself before processing; overwritten
                              # every run
 
-status/
+<namespace>/status/
   logs/<pipeline>/<volume>.txt      # the run's own stdout/stderr, shipped live (wrapper)
 ```
 
 Writers: the **wrapper** is the only writer in the whole tree — its own
 `<namespace>/<pipeline>/<volume>/` prefix, its run-log key under
-`status/logs/`, and `sources/` (for `IMAGES` volumes). `S3_PREFIX` goes in
-*front* of the `sources/` key, so the synthetic manifests sit at
-`<namespace>/sources/…`, not `sources/<namespace>/…`; `status/` alone is
-namespace-free, since the browser resolves run-log links against the bucket
-root. Two namespaces sharing one bucket therefore share run-log keys: the
-same pipeline id and volume id in both write one log
-([Roadmap](../roadmap/index.md#queueing-and-fairness)). Nothing else in this system writes to S3 at all. The read API only
+`<namespace>/status/logs/`, and `sources/` (for `IMAGES` volumes).
+`S3_PREFIX` goes in *front* of every key, so the synthetic manifests sit at
+`<namespace>/sources/…` and the run logs at `<namespace>/status/logs/…`:
+two namespaces sharing one bucket never share a key, and the results proxy
+serves nothing outside its own namespace. Nothing else in this system writes
+to S3 at all. The read API only
 reads `progress.json` and `manifest.json`, through the results proxy with the
 caller's session ([View Results](../getting-started/viewing.md)).
 
@@ -91,7 +90,7 @@ own publish writes both again at the end.
 | `canvas_ids` | `{"0001": <source canvas id or null>, …}` |
 | `source_manifest` | the manifest URL the pod fetched (verbatim), or, for `IMAGES` volumes, the synthetic manifest id the wrapper published to `sources/` |
 | `max_image_width`, `bytes_fetched`, `wall_seconds`, `gpu_stall_seconds`, `pages_per_second` | run metrics |
-| `viewer_url` | the public `iiif.json` URL |
+| `viewer_url` | the `iiif.json` URL under the results URL |
 | `quality` | the volume's predicted-quality summary, present only with at least one scored page |
 | `image_cache` | `{"bucket", "hits", "misses", "stored"}`, present only when the run used an image cache: absent with no bucket configured, with the results bucket named as the cache, and for a volume with a page past 99999 (see "Image cache bucket" below) |
 

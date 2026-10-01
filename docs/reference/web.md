@@ -32,7 +32,7 @@ Source: [`packages/web`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/ma
 | `/config.js` | The browser's configuration, written by the API from its own environment (below). |
 | `GET /healthz` | `{"ok": true}`. |
 | `GET`, `HEAD /results/<key>` | A result file, streamed from the results proxy (through the web front, which reads nothing from the answer). `401` without a session. |
-| `POST /results/_login`, `POST /results/_logout`, `GET /results/_session` | The login form's target (user name and password), the log-out, and `{"user": …}` for a valid session (`401` otherwise). Posted bodies are capped at 16 KiB, and only the `htr_session` cookie is forwarded. |
+| `POST /results/_login`, `POST /results/_logout`, `GET /results/_session` | The login form's target (user name and password), the log-out, and `{"user": …}` for a valid session (`401` otherwise). Posted bodies are capped at 16 KiB, and only the session cookie is forwarded: `__Host-htr_session` when the browser is on HTTPS, `htr_session` on plain HTTP. |
 | `GET /api/v1/version` | `{"version", "web"}`: the release tag both images carry, and the web package's version. |
 | `GET /api/v1/jobs?reaped=20` | One summary per campaign (below). |
 | `GET /api/v1/jobs/{namespace}/{name}?offset=0&limit=200` | One campaign's detail (below). `404` for a name that is not a campaign. |
@@ -93,10 +93,10 @@ Each volume row (`VolumeView`):
 | `state` | See [Phases](#phases-and-volume-states). |
 | `manifestUrl`, `iiifUrl`, `altoPrefix` | Result URLs under `resultsBase`. |
 | `sourceUrl` | The URL half of the `volumes.txt` line. `null` for an `images:` volume, or for a URL a browser could not open. |
-| `logUrl` | `<results URL>/status/logs/<pipeline>/<id>.txt`, always present. |
+| `logUrl` | `<results URL>/<namespace>/status/logs/<pipeline>/<id>.txt`, always present. |
 | `reason` | `{stage, permanent, error}` from a failed pod's termination message, while a pod for that index still exists. |
 | `progress` | From the volume's `progress.json` (below), or `null`. |
-| `forbidden` | `true` when the results proxy refused the signed-in user the volume's progress file (a `403`): their store account may not read the volume. Asked again every few seconds, like any unanswered read. |
+| `forbidden` | `true` when the results proxy refused the signed-in user the volume's progress file (a `403`): their store account may not read the volume. A refusal is an answer, kept as long as any other: an hour for a volume that is over, a few seconds for one still running. |
 
 **Where a `reason` comes from.** The wrapper's own JSON termination message
 when it wrote one. A pod stopped by the warm-up gate carries the gate's
@@ -243,7 +243,7 @@ second copy to keep in step.
 | API env var | Default | Meaning |
 |---|---|---|
 | `HTRFLOW_RESULTS_URL` | required | The browser-reachable base every result URL is built from. The chart sets it from `resultsUrl`. |
-| `HTRFLOW_INTERNAL_RESULTS_BASE` | the public base | Where the pod reads progress files. The chart sets it to the results proxy's Service, `http://htrflow-results:8082/results`. |
+| `HTRFLOW_INTERNAL_RESULTS_BASE` | `HTRFLOW_RESULTS_PROXY` | Where the pod reads progress files. The chart sets it to the results proxy's Service, `http://htrflow-results:8082/results`. |
 | `HTRFLOW_RESULTS_PROXY` | required | The results proxy's Service, `http://htrflow-results:8082/results`. The web front asks it whether a request's session cookie is valid (an answer is cached for 30 seconds per cookie) and passes `/results` through to it; every `/api/v1` route answers `401` without a session and `502` when the proxy does not answer. |
 | `HTRFLOW_NAMESPACES` | the pod's own namespace (`htr-batch` outside a cluster) | Comma-separated namespaces to list. |
 | `HTRFLOW_WEB_STATIC` | `/app/static` | The built site; missing means API only. |
@@ -258,7 +258,7 @@ The chart values are in [Chart Values](chart.md#web-front-web).
 | Response | Policy |
 |---|---|
 | Every response | `frame-ancestors 'none'`, with `X-Content-Type-Options: nosniff` and `Referrer-Policy: strict-origin-when-cross-origin`. |
-| The SPA's pages | Their own meta CSP from the build (`script-src 'self'` plus the hash of SvelteKit's init script, `object-src 'none'`, `base-uri 'self'`), and a header adding `connect-src 'self' <results base>/`: the page may fetch only from the API and the results bucket. |
+| The SPA's pages | Their own meta CSP from the build (`script-src 'self'` plus the hash of SvelteKit's init script, `object-src 'none'`, `base-uri 'self'`), and a header adding `connect-src 'self' <results base>/`: the page may fetch only from the API and the results URL, both on its own origin. |
 | `uv.html` | A policy of its own, chosen by the file served, whatever path reached it: hashed inline script, inline styles, images and manifests from anywhere. |
 | Any other HTML document in the site | `default-src 'none'; sandbox`. |
 

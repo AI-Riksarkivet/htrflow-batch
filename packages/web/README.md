@@ -42,7 +42,9 @@ this directory prunes the shared venv down to the root.
 ```bash
 make install                                    # uv sync --all-packages
 uv run --all-packages pytest -q packages/web    # this package's unit tests
-HTRFLOW_RESULTS_URL=https://results.example.org uv run htrflow-web   # :8081, uses your kubeconfig
+HTRFLOW_RESULTS_URL=https://htr.example.org/results \
+  HTRFLOW_RESULTS_PROXY=http://<results-proxy>:8082/results \
+  uv run htrflow-web                            # :8081, uses your kubeconfig; the proxy is `htrflow-results`
 make build-web                                  # the image, .docker/htrflow-web.dockerfile
 make scan-web                                   # Trivy, HIGH/CRITICAL with a fix fail
 ```
@@ -137,8 +139,8 @@ last apply, frozen once the campaign has finished) are stamped by `apply`.
 |---|---|---|
 | `HTRFLOW_RESULTS_URL` | required | Browser-reachable base every result URL is built from |
 | `HTRFLOW_INTERNAL_RESULTS_BASE` | `HTRFLOW_RESULTS_PROXY` | Where this pod reads progress files, with the caller's session: the chart sets it to the results proxy's Service |
-| `HTRFLOW_RESULTS_PROXY` | required | The results proxy's Service (`http://htrflow-results:8082/results`): asked whether a request's `htr_session` cookie is valid (cached 30 s per cookie), and the target of the `/results` pass-through; every `/api/v1` route answers `401` without a session, `502` when the proxy does not answer |
-| `HTRFLOW_NAMESPACES` | own namespace in-cluster, else `htr-batch` | Comma-separated namespaces to list; the chart leaves it unset |
+| `HTRFLOW_RESULTS_PROXY` | required | The results proxy's Service (`http://htrflow-results:8082/results`): asked whether a request's session cookie (`__Host-htr_session` over HTTPS, `htr_session` over plain HTTP) is valid (cached 30 s per cookie), and the target of the `/results` pass-through; every `/api/v1` route answers `401` without a session, `502` when the proxy does not answer |
+| `HTRFLOW_NAMESPACES` | own namespace in-cluster, else `htr-batch` | Comma-separated namespaces to list; the chart sets the release namespace |
 | `HTRFLOW_WEB_STATIC` | `/app/static` | The built site. Missing directory = API only, which is what a local run gets |
 | `HTRFLOW_WEB_SITE_ONLY` | unset | Any non-empty value: serve the site without a cluster — `/api/v1/…` answers `503`, nothing tries to load a kubeconfig. The local compose stack runs this way |
 | `HTRFLOW_BATCH_VERSION` | `dev` | The release this image is: baked in from the publish tag by `.docker/htrflow-web.dockerfile`, reported by `/api/v1/version` and shown in the page header. Set by the image, never by an operator |
