@@ -209,7 +209,7 @@ Each key is a key of its `values.yaml`.
 | `queue.flavors` | `values.yaml` | *(empty)* | converter `flavors` | no secret — nobody |
 | `queue.createPriorityClasses` | `values.yaml` | `true` | — | no secret — nobody |
 | `queue.priorityClasses` | `values.yaml` | `[{description: a handful of volumes someone is waiting for,…` | converter `priority_classes` | no secret — nobody |
-| `web.image` | `values.yaml` | `docker.io/riksarkivet/htrflow-web@sha256:a5a479de7ce223c56d…` | — | digest-pinned unless `security.allowTagImages` — render |
+| `web.image` | `values.yaml` | `docker.io/riksarkivet/htrflow-web@sha256:57078aaace55336829…` | — | digest-pinned unless `security.allowTagImages` — render |
 | `web.nodePort` | `values.yaml` | `30800` | — | no secret — nobody |
 | `web.resources.requests.cpu` | `values.yaml` | `50m` | — | no secret — nobody |
 | `web.resources.requests.memory` | `values.yaml` | `128Mi` | — | no secret — nobody |
