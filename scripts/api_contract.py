@@ -37,15 +37,24 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "packages" / "web" / "src"))
 
 from htrflow_web import app, progress  # noqa: E402
+from htrflow_web.cookie import COOKIE  # noqa: E402
 from htrflow_web.kube import FIELD_MANAGER, ClusterUnavailable  # noqa: E402
+from htrflow_web.login_check import SessionChecker  # noqa: E402
 
 FIXTURE = ROOT / "frontend" / "src" / "lib" / "fixtures" / "api-contract.json"
 
+#: As the chart sets them: links under the web front's /results, and
+#: progress read through the results proxy's Service with the caller's
+#: session, behind the same login gate a deployment has.
+PROXY = "http://htrflow-results:8082/results"
 CFG = SimpleNamespace(
-    results_url="https://results.example.org",
-    internal_results_base="http://rustfs.htr-batch.svc:9000/htr-results",
+    results_url="https://htr.example.org/results",
+    internal_results_base=PROXY,
+    results_proxy=PROXY,
     namespaces=("htr-test",),
 )
+#: The session the fixture is read with; the fake proxy knows no other.
+SESSION = "contract-session"
 
 #: What the version route reports: the tag is the app's argument, and the
 #: package version is pinned here so a release does not change the fixture.
@@ -200,12 +209,16 @@ WRAPPER_QUALITY = {
 NOW = 1789371072.0  # 2026-09-14T07:31:12+00:00
 
 
-def _bucket(request: httpx.Request) -> httpx.Response:
+def _proxy(request: httpx.Request) -> httpx.Response:
+    if request.headers.get("cookie") != f"{COOKIE}={SESSION}":
+        return httpx.Response(401, json={"detail": "not logged in"})
+    if request.url.path == "/results/_session":
+        return httpx.Response(200, json={"user": "reader"})
     # The proxy refuses the caller one volume (a 403): its row is the
     # `forbidden` one the card words as "may not read" (spec §7).
-    if request.url.path.startswith("/htr-results/htr-test/demo-v0/vol1/"):
+    if request.url.path.startswith("/results/htr-test/demo-v0/vol1/"):
         return httpx.Response(403)
-    if request.url.path.startswith("/htr-results/htr-test/demo-v1/vol0/"):
+    if request.url.path.startswith("/results/htr-test/demo-v1/vol0/"):
         return httpx.Response(
             200, json={**WRAPPER_PROGRESS, "quality": WRAPPER_QUALITY}
         )
@@ -380,7 +393,7 @@ def _reaped_limits() -> dict:
     (REAPED_PAGE, REAPED_MAX) are asserted equal to these by the vitest, so
     a limit moved on either side fails there."""
     with tempfile.TemporaryDirectory() as site:
-        client = TestClient(create(ManyReapedReader(), site))
+        client = logged_in(create(ManyReapedReader(), site))
         rows = _answer(client, "/api/v1/jobs").json()
         if len(rows) >= ManyReapedReader.RECORDS:
             raise SystemExit("the default reaped window is not below the probe's size")
@@ -411,24 +424,31 @@ def _answer(client: TestClient, path: str, status: int = 200) -> httpx.Response:
 
 def _error(reader, path: str, status: int) -> dict:
     with tempfile.TemporaryDirectory() as site:
-        client = TestClient(create(reader, site), raise_server_exceptions=False)
+        client = logged_in(create(reader, site), raise_server_exceptions=False)
         return {"status": status, "body": _answer(client, path, status).json()}
 
 
 def create(reader, site: str):
-    """The app over ``reader``, with an empty site and the read API's own
-    ProgressReader over a bucket that holds WRAPPER_PROGRESS for every
-    volume: the progress rows are what `htrflow_web.progress` makes of it,
-    never a copy of its output that a renamed field would leave green
-    (2026-09-23 audit). A new one per app, so no answer is cached across
-    builds."""
-    bucket = httpx.Client(transport=httpx.MockTransport(_bucket))
+    """The app over ``reader``, with an empty site, and the read API's own
+    session check and ProgressReader over a results proxy that knows one
+    session and holds WRAPPER_PROGRESS for every volume: the progress rows
+    are what `htrflow_web.progress` makes of it, never a copy of its output
+    that a renamed field would leave green (2026-09-23 audit). A new one per
+    app, so no answer is cached across builds."""
+    proxy = httpx.Client(transport=httpx.MockTransport(_proxy))
     return app.create_app(
         reader,
         static_dir=site,
         batch_version=BATCH_VERSION,
-        progress=progress.ProgressReader(bucket),
+        progress=progress.ProgressReader(proxy),
+        sessions=SessionChecker(PROXY, client=proxy),
     )
+
+
+def logged_in(application, **kwargs) -> TestClient:
+    """A browser holding the session the fake proxy knows (plain HTTP, so
+    the plain cookie name)."""
+    return TestClient(application, cookies={COOKIE: SESSION}, **kwargs)
 
 
 def build() -> dict:
@@ -438,7 +458,7 @@ def build() -> dict:
         mock.patch.object(app, "WEB_VERSION", WEB_VERSION),
         tempfile.TemporaryDirectory() as site,
     ):
-        client = TestClient(create(ContractReader(), site))
+        client = logged_in(create(ContractReader(), site))
         jobs = _answer(client, "/api/v1/jobs")
         details = [
             _answer(client, f"/api/v1/jobs/htr-test/{name}").json()
