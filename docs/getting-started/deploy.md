@@ -112,7 +112,9 @@ web front's own origin, with each logged-in person's own store keys.
 ```bash
 helm install htr charts/htrflow-batch -n <namespace> \
   -f charts/htrflow-batch/values-prod.yaml \
-  --set resultsUrl=<results-url> \
+  --set resultsUrl=https://<web-front-host>/results \
+  --set results.sessionSecret=htr-session \
+  --set results.keyDerivation=<hcp|none> \
   --set network.apiServer.cidr=<apiserver-address>/32 \
   --set network.iiifCidrs='{<iiif-source-cidr>}' \
   --set network.s3Cidrs='{<s3-endpoint-cidr>}' \
