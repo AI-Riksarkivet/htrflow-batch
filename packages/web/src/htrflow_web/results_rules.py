@@ -27,11 +27,7 @@ def allowed_key(raw_path: str, namespace: str) -> str | None:
     parts = key.split("/")
     if any(p in ("", ".", "..") for p in parts):
         return None
-    if len(parts) >= 2 and parts[0] == namespace:
-        return key
-    if len(parts) >= 3 and parts[:2] == ["status", "logs"]:
-        return key
-    return None
+    return key if len(parts) >= 2 and parts[0] == namespace else None
 
 
 def served_type(stored: str | None) -> tuple[str, bool]:

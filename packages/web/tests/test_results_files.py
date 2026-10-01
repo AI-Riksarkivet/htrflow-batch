@@ -33,7 +33,7 @@ def setup(monkeypatch):
         )
         s3.put_object(
             Bucket="htr-results",
-            Key="status/logs/demo-v1/R1.txt",
+            Key="htr-test/status/logs/demo-v1/R1.txt",
             Body=b"log line\n",
             ContentType="text/plain; charset=utf-8",
         )
@@ -71,7 +71,7 @@ def test_a_result_file_streams_with_its_headers(setup):
 
 def test_head_has_the_headers_and_no_body(setup):
     c, _ = setup
-    r = c.head("/results/status/logs/demo-v1/R1.txt")
+    r = c.head("/results/htr-test/status/logs/demo-v1/R1.txt")
     assert r.status_code == 200
     assert r.content == b""
     assert r.headers["content-length"] == "9"
