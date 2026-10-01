@@ -286,7 +286,7 @@ value keys **as they were at that version** — `api.*`, `viewer.*`,
 here would make the upgrade notes wrong for anyone actually on that
 version.
 
-### 0.16.0 — unreleased (results behind a login)
+### 0.16.0 — 2026-10-01 (v0.9.0: results behind a login)
 
 **Breaking, on purpose** — see *From 0.15.0 to 0.16.0* above.
 
