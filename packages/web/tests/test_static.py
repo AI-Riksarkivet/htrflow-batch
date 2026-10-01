@@ -235,6 +235,19 @@ def test_every_inline_script_is_hashed_as_the_browser_reads_it(
     assert _hashes(csp) == [_sha256(b) for b in bodies]
 
 
+def test_the_viewer_may_neither_post_a_form_away_nor_rebase_its_links(
+    client: TestClient,
+):
+    """A manifest from anywhere is rendered on this origin. Script is
+    hashed, but markup that UV's metadata sanitiser lets through could
+    still show a login form that posts elsewhere, or a <base> that sends
+    the page's relative links elsewhere."""
+    csp = client.get("/uv.html").headers["Content-Security-Policy"]
+    directives = {d.strip() for d in csp.split(";")}
+    assert "form-action 'self'" in directives
+    assert "base-uri 'none'" in directives
+
+
 def test_the_viewers_styles_are_unsafe_inline_with_no_hash_beside_it(
     client: TestClient,
 ):
