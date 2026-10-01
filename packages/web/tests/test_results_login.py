@@ -49,17 +49,33 @@ def test_a_valid_login_sets_the_session_cookie(app):
     r = login(c)
     assert r.status_code == 204
     cookie = r.headers["set-cookie"]
-    assert cookie.startswith(f"{COOKIE}=")
+    assert cookie.startswith(f"__Host-{COOKIE}=")
     for attr in ("HttpOnly", "Secure", "SameSite=strict", "Path=/"):
         assert attr.lower() in cookie.lower()
     assert c.get("/results/_session").json() == {"user": "testing"}
 
 
-def test_plain_http_drops_only_secure(app):
+def test_plain_http_drops_secure_and_the_prefix(app):
     c = TestClient(app, base_url="http://testserver")
     r = login(c, headers={"Origin": "http://testserver"})
     assert r.status_code == 204
     assert "secure" not in r.headers["set-cookie"].lower()
+    assert r.headers["set-cookie"].startswith(f"{COOKIE}=")
+    assert c.get("/results/_session").json() == {"user": "testing"}
+
+
+def test_over_https_a_cookie_without_the_prefix_is_no_session(app):
+    """A sibling subdomain, or a plain-HTTP answer on the same host, can set
+    `htr_session` but never `__Host-htr_session`: a planted session of the
+    attacker's own account must not be taken."""
+    planted = TestClient(app, base_url="http://testserver")
+    login(planted, headers={"Origin": "http://testserver"})
+    token = planted.cookies[COOKIE]
+    c = TestClient(app, base_url="https://testserver")
+    c.cookies.set(COOKIE, token)
+    assert c.get("/results/_session").status_code == 401
+    c.cookies.set(f"__Host-{COOKIE}", token)
+    assert c.get("/results/_session").json() == {"user": "testing"}
 
 
 def test_a_foreign_origin_is_refused_even_with_good_keys(app):
@@ -139,10 +155,8 @@ def test_logout_clears_the_cookie(app):
     login(c)
     r = c.post("/results/_logout", headers=ORIGIN)
     assert r.status_code == 204
-    assert (
-        'htr_session=""' in r.headers["set-cookie"]
-        or "Max-Age=0" in r.headers["set-cookie"]
-    )
+    assert r.headers["set-cookie"].startswith(f'__Host-{COOKIE}=""')
+    assert "max-age=0" in r.headers["set-cookie"].lower()
     assert c.get("/results/_session").status_code == 401
 
 

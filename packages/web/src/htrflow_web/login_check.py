@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from .cookie import COOKIE, no_cookie_jar
+from .cookie import internal_cookie, no_cookie_jar
 
 MAX_COOKIE = 4096
 
@@ -52,7 +52,7 @@ class SessionChecker:
         if hit and hit[0] > now:
             return hit[1]
         try:
-            r = self._client.get(self._url, headers={"Cookie": f"{COOKIE}={cookie}"})
+            r = self._client.get(self._url, headers=internal_cookie(cookie))
         except httpx.HTTPError as e:
             raise SessionsUnavailable(str(e)) from e
         if r.status_code == 200:

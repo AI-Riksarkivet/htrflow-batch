@@ -29,7 +29,7 @@ from urllib.parse import quote
 
 import httpx
 
-from .cookie import COOKIE, no_cookie_jar
+from .cookie import internal_cookie, no_cookie_jar
 
 if TYPE_CHECKING:
     from .login_check import Session
@@ -431,7 +431,7 @@ class ProgressReader:
                 url,
                 headers={
                     "Accept-Encoding": "identity",
-                    **({"Cookie": f"{COOKIE}={cookie}"} if cookie else {}),
+                    **(internal_cookie(cookie) if cookie else {}),
                 },
                 follow_redirects=False,
             ) as response:

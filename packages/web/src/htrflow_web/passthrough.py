@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
-from .cookie import COOKIE, forwarded, no_cookie_jar
+from .cookie import browser_cookie, forwarded, no_cookie_jar
 
 _LOG = logging.getLogger("htrflow_web.passthrough")
 
@@ -79,9 +79,12 @@ def results_route(
         proto, host = forwarded(request.headers, request.url.scheme)
         headers[b"x-forwarded-proto"] = proto.encode("latin-1")
         headers[b"x-forwarded-host"] = host.encode("latin-1")
-        cookie = request.cookies.get(COOKIE)
+        # Under the name the browser keeps it by, which the proxy derives
+        # from the X-Forwarded-Proto above by the same rule.
+        name = browser_cookie(request.headers, request.url.scheme)
+        cookie = request.cookies.get(name)
         if cookie is not None:
-            headers[b"cookie"] = f"{COOKIE}={cookie}".encode("utf-8", "replace")
+            headers[b"cookie"] = f"{name}={cookie}".encode("utf-8", "replace")
         body = None
         if request.method == "POST":
             too_big = JSONResponse({"detail": "body too large"}, status_code=413)

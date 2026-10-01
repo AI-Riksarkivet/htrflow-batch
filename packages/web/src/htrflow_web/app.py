@@ -34,7 +34,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import projection
-from .cookie import COOKIE
+from .cookie import session_token
 from .kube import ApplyConflict, ClusterUnavailable, is_campaign
 from .login_check import Session, SessionChecker, SessionsUnavailable
 from .passthrough import results_route
@@ -397,7 +397,7 @@ def create_app(
         if sessions is None:
             return None
         try:
-            found = sessions.check(request.cookies.get(COOKIE))
+            found = sessions.check(session_token(request))
         except SessionsUnavailable as e:
             _LOG.warning("session check failed: %s", e)
             raise HTTPException(
