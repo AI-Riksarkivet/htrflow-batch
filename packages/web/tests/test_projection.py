@@ -2171,11 +2171,13 @@ def test_a_tally_of_thousands_of_volumes_stays_small():
     assert size < 20_000, f"{size} bytes"
 
 
-def test_a_volume_that_finishes_is_another_tally():
+def test_a_volume_that_finishes_stays_in_the_same_tally():
     from htrflow_web.projection import tally_key  # noqa: PLC0415
 
     rows = [_over_row(0, 1), _over_row(1, 1, state="active")]
-    before = tally_key(rows)
-    assert tally_key([dict(r) for r in rows]) == before
+    before = tally_key(rows, "2026-09-01T00:00:00Z")
     rows[1]["state"] = "done"
-    assert tally_key(rows) != before
+    assert tally_key(rows, "2026-09-01T00:00:00Z") == before
+    assert tally_key(rows, "2026-09-02T00:00:00Z") != before, "another run"
+    rows[1]["id"] = "other"
+    assert tally_key(rows, "2026-09-01T00:00:00Z") != before, "other volumes"

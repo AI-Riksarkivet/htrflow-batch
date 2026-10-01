@@ -433,7 +433,7 @@ def record_detail(
         fetch_progress or (lambda *_args: None),
         cached_progress or _not_cached,
         forbidden_progress or (lambda *_args: False),
-        tally_progress(internal_base, tally_key(volumes))
+        tally_progress(internal_base, tally_key(volumes, row["startedAt"]))
         if tally_progress
         else Tally(),
     )
@@ -1113,9 +1113,9 @@ def _read_progress(
     campaign clean on totals that are not yet everyone's.
 
     A volume that is over is summed once into the caller's ``tally`` for
-    this set of volumes (``Tally``), which outlives the per-volume answers:
-    a large campaign settles however many people read it at once, while
-    only the rows on screen need their own answer kept. ``fetch``,
+    this run of the campaign (``Tally``), which outlives the per-volume
+    answers: a large campaign settles however many people read it at once,
+    while only the rows on screen need their own answer kept. ``fetch``,
     ``cached``, ``forbidden`` (whether the proxy refused the caller the
     volume, a 403) and ``tally`` are passed in (progress.py does the HTTP
     and keeps the state) so this module stays pure."""
@@ -1247,8 +1247,8 @@ class Tally:
     added once by its index (a bit in ``_seen``, so a few hundred bytes
     for a campaign of thousands). A volume that is over writes nothing
     more, so its sum holds for as long as its own answer would be kept;
-    the set of volumes is part of the key it is kept under
-    (``tally_key``). Shared by that caller's concurrent requests."""
+    the run and its volumes are the key it is kept under (``tally_key``).
+    Shared by that caller's concurrent requests."""
 
     def __init__(self) -> None:
         self._seen = 0
@@ -1270,16 +1270,13 @@ class Tally:
             return copy.deepcopy(self._totals)
 
 
-def tally_key(volumes: list[dict]) -> str:
-    """The set of volumes, and which of them are over, a ``Tally`` is for:
-    a volume that finishes, or a campaign re-applied with other volumes,
-    is another tally."""
-    over = "\n".join(
-        f"{row['index']}\t{row['id']}\t{row['state']}"
-        for row in volumes
-        if row["state"] in OVER_STATES
-    )
-    return hashlib.sha256(over.encode()).hexdigest()
+def tally_key(volumes: list[dict], run: str | None) -> str:
+    """The campaign's volumes, by index and id, and the run they belong to
+    (the Job's start time, kept by the record once the Job is gone): a
+    campaign re-applied, resumed or given other volumes is another tally. A
+    volume that finishes is not: it is added to the same one, once."""
+    rows = "\n".join(f"{row['index']}\t{row['id']}" for row in volumes)
+    return hashlib.sha256(f"{run or ''}\n{rows}".encode()).hexdigest()
 
 
 def detail(
@@ -1346,7 +1343,7 @@ def detail(
         fetch_progress or (lambda *_args: None),
         cached_progress or _not_cached,
         forbidden_progress or (lambda *_args: False),
-        tally_progress(internal_base, tally_key(volumes))
+        tally_progress(internal_base, tally_key(volumes, summary["startedAt"]))
         if tally_progress
         else Tally(),
     )
