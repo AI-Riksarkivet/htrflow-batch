@@ -1495,7 +1495,8 @@ check web       "$(count packages/web/src -name '*.py')" 4027
 # +1.
 # 6213 -> 6259 (audit 1001 R14): the run log tells a retried attempt from a failed or finished run.
 # 6259 -> 6263 (audit 1001 review I2): a transient failure on the last attempt reads as failed.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 6263
+# 6263 -> 6317 (audit 1001 R26): login refusals and a down results proxy worded from the proxy's own detail.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 6317
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
@@ -1689,5 +1690,6 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 6263
 # and the results.sessionSecret requirement.
 # 2173 -> 2174 (audit 1001 R5): trusted hops follow network.web.ingressFrom too.
 # 2174 -> 2176 (audit 1001 review): two hops need a ClusterIP Service too.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2176
+# 2176 -> 2183 (audit 1001 R7): a resultsUrl not ending in /results is refused.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2183
 exit $fail
