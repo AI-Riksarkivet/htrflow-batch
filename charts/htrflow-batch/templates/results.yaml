@@ -41,8 +41,9 @@ spec:
             - { name: HTRFLOW_KEY_DERIVATION, value: {{ .Values.results.keyDerivation | quote }} }
             # Forwarding hops in front of this service, for the login's rate
             # limit: the web front always appends to X-Forwarded-For, and an
-            # Ingress controller does too. Not a value: it follows web.ingress.
-            - { name: HTRFLOW_TRUSTED_HOPS, value: {{ ternary "2" "1" .Values.web.ingress.enabled | quote }} }
+            # ingress controller does too -- the chart's (web.ingress) or the
+            # operator's own, admitted through network.web.ingressFrom.
+            - { name: HTRFLOW_TRUSTED_HOPS, value: {{ ternary "2" "1" (or .Values.web.ingress.enabled (not (empty .Values.network.web.ingressFrom))) | quote }} }
             {{- range list "S3_ENDPOINT" "S3_BUCKET" "S3_VERIFY_TLS" }}
             - name: {{ . }}
               valueFrom:

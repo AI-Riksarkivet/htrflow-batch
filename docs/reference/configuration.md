@@ -156,7 +156,7 @@ Each key is an environment variable of the container.
 | `HTRFLOW_SESSION_KEY_FILE` | the chart, fixed: `/secrets/session/key`, the `key` of the `results.sessionSecret` Secret | `/secrets/session/key` | — | the file holding the key that seals every login session; whoever reads it can forge a session — cluster |
 | `HTRFLOW_SESSION_HOURS` | the chart: `results.sessionHours` | `8.0` | — | no secret — nobody |
 | `HTRFLOW_KEY_DERIVATION` | the chart: `results.keyDerivation` | `hcp` | — | how a login's password becomes S3 keys; a wrong value only makes every login fail — nobody |
-| `HTRFLOW_TRUSTED_HOPS` | the chart, fixed: 2 with `web.ingress.enabled`, else 1 | `1` | — | no secret — nobody |
+| `HTRFLOW_TRUSTED_HOPS` | the chart, fixed: 2 with `web.ingress.enabled` or `network.web.ingressFrom`, else 1 | `1` | — | no secret — nobody |
 
 ## converter — a campaigns repo
 
