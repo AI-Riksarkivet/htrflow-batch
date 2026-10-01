@@ -1387,9 +1387,9 @@ class ConverterConfig(BaseModel):
     def _check_results_url(cls, v: str) -> str:
         if why := _unopenable(v) if _http_url(v) else "it is not an http(s) URL":
             raise ValueError(
-                "must be the URL browsers read the results bucket at, the "
-                f'chart\'s resultsUrl (got "{_shown_url(v)}": {why}) — '
-                "write the whole URL, e.g. https://results.example.org/htr-results"
+                "must be the URL browsers read results at, the chart's "
+                f'resultsUrl (got "{_shown_url(v)}": {why}) — write the whole '
+                "URL, e.g. https://htr.example.org/results"
             )
         return v
 
