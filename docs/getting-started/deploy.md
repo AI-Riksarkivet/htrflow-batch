@@ -215,8 +215,10 @@ The controller must see the browser's own address (its Service with
 matches the wrong one.
 
 The login limits failed attempts per client address, reading the address
-from `X-Forwarded-For`. The chart counts the hops it expects: the web front,
-plus the controller in ingress mode. So the controller must put the address
+from `X-Forwarded-For`. The chart counts the hops it expects: two (the
+controller and the web front) when the web front's Service is `ClusterIP` and
+either `web.ingress.enabled` or `network.web.ingressFrom` is set, else one
+(the web front alone). So the controller must put the address
 it saw into that header, and must not believe one the browser sent. For an
 ingress-nginx controller that nothing sits in front of, leave
 `use-forwarded-headers` off (or turn `compute-full-forwarded-for` on), so the

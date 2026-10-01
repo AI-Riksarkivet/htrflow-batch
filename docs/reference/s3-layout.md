@@ -67,7 +67,7 @@ check status past a Job's `ttlSecondsAfterFinished` is listing
 has been reaped, from the campaign's ConfigMap and the status ConfigMap
 beside it
 ([The record a campaign leaves](../how-it-works/campaigns.md#the-record-a-campaign-leaves)),
-but per-volume detail past the TTL comes from the bucket.
+but per-volume detail past the TTL is read through the results proxy.
 
 A retry that is about to redo pages which already have files deletes the
 previous `manifest.json` first, then `iiif.json`, and only then those pages'

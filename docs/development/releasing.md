@@ -271,7 +271,10 @@ The workflow itself runs in three steps:
    the release's version-bump commit (step 1 of
    [The GitHub release](#the-github-release)), which a tag, unlike a SHA,
    could later move off. Then `htrflow-campaigns init --force
-   examples/campaigns` regenerates the example repository from both.
+   examples/campaigns` regenerates the example repository from both. The
+   templates' policy render passes values only the release's own chart
+   accepts (a test renders it against this checkout's chart), so
+   `CONVERTER_REF` must move in that same commit, never later.
 
 ### Signing, SBOM and provenance
 

@@ -171,7 +171,8 @@ Its detail rebuilds the volume rows from `volumes.txt`: a volume named in
 the record's `failedVolumes` is `failed` with that sentence, and every
 other volume takes the campaign's ending. When the record counts more
 failures than it names, those others read `unknown` rather than `done`.
-Their links and progress still come from the bucket.
+Their links still point under the results URL, and their progress is still
+read through the results proxy.
 
 ## What a campaign card shows
 
