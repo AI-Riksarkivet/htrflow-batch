@@ -375,6 +375,48 @@ def test_ingress_mode_admits_the_controller_not_address_ranges():
     assert rule["ports"] == [{"port": 8081}]
 
 
+def install_notes(sets: tuple[str, ...]) -> str:
+    """What `helm install` prints after an install: NOTES.txt, rendered
+    client-side (no cluster)."""
+    cmd = ["helm", "install", "htr", str(CHART), "-n", NAMESPACE, "--dry-run=client"]
+    cmd += ["-f", str(CHART / REQUIRED_VALUES)]
+    for setting in sets:
+        cmd += ["--set", setting]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    return result.stdout.split("NOTES:\n", 1)[1]
+
+
+@pytest.mark.parametrize(
+    "sets,says",
+    [
+        (DEFAULT_SETS, "Service htrflow-web on NodePort 30800"),
+        (
+            REQUIRED_SETS + (POLICIES_OFF,) + INGRESS,
+            "Ingress at https://htr.example.org/",
+        ),
+        (
+            REQUIRED_SETS + (POLICIES_OFF, "web.service.type=ClusterIP") + INGRESS[-1:],
+            "ClusterIP Service htrflow-web:8081, behind an ingress of your own",
+        ),
+    ],
+    ids=["nodeport", "ingress", "operators-own-ingress"],
+)
+def test_the_install_notes_say_how_the_web_front_is_reached(
+    sets: tuple[str, ...], says: str
+):
+    notes = install_notes(sets)
+    assert says in notes
+    assert ("NodePort" in notes) is ("NodePort" in says)
+
+
+def test_the_install_notes_name_the_s3_secret_without_network_policies():
+    """The campaign Jobs and the results proxy read it whether or not
+    NetworkPolicies are rendered."""
+    notes = install_notes(DEFAULT_SETS + ("network.enabled=false",))
+    assert "S3 Secret htr-batch-s3" in notes
+
+
 def test_ingress_from_refuses_an_address_range():
     """network.web.ingressFrom is selectors on the controller's own pods,
     never an address range: the ingressCidrs guards are skipped whenever
