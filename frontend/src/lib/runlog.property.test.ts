@@ -35,12 +35,16 @@ const terminal = fc.oneof(
     })),
   fc
     .tuple(
-      fc.constantFrom("permanent" as const, "transient" as const),
+      fc.constantFrom(
+        ["permanent", "", "failed"] as const,
+        ["transient", "", "retrying"] as const,
+        ["transient", " on the last attempt", "failed"] as const,
+      ),
       fc.constantFrom("setup", "load", "stream", "verify", "publish"),
     )
-    .map(([kind, stage]) => ({
-      text: `2026-01-02 03:04:05,678 ERROR ${kind} failure in ${stage}: boom`,
-      outcome: kind,
+    .map(([[kind, last, outcome], stage]) => ({
+      text: `2026-01-02 03:04:05,678 ERROR ${kind} failure in ${stage}${last}: boom`,
+      outcome,
     })),
 );
 
@@ -127,7 +131,7 @@ describe("logOutcome", () => {
   test("never throws, whatever the text", () => {
     fc.assert(
       fc.property(fc.string({ unit: "binary" }), (text) => {
-        expect([null, "complete", "permanent", "transient"]).toContain(
+        expect([null, "complete", "failed", "retrying"]).toContain(
           logOutcome(text),
         );
       }),

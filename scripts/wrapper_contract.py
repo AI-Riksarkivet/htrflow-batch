@@ -182,7 +182,7 @@ def _verify_fails(
         try:
             wrapper._verify(_Uploaded(uploaded), pages, stats, state)
         except RuntimeError as e:
-            wrapper._transient(env, state, threading.Event(), e)
+            wrapper._transient(env, state, threading.Event(), e, last_attempt=False)
         else:
             raise SystemExit("verify passed where the fixture needs it to fail")
 

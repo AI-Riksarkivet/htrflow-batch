@@ -99,7 +99,7 @@
       }
       outcome = logOutcome(text);
       // A transient failure ends only the attempt: the retry is followed.
-      if (live && (outcome === "complete" || outcome === "permanent")) {
+      if (live && (outcome === "complete" || outcome === "failed")) {
         live = false;
       }
       return true;
@@ -230,14 +230,14 @@
         <span
           class="live-badge"
           class:finished={!live && outcome === "complete"}
-          class:failed={!live && outcome === "permanent"}
-          class:retrying={live && outcome === "transient"}
+          class:failed={!live && outcome === "failed"}
+          class:retrying={live && outcome === "retrying"}
           class:stopped={!live &&
             outcome !== "complete" &&
-            outcome !== "permanent"}
+            outcome !== "failed"}
           role="status"
         >
-          {#if live && outcome === "transient"}
+          {#if live && outcome === "retrying"}
             <span class="pulse" aria-hidden="true"></span>attempt failed · retry
             pending
           {:else if live}
@@ -249,7 +249,7 @@
             {:else}
               · waiting for first upload
             {/if}
-          {:else if outcome === "complete" || outcome === "permanent"}
+          {:else if outcome === "complete" || outcome === "failed"}
             {outcome === "complete" ? "finished" : "failed"}
             {#if updatedAt !== null}
               · <time datetime={updatedAt} title={updatedAt}

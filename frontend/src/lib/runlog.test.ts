@@ -164,12 +164,21 @@ describe("logOutcome", () => {
       logOutcome(
         "... \n2026-08-26 07:15:33,903 ERROR transient failure in stream: boom\n",
       ),
-    ).toBe("transient");
+    ).toBe("retrying");
     expect(
       logOutcome(
         "2026-08-26 07:15:33,903 ERROR permanent failure in setup: bad manifest\n",
       ),
-    ).toBe("permanent");
+    ).toBe("failed");
+  });
+
+  test("a transient failure on the last attempt ends the run: no retry follows", () => {
+    expect(
+      logOutcome(
+        "2026-08-26 07:15:33,903 ERROR transient failure in verify on the last " +
+          "attempt: verify failed — no retry follows: this was the index's last attempt\n",
+      ),
+    ).toBe("failed");
   });
 
   // B63 Task 20G: the wrapper appends a plain-language sentence after the
@@ -182,14 +191,14 @@ describe("logOutcome", () => {
           "is not JSON — a retry changes nothing — fix the campaign or " +
           "pipeline file\n",
       ),
-    ).toBe("permanent");
+    ).toBe("failed");
     expect(
       logOutcome(
         "2026-08-26 07:15:33,903 ERROR transient failure in verify: verify " +
           "failed: 1 missing, 0 failed missing=['0002'] failed=[] — some " +
           "pages produced no result; the retry redoes only those\n",
       ),
-    ).toBe("transient");
+    ).toBe("retrying");
   });
 
   test("an in-flight log has no outcome", () => {
@@ -226,7 +235,7 @@ describe("logOutcome", () => {
       { length: 150 },
       (_, i) => `  File "x.py", line ${i}, in f`,
     ).join("\n");
-    expect(logOutcome(marker + traceback)).toBe("permanent");
+    expect(logOutcome(marker + traceback)).toBe("failed");
   });
 });
 

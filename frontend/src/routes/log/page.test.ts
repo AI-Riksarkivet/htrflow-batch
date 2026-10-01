@@ -195,6 +195,23 @@ describe("/log live mode", () => {
     expect(fetchMock).toHaveBeenCalledTimes(calls);
   });
 
+  test("a transient failure on the last attempt is failed, and stops", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          "2026-09-08 09:00:00,000 ERROR transient failure in verify on the " +
+            "last attempt: boom — no retry follows: this was the index's last attempt\n",
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    render(LogPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByRole("status")).toHaveTextContent(/^failed ·/);
+    const calls = fetchMock.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(LIVE_MS * 5);
+    expect(fetchMock).toHaveBeenCalledTimes(calls);
+  });
+
   test("a non-http log URL is refused before any fetch", async () => {
     window.history.replaceState(null, "", "/log?log=javascript:alert(1)");
     const fetchMock = fetch404();
