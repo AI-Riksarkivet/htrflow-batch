@@ -294,6 +294,9 @@ def _main(
     # W10: set on every failure path so queued downloads stop short instead
     # of holding the interpreter (executor workers are joined at exit).
     stop = threading.Event()
+    #: Whether a failure here is the index's last: read off the config once
+    #: it parses (a config that does not parse is a permanent failure).
+    last_attempt = False
     try:
         # `config` is a stage of its own, not the first half of `setup`: a bad
         # or missing env is a deployment fault (converter.yaml, the chart
@@ -302,6 +305,7 @@ def _main(
         # campaign page key on this field, so the distinction has to be here.
         state.stage = "config"
         cfg = Config.from_env(env)
+        last_attempt = cfg.last_attempt
         state.stage = "setup"
         if not cfg.s3_verify_tls:
             log.warning(
@@ -367,7 +371,7 @@ def _main(
         # read-only cache raises. Catching OSError first classifies it the
         # same way on either line (this is also driver.build_pipeline's "an
         # OSError from model construction stays transient" contract).
-        return _transient(env, state, stop, e)
+        return _transient(env, state, stop, e, last_attempt)
     except (ConfigError, ManifestError, SetupError, ValueError) as e:
         stop.set()
         stage = state.stage
@@ -375,7 +379,7 @@ def _main(
         terminate(env, {"stage": stage, "permanent": True, "error": str(e)})
         return EXIT_PERMANENT
     except Exception as e:
-        return _transient(env, state, stop, e)
+        return _transient(env, state, stop, e, last_attempt)
 
 
 def _advice(permanent: bool, error: str) -> str:
@@ -395,12 +399,31 @@ def _advice(permanent: bool, error: str) -> str:
 
 
 def _transient(
-    env: Mapping[str, str], state: RunState, stop: threading.Event, e: BaseException
+    env: Mapping[str, str],
+    state: RunState,
+    stop: threading.Event,
+    e: BaseException,
+    last_attempt: bool,
 ) -> int:
-    """Retryable: stop the queued downloads (W10), leave the evidence, exit 1."""
+    """Retryable: stop the queued downloads (W10), leave the evidence, exit 1.
+    On the index's last attempt nothing retries it, and the line says so:
+    the run viewer reads `transient failure in <stage> on the last attempt:`
+    as a failed run, a bare `transient failure in <stage>:` as one whose
+    retry is coming (frontend runlog.ts)."""
     stop.set()
-    advice, trace = _advice(False, str(e)), traceback.format_exc()
-    log.error("transient failure in %s: %s — %s\n%s", state.stage, e, advice, trace)
+    trace = traceback.format_exc()
+    if last_attempt:
+        advice = "no retry follows: this was the index's last attempt"
+        log.error(
+            "transient failure in %s on the last attempt: %s — %s\n%s",
+            state.stage,
+            e,
+            advice,
+            trace,
+        )
+    else:
+        advice = _advice(False, str(e))
+        log.error("transient failure in %s: %s — %s\n%s", state.stage, e, advice, trace)
     terminate(env, {"stage": state.stage, "permanent": False, "error": str(e)})
     return EXIT_TRANSIENT
 

@@ -105,19 +105,20 @@ export function parseRunLog(text: string): ParsedLog {
 }
 
 // The wrapper's last lines on each exit path (main.py): success logs
-// "[<volume>] COMPLETE <n> pages ...", failures log "<kind> failure in <stage>:".
+// "[<volume>] COMPLETE <n> pages ...", failures log "<kind> failure in
+// <stage>:", and a transient one on the index's last attempt "transient
+// failure in <stage> on the last attempt:".
 const OUTCOME_RE =
-  /\] COMPLETE \d+ pages|(permanent|transient) failure in \w+:/g;
+  /\] COMPLETE \d+ pages|(permanent|transient) failure in \w+( on the last attempt)?:/g;
 
-export type RunOutcome = "complete" | "permanent" | "transient";
+export type RunOutcome = "complete" | "failed" | "retrying";
 
 /**
  * How the attempt a shipped run log belongs to ended, or `null` while it
- * runs. `complete` and `permanent` end the volume's run. `transient` ends
- * only the attempt: the Job retries the index, and the retry ships its own
- * log to the same key. Only the tail is inspected, and its last marker
- * counts: the marker is always among the last lines, and live logs can be
- * large.
+ * runs. `complete` and `failed` end the volume's run. `retrying` ends only
+ * the attempt: the Job retries the index, and the retry ships its own log
+ * to the same key. Only the tail is inspected, and its last marker counts:
+ * the marker is always among the last lines, and live logs can be large.
  */
 export function logOutcome(text: string): RunOutcome | null {
   // The failure line is followed by the traceback(s) — chained torch/htrflow
@@ -125,7 +126,10 @@ export function logOutcome(text: string): RunOutcome | null {
   const tail = text.split("\n").slice(-500).join("\n");
   const last = [...tail.matchAll(OUTCOME_RE)].at(-1);
   if (last === undefined) return null;
-  return (last[1] as "permanent" | "transient" | undefined) ?? "complete";
+  if (last[1] === undefined) return "complete";
+  return last[1] === "transient" && last[2] === undefined
+    ? "retrying"
+    : "failed";
 }
 
 /**
