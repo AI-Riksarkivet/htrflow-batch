@@ -63,9 +63,9 @@ Renders the `htrflow-web` Deployment and Service, and its ServiceAccount
 with a namespaced Role: `get`/`list` on `jobs` and `pods`, and
 `get`/`list`/`create`/`patch` on `configmaps` for the one write it makes,
 each campaign's status record. No `watch`, no `delete`, no write to a Job or
-Pod. It is the one pod here that keeps its ServiceAccount token, and it
-also reads the results bucket for progress, so its NetworkPolicy has an S3
-egress rule. Always rendered. What it serves is in
+Pod. It is the one pod here that keeps its ServiceAccount token. It reads
+progress through the results proxy, never the bucket, so its NetworkPolicy
+lets it out to DNS, the API server and the proxy only. Always rendered. What it serves is in
 [Web front & read API](web.md).
 
 | Key | Default | Description |
@@ -73,7 +73,7 @@ egress rule. Always rendered. What it serves is in
 | `web.image` | `docker.io/riksarkivet/htrflow-web@sha256:…` | **Must be digest-pinned** unless `security.allowTagImages`. Pin a manifest-list digest, so it resolves on any architecture ([Releasing](../development/releasing.md)) |
 | `web.nodePort` | `30800` | NodePort; the container listens on 8081. Answered only on the node running the pod (`externalTrafficPolicy: Local`). Unused with `web.service.type: ClusterIP` |
 | `web.service.type` | `NodePort` | `NodePort` is the browser's direct way in. `ClusterIP` is for an ingress controller in front (`web.ingress.*`): no node port and no `externalTrafficPolicy`, since the pod then sees only the controller's address |
-| `web.ingress.enabled` | `false` | Renders an Ingress for the web front. Refused unless `web.service.type` is `ClusterIP` and `web.ingress.host` and `network.web.ingressFrom` are set. The Ingress carries no authentication, and the `network.web.ingressCidrs` guards do not apply in this mode: set the controller's allow-list (see [Deploy → Web front access](../getting-started/deploy.md#web-front-access)) |
+| `web.ingress.enabled` | `false` | Renders an Ingress for the web front. Refused unless `web.service.type` is `ClusterIP` and `web.ingress.host` and `network.web.ingressFrom` are set. The Ingress itself adds no authentication (the login is the results proxy's), and the `network.web.ingressCidrs` guards do not apply in this mode: set the controller's allow-list (see [Deploy → Web front access](../getting-started/deploy.md#web-front-access)) |
 | `web.ingress.host` | `""` | The hostname the Ingress routes; required with `web.ingress.enabled` |
 | `web.ingress.className` | `""` | `ingressClassName`; `""` = the cluster's default IngressClass |
 | `web.ingress.tlsSecretName` | `""` | TLS Secret for `web.ingress.host`, terminated at the Ingress; `""` = no `tls` block |
@@ -155,8 +155,8 @@ Hugging Face Hub egress at all — only the warm-up pod does.
 | `network.enabled` | `true` | Render the policies |
 | `network.defaultDeny` | `true` | Namespace-wide default deny (ingress + egress) plus a DNS allow for every pod. Anything hand-applied in the namespace (including `charts/htrflow-devstack`'s pods, which that chart gives their own policies) needs its own policy |
 | `network.iiifCidrs` | `[]` | What campaign pods may reach besides DNS and S3, on 443/80: your IIIF origin(s). **Required**: there is no default, and an empty list is refused, since it would fetch nothing. Volumes declared with `images:` hosted elsewhere need that host here too; `0.0.0.0/0` allows any origin. Every range here, in `network.s3Cidrs` and in `apply.gitCidrs` loses the internal ranges inside it — cluster, node, API server, link-local, loopback and `network.privateCidrs` ([Security](../how-it-works/security.md)) |
-| `network.s3Cidrs` | `[]` | External S3 endpoint(s) for campaign pods and the web front (its progress reader), on `network.s3Ports` (default `[443]`); the warm-up has no S3 rule |
-| `network.s3InNamespace` | `true` | The bucket is the devstack's in-namespace RustFS: campaign pods and the web front may reach any `app: rustfs` pod on 9000. `false` drops that rule (any pod carrying the label would otherwise be a destination), and then an empty `network.s3Cidrs` is refused, since a campaign pod with no route to S3 fails every volume after its GPU time. `values-prod.yaml` sets `false` |
+| `network.s3Cidrs` | `[]` | External S3 endpoint(s) for campaign pods and the results proxy, on `network.s3Ports` (default `[443]`); the warm-up has no S3 rule |
+| `network.s3InNamespace` | `true` | The bucket is the devstack's in-namespace RustFS: campaign pods and the results proxy may reach any `app: rustfs` pod on 9000. `false` drops that rule (any pod carrying the label would otherwise be a destination), and then an empty `network.s3Cidrs` is refused, since a campaign pod with no route to S3 fails every volume after its GPU time. `values-prod.yaml` sets `false` |
 | `network.clusterCidrs` | `["10.42.0.0/16", "10.43.0.0/16"]` | Pod and service ranges that pods with *public* egress (the warm-up pod) must not reach. The default is a common pair of default pod and service ranges — set it to your cluster's. An empty list is refused. `values-prod.yaml` empties it, so a production install must name its own |
 | `network.privateCidrs` | `["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"]` | Private ranges carved out of every egress range that holds one, on top of the cluster, node, API server, link-local and loopback ranges: the three private blocks and carrier-grade NAT space, which some clouds and overlay networks use internally. A range named inside one stays reachable |
 | `network.nodeCidrs` | `[]` | Node addresses (same purpose); auto-detected with Helm `lookup` when empty — set for `helm template` or a kubeconfig without list-nodes permission |

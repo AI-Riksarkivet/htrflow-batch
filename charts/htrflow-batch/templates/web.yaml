@@ -1,12 +1,11 @@
-# The web front (D8/D19, B63 Task 17): one Deployment serving the campaign
-# browser at /, Universal Viewer at /uv.html and the read-only status API at
-# /api/v1/jobs[/…] over the Indexed Jobs a campaign renders to
-# (packages/web). Everything is computed live from the Kubernetes API —
-# there is no status document written anywhere any more.
+# The web front: one Deployment serving the campaign browser at /, Universal
+# Viewer at /uv.html and the status API at /api/v1/jobs[/…] over the Indexed
+# Jobs a campaign renders to (packages/web), and passing /results through to
+# the results proxy. Status is computed live from the Kubernetes API; the
+# only thing it writes is each campaign's status ConfigMap, the record kept
+# after the Job is reaped.
 # Open a volume directly with:
-#   http://<node>:{{ .Values.web.nodePort }}/uv.html#?manifest=<RESULTS_URL>/<pipeline>/<volume>/iiif.json
-# Until Task 17 a separate nginx image served the site and proxied /api/
-# here; that image, its ConfigMap and the proxy are gone.
+#   <web front>/uv.html#?manifest=<resultsUrl>/<namespace>/<pipeline>/<volume>/iiif.json
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -75,8 +74,8 @@ spec:
       serviceAccountName: htrflow-web
       # The one exception to this chart's "no SA token" pattern (the
       # batch/warm-up Jobs set this false): this pod IS a Kubernetes API
-      # client — it needs the token to authenticate get/list/watch calls to
-      # the apiserver. Everything else about it is Pod Security restricted.
+      # client — it needs the token to authenticate its get/list calls and
+      # status writes to the apiserver. Everything else about it is Pod Security restricted.
       automountServiceAccountToken: true
       securityContext:
         {{- include "htrflow-batch.restrictedPod" 1000 | nindent 8 }}
@@ -158,9 +157,10 @@ spec:
 ---
 # An ingress-nginx controller's own way in: a ClusterIP Service (above) is
 # not reachable from outside the cluster on its own, and this Ingress is
-# what the controller watches to route a host to it. No auth of its own --
-# the controller's allow-list (network.web.ingressFrom, this file's
-# NetworkPolicy) is the gate, same as the NodePort's ingressCidrs was.
+# what the controller watches to route a host to it. Who may reach the web
+# front is the controller's allow-list (network.web.ingressFrom, this file's
+# NetworkPolicy), as ingressCidrs is for the NodePort; what they may read is
+# the results proxy's login.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
