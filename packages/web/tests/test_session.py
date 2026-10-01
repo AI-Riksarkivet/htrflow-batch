@@ -144,6 +144,30 @@ def test_a_rotated_key_file_ends_every_session_sealed_under_the_old_one(tmp_path
     assert codec.open(new) is not None
 
 
+def _kubelet_volume(root, key: bytes, stamp: str) -> None:
+    """A Secret volume as the kubelet lays it out and updates it: the files
+    in a timestamped directory, `..data` a symlink to it, `key` a symlink
+    through `..data`; an update writes a new directory and renames a new
+    `..data` link over the old one."""
+    target = root / stamp
+    target.mkdir()
+    (target / "key").write_text(base64.b64encode(key).decode())
+    (root / "..data_tmp").symlink_to(stamp)
+    os.replace(root / "..data_tmp", root / "..data")
+    if not (root / "key").is_symlink():
+        (root / "key").symlink_to("..data/key")
+
+
+def test_a_kubelet_secret_update_ends_the_old_sessions(tmp_path):
+    _kubelet_volume(tmp_path, KEY, "..2026_10_01_09_00_00.1")
+    codec = KeyFileCodec(str(tmp_path / "key"), hours=8)
+    old = codec.seal("anna", "AK", "SK")
+    assert codec.open(old) is not None
+    _kubelet_volume(tmp_path, bytes(reversed(KEY)), "..2026_10_01_09_05_00.2")
+    assert codec.open(old) is None
+    assert codec.open(codec.seal("anna", "AK", "SK")) is not None
+
+
 def test_an_unchanged_key_file_is_not_read_again(tmp_path, monkeypatch):
     import htrflow_web.session as session_mod
 
