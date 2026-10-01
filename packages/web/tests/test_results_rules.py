@@ -13,7 +13,10 @@ NS = "htrflow-batch"
             "htrflow-batch/demo-v1/R%201/alto/1.xml",
             "htrflow-batch/demo-v1/R 1/alto/1.xml",
         ),
-        ("status/logs/demo-v1/R1.txt", "status/logs/demo-v1/R1.txt"),
+        (
+            "htrflow-batch/status/logs/demo-v1/R1.txt",
+            "htrflow-batch/status/logs/demo-v1/R1.txt",
+        ),
         (
             "htrflow-batch/sources/demo-v1/R1/manifest.json",
             "htrflow-batch/sources/demo-v1/R1/manifest.json",
@@ -38,6 +41,9 @@ def test_result_keys_are_allowed(raw, key):
         "htrflow-batch/a%2fb",
         "htrflow-batch/a%5Cb",
         "htrflow-batch/a\\b",
+        # Run logs live under the namespace like everything else: the
+        # bucket-root tree is every release's, and no session's to read.
+        "status/logs/demo-v1/R1.txt",
         "status/logsX/a",
         "status/other/a",
         "htrflow-batch/%2e%2e/x",

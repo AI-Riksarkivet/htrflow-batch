@@ -28,8 +28,15 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
 
+from .cookie import browser_cookie, forwarded, session_token
 from .results_rules import FILE_HEADERS, allowed_key, served_type
-from .session import COOKIE, SessionCodec, SessionData, derive_keys
+from .session import (
+    KeyFileCodec,
+    SessionCodec,
+    SessionData,
+    SessionKeyUnavailable,
+    derive_keys,
+)
 
 _LOG = logging.getLogger("htrflow_web.results")
 
@@ -68,12 +75,18 @@ class ResultsConfig(BaseModel):
 
 
 class ClientCache:
-    """One S3 client per access key, least recently used first out."""
+    """One S3 client per access key, least recently used first out. Every
+    client comes from one boto3 Session: a Session holds the whole S3
+    service model (~12 MB), a client from a shared one well under 1 MB.
+    Clients are thread-safe; making one from the Session is not, so that
+    alone is done under the lock."""
 
     def __init__(self, cfg: ResultsConfig, maxsize: int = 256) -> None:
         self._cfg, self._max = cfg, maxsize
         self._clients: OrderedDict[tuple[str, str], object] = OrderedDict()
         self._lock = threading.Lock()
+        self._session = boto3.session.Session()
+        self._session_lock = threading.Lock()
         if not cfg.s3_verify_tls:
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -81,25 +94,25 @@ class ClientCache:
         return len(self._clients)
 
     def build(self, access_key: str, secret_key: str):
-        """A new, uncached client (own boto3 session: the default one is not
-        thread-safe)."""
-        return boto3.session.Session().client(
-            "s3",
-            endpoint_url=self._cfg.s3_endpoint or None,
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
-            region_name="us-east-1",
-            verify=None if self._cfg.s3_verify_tls else False,
-            config=BotoConfig(
-                signature_version="s3v4",
-                s3={"addressing_style": "path"},
-                request_checksum_calculation="when_required",
-                response_checksum_validation="when_required",
-                connect_timeout=5,
-                read_timeout=30,
-                retries={"max_attempts": 2, "mode": "standard"},
-            ),
-        )
+        """A new, uncached client."""
+        with self._session_lock:
+            return self._session.client(
+                "s3",
+                endpoint_url=self._cfg.s3_endpoint or None,
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+                region_name="us-east-1",
+                verify=None if self._cfg.s3_verify_tls else False,
+                config=BotoConfig(
+                    signature_version="s3v4",
+                    s3={"addressing_style": "path"},
+                    request_checksum_calculation="when_required",
+                    response_checksum_validation="when_required",
+                    connect_timeout=5,
+                    read_timeout=30,
+                    retries={"max_attempts": 2, "mode": "standard"},
+                ),
+            )
 
     def put(self, access_key: str, secret_key: str, client) -> None:
         with self._lock:
@@ -120,8 +133,11 @@ class ClientCache:
 
 
 class LoginLimiter:
-    """Failed logins per key (address or user name) in a sliding window.
-    Tracks at most ``max_keys`` keys, oldest evicted first."""
+    """Login attempts per key (address or user name) in a sliding window.
+    An attempt counts the moment it starts, so attempts in flight at once
+    count too; one that ends in a login clears its key, one the store could
+    not judge is released. Tracks at most ``max_keys`` keys, oldest
+    evicted first."""
 
     def __init__(
         self, max_failures=5, window=60.0, clock=time.monotonic, max_keys=10_000
@@ -146,20 +162,30 @@ class LoginLimiter:
             return None
         return q
 
-    def blocked(self, key: str) -> bool:
+    def begin(self, key: str) -> float | None:
+        """Count an attempt for ``key`` and return its stamp, or ``None``
+        (and count nothing) when the key has none left in the window."""
         with self._lock:
             q = self._recent(key)
-            return q is not None and len(q) >= self._max
-
-    def failed(self, key: str) -> None:
-        with self._lock:
-            q = self._recent(key)
+            if q is not None and len(q) >= self._max:
+                return None
             if q is None:
                 q = self._fails[key] = deque()
                 while len(self._fails) > self._max_keys:
                     self._fails.popitem(last=False)
             self._fails.move_to_end(key)
-            q.append(self._clock())
+            stamp = self._clock()
+            q.append(stamp)
+            return stamp
+
+    def release(self, key: str, stamp: float) -> None:
+        """Uncount an attempt that proved nothing about the password."""
+        with self._lock:
+            q = self._fails.get(key)
+            if q is not None and stamp in q:
+                q.remove(stamp)
+                if not q:
+                    del self._fails[key]
 
     def succeeded(self, key: str) -> None:
         with self._lock:
@@ -184,23 +210,18 @@ def _client_addr(request: Request, trusted_hops: int) -> str:
 
 def _same_origin(request: Request) -> bool:
     origin = request.headers.get("origin", "")
-    expected = f"{request.url.scheme}://{request.headers.get('host', '')}"
-    fwd_proto = request.headers.get("x-forwarded-proto")
-    fwd_host = request.headers.get("x-forwarded-host")
-    if fwd_proto and fwd_host:
-        expected = f"{fwd_proto}://{fwd_host}"
-    return bool(origin) and origin == expected
+    scheme, host = forwarded(request.headers, request.url.scheme)
+    return bool(origin) and origin == f"{scheme}://{host}"
 
 
 def _secure(request: Request) -> bool:
-    fwd_proto = request.headers.get("x-forwarded-proto")
-    if fwd_proto and request.headers.get("x-forwarded-host"):
-        return fwd_proto == "https"
-    return request.url.scheme == "https"
+    return forwarded(request.headers, request.url.scheme)[0] == "https"
 
 
-def session_of(request: Request, codec: SessionCodec) -> SessionData | None:
-    token = request.cookies.get(COOKIE)
+def session_of(
+    request: Request, codec: SessionCodec | KeyFileCodec
+) -> SessionData | None:
+    token = session_token(request)
     return codec.open(token) if token else None
 
 
@@ -217,13 +238,8 @@ def _fail(detail: str, status: int) -> JSONResponse:
 
 
 def _clear(response: Response, request: Request) -> None:
-    # set_cookie with Max-Age=0 rather than delete_cookie: the web package's
-    # read-only guard test bans every `.delete_*(` call in the source.
-    response.set_cookie(
-        COOKIE,
-        "",
-        max_age=0,
-        expires=0,
+    response.delete_cookie(
+        browser_cookie(request.headers, request.url.scheme),
         path="/",
         secure=_secure(request),
         httponly=True,
@@ -236,16 +252,24 @@ class Login(BaseModel):
     password: str = Field(min_length=1, max_length=1024)
 
 
+#: Logins that may wait on the store at once, from everyone together. Each
+#: holds a store client and a worker thread for up to the probe's timeout;
+#: past this a login is turned away at once rather than queued.
+MAX_PROBES = 4
+
+
 def create_results_app(
     cfg: ResultsConfig,
-    codec: SessionCodec,
+    codec: SessionCodec | KeyFileCodec,
     clients: ClientCache | None = None,
     limiter: LoginLimiter | None = None,
+    max_probes: int = MAX_PROBES,
 ) -> FastAPI:
     app = FastAPI()
     clients = clients or ClientCache(cfg)
     limiter = limiter or LoginLimiter()
     user_limiter = LoginLimiter(max_failures=10, window=300.0)
+    probes = threading.BoundedSemaphore(max_probes)
     app.state.cfg, app.state.codec, app.state.clients = cfg, codec, clients
 
     @app.get("/healthz")
@@ -259,7 +283,8 @@ def create_results_app(
                 {"detail": "cross-origin login refused"}, status_code=403
             )
         addr = _client_addr(request, cfg.trusted_hops)
-        if limiter.blocked(addr):
+        addr_stamp = limiter.begin(addr)
+        if addr_stamp is None:
             return JSONResponse(
                 {
                     "detail": "too many failed logins from this address: "
@@ -267,7 +292,9 @@ def create_results_app(
                 },
                 status_code=429,
             )
-        if user_limiter.blocked(body.username):
+        user_stamp = user_limiter.begin(body.username)
+        if user_stamp is None:
+            limiter.release(addr, addr_stamp)
             return JSONResponse(
                 {
                     "detail": "too many failed logins for this user: "
@@ -275,9 +302,23 @@ def create_results_app(
                 },
                 status_code=429,
             )
-        ak, sk = derive_keys(body.username, body.password, cfg.key_derivation)
-        client = clients.build(ak, sk)
+
+        def unjudged(response: JSONResponse) -> JSONResponse:
+            limiter.release(addr, addr_stamp)
+            user_limiter.release(body.username, user_stamp)
+            return response
+
+        if not probes.acquire(blocking=False):
+            return unjudged(
+                JSONResponse(
+                    {"detail": "too many logins at once: try again in a moment"},
+                    status_code=429,
+                    headers={"Retry-After": "1"},
+                )
+            )
         try:
+            ak, sk = derive_keys(body.username, body.password, cfg.key_derivation)
+            client = clients.build(ak, sk)
             got = client.get_object(
                 Bucket=cfg.s3_bucket, Key=f"{cfg.namespace}/", Range="bytes=0-0"
             )
@@ -287,8 +328,7 @@ def create_results_app(
         except ClientError as e:
             code = _code(e)
             if code in BAD_KEYS:
-                limiter.failed(addr)
-                user_limiter.failed(body.username)
+                # The attempt stays counted, for the address and the user.
                 return JSONResponse(
                     {"detail": "the store did not accept that user name or password"},
                     status_code=401,
@@ -299,26 +339,42 @@ def create_results_app(
                     code,
                     e.response.get("ResponseMetadata", {}).get("HTTPStatusCode"),
                 )
-                return JSONResponse(
-                    {"detail": "the result store answered without a reason"},
-                    status_code=502,
+                return unjudged(
+                    JSONResponse(
+                        {"detail": "the result store answered without a reason"},
+                        status_code=502,
+                    )
                 )
         except (ConnectTimeoutError, ReadTimeoutError):
-            return JSONResponse(
-                {"detail": "the result store timed out"}, status_code=504
+            return unjudged(
+                JSONResponse({"detail": "the result store timed out"}, status_code=504)
             )
         except BotoCoreError as e:
             _LOG.warning("login probe: %s", e)
-            return JSONResponse(
-                {"detail": "the result store could not be reached"}, status_code=502
+            return unjudged(
+                JSONResponse(
+                    {"detail": "the result store could not be reached"},
+                    status_code=502,
+                )
+            )
+        finally:
+            probes.release()
+        try:
+            sealed = codec.seal(body.username, ak, sk)
+        except SessionKeyUnavailable:
+            return unjudged(
+                JSONResponse(
+                    {"detail": "logins are unavailable: the session key is unreadable"},
+                    status_code=503,
+                )
             )
         clients.put(ak, sk, client)
         limiter.succeeded(addr)
         user_limiter.succeeded(body.username)
         response = Response(status_code=204)
         response.set_cookie(
-            COOKIE,
-            codec.seal(body.username, ak, sk),
+            browser_cookie(request.headers, request.url.scheme),
+            sealed,
             max_age=int(cfg.session_hours * 3600),
             path="/",
             secure=_secure(request),

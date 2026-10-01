@@ -26,10 +26,10 @@ s3_secret: htr-batch-s3
 data_pvc: htr-test-data
 runtime_class: nvidia
 
-# Must be a browser-reachable URL base that serves the results bucket
-# (htrflow-batch's `resultsUrl` chart value, same value). Swap for a
-# real one before applying anywhere but the PoC.
-results_url: "http://localhost:30900/htr-results"
+# = the chart's `resultsUrl`: `<web front>/results`, where browsers read
+# results through the results proxy. Written into every manifest a
+# campaign publishes, so set the real one before the first campaign.
+results_url: "http://localhost:30800/results"
 
 # How a campaign's bare reference code (`- R0001203`) becomes a IIIF
 # manifest URL: {ref} is the code. Unset, only `manifest:` and `images:`

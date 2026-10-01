@@ -151,7 +151,7 @@ matches `KEY|TOKEN|PASSWORD|SECRET_ACCESS`.
 | `HTRFLOW_BASE_REVISION` | `unknown` | Provenance only — set by the image itself (ENV next to its OCI label), stamped into every ALTO |
 | `INDEX_FAILURE_COUNT` | `0` | How many times this index has failed before this pod: the Job controller's `batch.kubernetes.io/job-index-failure-count` pod annotation, through the downward API. Empty (annotation absent) reads as unset |
 | `BACKOFF_LIMIT_PER_INDEX` | `-1` | The Job's `backoffLimitPerIndex`. When `INDEX_FAILURE_COUNT` has reached it this pod is the index's last attempt, and a page still deferred at verify is recorded as failed, with its reason, instead of missing. `-1` (or empty) = not told: no attempt is taken for the last |
-| `LOG_SHIP_SECONDS` | `15` | How often the run's own stdout/stderr is uploaded to `status/logs/<pipeline>/<volume>.txt` while it runs (`0` = final upload only) |
+| `LOG_SHIP_SECONDS` | `15` | How often the run's own stdout/stderr is uploaded to `<namespace>/status/logs/<pipeline>/<volume>.txt` while it runs (`0` = final upload only) |
 | `TERMINATION_LOG_PATH` | `/dev/termination-log` | Read by `main.py`, not `Config`: where the exit reason is written |
 | `HOME`, `TMPDIR`, `YOLO_CONFIG_DIR` | *(unset)* | The Job points them into the tmpfs workdir (`/work/home`, `/work/tmp`, `/work/ultralytics`) because the root filesystem is read-only, and its `sh -c` prologue creates them before exec'ing the wrapper |
 | `HF_HOME`, `HF_HUB_OFFLINE` | *(unset)* | Set by the Job (`/data/hf`, `1`): models come from the read-only cache, never from Hugging Face Hub |
@@ -327,7 +327,7 @@ volumes, the synthetic manifest id the wrapper published to `sources/`.
 
 ## Live run log
 
-`status/logs/<pipeline>/<volume>.txt` (bucket root) is the run's own
+`<namespace>/status/logs/<pipeline>/<volume>.txt` (under `S3_PREFIX`) is the run's own
 stdout/stderr, uploaded every `LOG_SHIP_SECONDS` while it changes and once
 more on exit, SIGTERM included, within a 90 s budget that fits the pod's
 120 s grace period. The buffer keeps the first 1 MiB and the last 2 MiB.

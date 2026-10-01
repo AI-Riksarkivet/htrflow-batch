@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from htrflow_web.sessions import Session, SessionChecker, SessionsUnavailable
+from htrflow_web.login_check import Session, SessionChecker, SessionsUnavailable
 
 
 def checker(handler, clock=lambda: 0.0):

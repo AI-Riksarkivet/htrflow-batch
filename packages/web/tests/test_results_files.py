@@ -5,10 +5,12 @@ from botocore.exceptions import ClientError, ReadTimeoutError
 from fastapi.testclient import TestClient
 from moto import mock_aws
 
+from htrflow_web.cookie import COOKIE
 from htrflow_web.results import ClientCache, ResultsConfig, create_results_app
-from htrflow_web.session import COOKIE, SessionCodec
+from htrflow_web.session import SessionCodec
 
 KEY = bytes(range(32))
+SECURE = f"__Host-{COOKIE}"
 
 
 @pytest.fixture
@@ -31,7 +33,7 @@ def setup(monkeypatch):
         )
         s3.put_object(
             Bucket="htr-results",
-            Key="status/logs/demo-v1/R1.txt",
+            Key="htr-test/status/logs/demo-v1/R1.txt",
             Body=b"log line\n",
             ContentType="text/plain; charset=utf-8",
         )
@@ -44,7 +46,7 @@ def setup(monkeypatch):
         )
         codec = SessionCodec(KEY, hours=8)
         c = TestClient(create_results_app(cfg, codec), base_url="https://testserver")
-        c.cookies.set(COOKIE, codec.seal("testing", "testing", "testing"))
+        c.cookies.set(SECURE, codec.seal("testing", "testing", "testing"))
         yield c, codec
 
 
@@ -69,7 +71,7 @@ def test_a_result_file_streams_with_its_headers(setup):
 
 def test_head_has_the_headers_and_no_body(setup):
     c, _ = setup
-    r = c.head("/results/status/logs/demo-v1/R1.txt")
+    r = c.head("/results/htr-test/status/logs/demo-v1/R1.txt")
     assert r.status_code == 200
     assert r.content == b""
     assert r.headers["content-length"] == "9"
@@ -148,7 +150,7 @@ def test_store_answers_map_to_statuses(setup, monkeypatch, code, status):
     r = c.get("/results/htr-test/demo-v1/R1/iiif.json")
     assert r.status_code == status
     if status == 401:
-        assert COOKIE in r.headers["set-cookie"]  # cleared
+        assert r.headers["set-cookie"].startswith(f'{SECURE}=""')  # cleared
 
 
 def test_a_head_answered_with_a_bare_403_is_403(setup, monkeypatch):

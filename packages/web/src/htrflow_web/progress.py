@@ -23,16 +23,18 @@ import json
 import math
 import threading
 import time
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Callable
 from urllib.parse import quote
 
 import httpx
 
-from .sessions import no_cookie_jar
+from .cookie import internal_cookie, no_cookie_jar
+from .projection import FINISHED_STATES, OVER_STATES, Tally
 
 if TYPE_CHECKING:
-    from .sessions import Session
+    from .login_check import Session
 
 #: A running volume rewrites its file after every page, so a few seconds of
 #: staleness is at most a page or two; a finished one never changes again.
@@ -41,17 +43,16 @@ DONE_TTL = 3600.0
 
 #: Bounded so a long-lived process browsing a large archive cannot grow this
 #: without limit: an entry is under 1 KB, so this is ~20 MB of the pod's
-#: memory. It is also the largest campaign whose page totals can be every
-#: volume's at once (3076) -- past it the oldest answers go first, and the
-#: page says how many volumes its totals cover.
+#: memory. Past it the oldest answers go first. A campaign's totals do not
+#: depend on its answers staying here (each caller's ``Tally`` keeps them),
+#: so this holds what every reader has on screen and what is running.
 MAX_ENTRIES = 20_000
 
-#: States whose file will not change again: the volume is over, or its
-#: campaign's Job is gone and nothing is left to write one (`unknown`).
-_FINISHED = ("done", "unknown")
-#: ...and so whose answer is kept for the hour, an absent file included: a
-#: failed index is final too, and its pod wrote what it ever will.
-_OVER = (*_FINISHED, "failed")
+#: Callers' tallies kept, one per (caller, campaign's set of volumes),
+#: least recently used first out. A tally is a few hundred bytes plus its
+#: five lowest pages, so this is a few MB at most.
+MAX_TALLIES = 4096
+
 
 #: The two files a volume's progress is read from, in the order they are
 #: asked for (``ProgressReader._read``).
@@ -261,14 +262,14 @@ def _encoded(response: httpx.Response) -> bool:
 
 class _NoAnswer(Exception):
     """The bucket did not answer: unreachable, timed out, busy, or a 5xx --
-    or the proxy refused the caller (401, 403). A refusal is not an answer
-    about the volume either, so it is asked again soon, but a 403 is kept
-    as a fact: the caller's store account may not read this volume, and the
-    card says so in place of its progress."""
+    or the proxy did not take the caller's session (401). Asked again soon."""
 
-    def __init__(self, status: int | None = None) -> None:
-        super().__init__(status)
-        self.forbidden = status == 403
+
+class _Forbidden(Exception):
+    """The proxy's 403: the store's answer that this caller's account may
+    not read this volume. An answer like any other -- counted, and kept as
+    long as one about the volume's state would be -- and the card says so
+    in place of the volume's progress."""
 
 
 class SessionProgress:
@@ -302,6 +303,12 @@ class SessionProgress:
             return False
         return self._r._forbidden(self._user, results_base, volume_id)
 
+    def tally(self, results_base: str, key: str) -> Tally:
+        """This caller's sums over one campaign's volumes that are over
+        (``projection.Tally``), kept as long as an answer about a finished
+        volume is."""
+        return self._r._tally(self._user, results_base, key)
+
 
 class ProgressReader:
     """One HTTP client and one small cache for the life of the app."""
@@ -311,6 +318,10 @@ class ProgressReader:
         #: (user, url) -> (expiry, progress, whether the proxy answered at
         #: all, whether it refused this user with a 403)
         self._cache: dict[tuple[str, str], tuple[float, dict | None, bool, bool]] = {}
+        #: (user, results base, projection.tally_key) -> (expiry, tally)
+        self._tallies: OrderedDict[tuple[str, str, str], tuple[float, Tally]] = (
+            OrderedDict()
+        )
         #: Held around every touch of the cache, never across a GET. The
         #: reader is shared by every thread of the pool, and once the cache
         #: is full -- the normal state at scale -- two requests evicting
@@ -321,6 +332,21 @@ class ProgressReader:
         if session is None:
             return SessionProgress(self, "", None)
         return SessionProgress(self, session.user, session.cookie)
+
+    def _tally(self, user: str, results_base: str, key: str) -> Tally:
+        now = time.monotonic()
+        k = (user, results_base, key)
+        with self._lock:
+            hit = self._tallies.get(k)
+            if hit is not None and hit[0] > now:
+                self._tallies.move_to_end(k)
+                return hit[1]
+            tally = Tally()
+            self._tallies[k] = (now + DONE_TTL, tally)
+            self._tallies.move_to_end(k)
+            while len(self._tallies) > MAX_TALLIES:
+                self._tallies.popitem(last=False)
+            return tally
 
     def _forbidden(self, user: str, results_base: str, volume_id: str) -> bool:
         base = f"{results_base}/{quote(volume_id, safe='')}"
@@ -349,13 +375,13 @@ class ProgressReader:
         # normalised by the client into a request for another key
         # (2026-09-14 audit).
         base = f"{results_base}/{quote(volume_id, safe='')}"
-        known, found = self._cached(
+        known, found, forbidden = self._cached(
             user, cookie, f"{base}/progress.json", _from_progress, state, now, network
         )
-        if known and found is None and state in _FINISHED:
+        if known and found is None and not forbidden and state in FINISHED_STATES:
             # Written by a wrapper that predates progress.json. One GET more,
             # cached for the hour: a finished volume is finished.
-            known, found = self._cached(
+            known, found, _ = self._cached(
                 user,
                 cookie,
                 f"{base}/manifest.json",
@@ -375,25 +401,26 @@ class ProgressReader:
         state: str,
         now: float,
         network: bool,
-    ) -> tuple[bool, dict | None]:
+    ) -> tuple[bool, dict | None, bool]:
+        """``(answered, progress, forbidden)`` for one file."""
         monotonic_now = time.monotonic()
         with self._lock:
             hit = self._cache.get((user, url))
         if hit is not None and hit[0] > monotonic_now:
-            return hit[2], _aged(hit[1], now)
+            return hit[2], _aged(hit[1], now), hit[3]
         if not network:
-            return False, None
+            return False, None, False
         answered, value, forbidden = self._get(cookie, url, parse, now)
         # Only an answer about a volume that is over is kept for the hour --
-        # an absent file included, since its pod wrote what it ever will. A
-        # bucket that did not answer is asked again soon.
-        ttl = DONE_TTL if state in _OVER and answered else RUNNING_TTL
+        # an absent file and a 403 included, since its pod wrote what it
+        # ever will. A bucket that did not answer is asked again soon.
+        ttl = DONE_TTL if state in OVER_STATES and answered else RUNNING_TTL
         with self._lock:
             self._cache.pop((user, url), None)
             if len(self._cache) >= MAX_ENTRIES:
                 del self._cache[next(iter(self._cache))]  # the oldest answer
             self._cache[(user, url)] = (monotonic_now + ttl, value, answered, forbidden)
-        return answered, value
+        return answered, value, forbidden
 
     def _get(
         self,
@@ -402,13 +429,14 @@ class ProgressReader:
         parse: Callable[[dict, float], dict | None],
         now: float,
     ) -> tuple[bool, dict | None, bool]:
-        """``(answered, progress, forbidden)``: a 404 is an answer, a 5xx, a
-        refusal or a connection that failed is not; a 403 is also
-        ``forbidden``."""
+        """``(answered, progress, forbidden)``: a 404 and a 403 are answers,
+        a 5xx, a 401 or a connection that failed is not."""
         try:
             doc = self._body(cookie, url)
-        except _NoAnswer as e:
-            return False, None, e.forbidden
+        except _Forbidden:
+            return True, None, True
+        except _NoAnswer:
+            return False, None, False
         except Exception:
             return True, None, False  # not JSON at all: the bucket did answer
         return True, parse(doc, now) if isinstance(doc, dict) else None, False
@@ -431,17 +459,18 @@ class ProgressReader:
                 url,
                 headers={
                     "Accept-Encoding": "identity",
-                    **({"Cookie": f"htr_session={cookie}"} if cookie else {}),
+                    **(internal_cookie(cookie) if cookie else {}),
                 },
                 follow_redirects=False,
             ) as response:
+                if response.status_code == 403:
+                    raise _Forbidden
                 if response.status_code >= 500 or response.status_code in (
                     401,
-                    403,
                     408,
                     429,
                 ):
-                    raise _NoAnswer(response.status_code)
+                    raise _NoAnswer
                 if response.status_code != 200 or _encoded(response):
                     return None
                 body = bytearray()

@@ -1,7 +1,8 @@
 # Campaign browser
 
 SvelteKit 2 + Svelte 5 static SPA over the read API (`packages/web`,
-`GET /api/v1/jobs`). Three routes, no server:
+`GET /api/v1/jobs`). Four routes, no server, all but `/login` behind the
+results proxy's login:
 
 - `/` — every campaign (one row per Indexed Job) as a card: pipeline chip,
   warm-up chip, phase, counts, and its volume table (id, state, links),
@@ -11,12 +12,22 @@ SvelteKit 2 + Svelte 5 static SPA over the read API (`packages/web`,
 - `/log?log=<url>&manifest=<url>[&live=1]` — the run viewer: the wrapper's
   run log grouped by stage, plus a summary card (counts, median / p95 / max,
   slowest pages, failed pages, a per-page grid) from `manifest.json`. With
-  `live=1` it re-fetches on the wrapper's log-ship cadence and stops on the
-  terminal line, a finished manifest, or after `LIVE_MAX_FAILURES` misses.
+  `live=1` it re-fetches on the wrapper's log-ship cadence. It stops on
+  `COMPLETE` or a finished manifest (finished), on a permanent failure or a
+  transient one on the index's last attempt (failed), after
+  `LIVE_MAX_FAILURES` misses, or on a 401/403; after any other transient
+  failure it keeps polling for the retry.
 - `/alto?src=<url>` — the ALTO viewer: one page's ALTO XML as text in
   reading order, each line tinted by its `WC` confidence, with a raw-XML
   toggle. Reached from the run viewer's alto column; like `/log`, it reads
   only a URL under the results base.
+- `/login?next=<path>` — the login form: posts the user name and password to
+  the results proxy (`/results/_login`), which sets the session cookie, then
+  goes back to `next` (a path on this site, never another one;
+  `session.safeNext`). Any read that answers 401 sends the browser here
+  (`api.ts`'s `NotLoggedIn`, `session.goToLogin`). A refusal is worded by
+  `session.loginError`: a wrong password, a cross-origin refusal (403), the
+  limit the proxy names (429), or what did not answer (502/503/504).
 
 `bun run build` emits `dist/`, which `.docker/htrflow-web.dockerfile` copies
 into the read API's `/app/static` (over the Universal Viewer build, so `/` is
@@ -74,7 +85,7 @@ the page, so `script-src 'self'` already covers `/config.js` (no
 `connect-src` directive is in the meta tag). The server adds what the build
 cannot know: `packages/web` sends `frame-ancestors 'none'` on every response
 and, on the SPA's own pages, `connect-src 'self' <results base>/`, so the page
-may fetch only from the API and the results bucket. The browser enforces the
+may fetch only from the API and the results URL, both on its own origin. The browser enforces the
 header and the meta tag both, so the header only adds directives. `/uv.html`,
 which has no meta tag, gets a policy of its own from `packages/web`.
 
@@ -91,8 +102,9 @@ hidden; a list whose every row is unreadable throws like a wrong shape. One
 field is read on its own: `VolumeView.sourceUrl`, a line of a file people
 edit, becomes `null` when it is not an http(s) URL this browser can use
 (`httpUrlSchema.catch(null)`), so one bad line costs its volume a link, not
-the card. `ApiUnreachable` covers both a network error and a non-2xx status;
-the page shows one banner over the last good list. There is no staleness
+the card. `ApiUnreachable` covers a network error and every non-2xx status
+but 401 (that is `NotLoggedIn`), and keeps the service's own `detail`
+sentence; the page shows one banner over the last good list. There is no staleness
 check: every response is computed live.
 
 ```jsonc
@@ -135,7 +147,7 @@ check: every response is computed live.
       "altoPrefix": "https://…/vol3/alto/",
       "sourceUrl": "https://iiif.example.org/vol3/manifest", // null for `images:`,
       //                                                    // or one the page cannot use
-      "logUrl": "https://…/status/logs/demo-v1/vol3.txt", // absolute, always present
+      "logUrl": "https://…/results/<ns>/status/logs/demo-v1/vol3.txt", // absolute, always present
       "reason": { "stage": "setup", "permanent": true, "error": "…" },
       // the wrapper's own termination message, parsed; present only while a
       // pod for that index still exists

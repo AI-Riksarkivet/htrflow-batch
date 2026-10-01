@@ -17,7 +17,7 @@ has finished.
 
 ## A page's ALTO
 
-Every page's ALTO XML is public at
+Every page's ALTO XML is under the results URL, behind the login, at
 `<results-url>/<namespace>/<pipeline>/<volume>/alto/<page>.xml`. The
 run viewer (`/log`, a volume's **log** link) lists each page with two
 links in its **alto** column:
@@ -89,8 +89,11 @@ What you see is what the store lets your account read:
   for a log or ALTO file the store refuses.
 
 A login the proxy refuses says why: the store did not accept the user name
-or password; too many failed attempts; the user name or password is too
-long or malformed; or the store could not be reached.
+or password; the page is not on the site's own address (the proxy in front
+does not pass the browser's host on); too many failed attempts, per address
+(wait a minute) or per user (wait five minutes), or too many logins at once;
+the user name or password is too long or malformed; or what did not answer
+(the store, or the results service itself).
 
 Keep these in mind:
 

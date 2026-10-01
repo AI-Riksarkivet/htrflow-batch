@@ -642,7 +642,7 @@ def test_the_hook_job_init_writes_is_admitted(tmp_path: Path, template: str):
     policy = render_policy(
         tmp_path,
         template,
-        "resultsUrl=https://x/",
+        "resultsUrl=https://x/results",
         "network.enabled=false",
         "results.sessionSecret=htr-session",
         values="values-prod.yaml",
@@ -672,7 +672,7 @@ def test_the_production_allow_list_admits_the_release_and_nothing_else(
     policy = render_policy(
         tmp_path,
         "images-allowed",
-        "resultsUrl=https://x/",
+        "resultsUrl=https://x/results",
         "network.enabled=false",
         "results.sessionSecret=htr-session",
         values="values-prod.yaml",

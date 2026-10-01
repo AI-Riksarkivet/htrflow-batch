@@ -18,15 +18,15 @@
 # kubeconfig.
 
 s3:
-  # Convention only — no template in this chart creates or reads this
-  # Secret. Batch/warm-up Jobs (rendered by the converter) and the read API
-  # (which never touches S3) both assume a Secret named `existingSecret`
-  # with a `credentials` key in AWS ini format plus `S3_BUCKET` (and
-  # `S3_ENDPOINT` unless real AWS) exists in the release namespace — created
-  # by hand, by your cloud provider's tooling, or by
-  # `charts/htrflow-devstack` (RustFS) for the PoC. The bucket's name is
-  # that Secret's `S3_BUCKET` key and nothing else: this chart has no value
-  # for it, since no template here would read one.
+  # No template in this chart creates this Secret: it is created by hand,
+  # by your cloud provider's tooling, or by `charts/htrflow-devstack`
+  # (RustFS). It lives in the release namespace with a `credentials` key in
+  # AWS ini format plus `S3_BUCKET` (and `S3_ENDPOINT` unless real AWS).
+  # Batch/warm-up Jobs (rendered by the converter) mount it; the results
+  # proxy reads `S3_ENDPOINT`, `S3_BUCKET` and `S3_VERIFY_TLS` from it, but
+  # never `credentials` (it reads with each login's own keys). The web
+  # front does not read it. The bucket's name is that Secret's `S3_BUCKET`
+  # key and nothing else: this chart has no value for it.
   existingSecret: htr-batch-s3
 
 # The Hugging Face token the warm-up Job reads (converter.yaml's
@@ -39,7 +39,7 @@ s3:
 hfToken:
   existingSecret: ""
 
-resultsUrl: ""      # browser-reachable URL base for published results (REQUIRED: every result URL is built from it)
+resultsUrl: ""      # https://<web front host>/results, where browsers read results through the proxy (REQUIRED; a value not ending in /results is refused)
 
 # Model cache: one PVC holding one directory per pipeline recipe
 # (`<pipeline-id>-<recipe sha256>`). A pipeline's warm-up Job mounts its own
@@ -135,11 +135,12 @@ queue:
       value: -10
       description: fill the gaps when nothing else is waiting
 
-# The web front (D8/D19): the campaign browser at /, Universal Viewer at
-# /uv.html and GET /api/v1/jobs[/…] over the Indexed Jobs a campaign renders
-# to — one Deployment on a NodePort. No auth of its own; it only ever
-# get/list/watches against the cluster (Role, not ClusterRole) and sends the
-# same security headers the retired nginx did (audit S4, now in the app).
+# The web front: the campaign browser at /, Universal Viewer at /uv.html,
+# GET /api/v1/jobs[/…] over the Indexed Jobs a campaign renders to, and
+# /results passed through to the results proxy — one Deployment, every
+# route but the login page behind the proxy's login. It get/lists against
+# the cluster (Role, not ClusterRole) and writes only its per-campaign
+# status ConfigMaps.
 web:
   # Digest-pinned (…@sha256:…) unless security.allowTagImages is true. The
   # default is the published v0.8.0 web image; for a locally built one set
@@ -155,8 +156,9 @@ web:
     type: NodePort
   ingress:
     # An Ingress in front of a ClusterIP Service (web.service.type above).
-    # The Ingress carries no auth of its own -- the controller's own
-    # allow-list is the gate, which is what network.web.ingressFrom names.
+    # The Ingress adds no auth (the login is the results proxy's); who may
+    # reach the web front is the controller's own allow-list, the
+    # controller network.web.ingressFrom names.
     enabled: false
     className: ""
     host: ""

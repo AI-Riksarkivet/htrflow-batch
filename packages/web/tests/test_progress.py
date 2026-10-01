@@ -575,7 +575,7 @@ def test_the_session_cookie_goes_to_the_proxy():
         return httpx.Response(200, json={"pages_done": 1, "pages_total": 2})
 
     r = ProgressReader(httpx.Client(transport=httpx.MockTransport(handler)))
-    from htrflow_web.sessions import Session
+    from htrflow_web.login_check import Session
 
     r.for_session(Session("anna", "tok")).fetch(
         "http://p/results/ns/demo", "R1", "running"
@@ -607,7 +607,7 @@ def test_one_users_answer_is_never_anothers():
         return httpx.Response(403)
 
     r = ProgressReader(httpx.Client(transport=httpx.MockTransport(handler)))
-    from htrflow_web.sessions import Session
+    from htrflow_web.login_check import Session
 
     a = r.for_session(Session("anna", "a"))
     b = r.for_session(Session("bo", "b"))
@@ -616,8 +616,9 @@ def test_one_users_answer_is_never_anothers():
     assert b.fetch("http://p/results/ns/demo", "R1", "running") is None
 
 
-def test_a_refused_read_on_a_finished_volume_is_not_kept_for_the_hour(clock):
-    status = {"code": 403}
+def test_a_session_refused_on_a_finished_volume_is_not_kept_for_the_hour(clock):
+    """A 401 says nothing about the volume: the caller's session is gone."""
+    status = {"code": 401}
 
     def handler(req):
         if status["code"] == 200:
@@ -636,7 +637,7 @@ def test_a_refused_read_on_a_finished_volume_is_not_kept_for_the_hour(clock):
 
 
 def test_a_403_marks_the_volume_forbidden_for_that_caller_only(clock):
-    from htrflow_web.sessions import Session
+    from htrflow_web.login_check import Session
 
     def handler(req):
         if req.headers.get("cookie") == "htr_session=a":
@@ -651,11 +652,31 @@ def test_a_403_marks_the_volume_forbidden_for_that_caller_only(clock):
     assert b.fetch(BASE, "vol0", "done") is None
     assert b.forbidden(BASE, "vol0", "done") is True
     assert a.forbidden(BASE, "vol0", "done") is False
-    # Still asked again on the short window, never kept for the hour: a
-    # grant made on the store shows on the next poll past it.
-    assert b.cached(BASE, "vol0", "done") == (False, None)
+    # An answer about a finished volume, kept like any other: the campaign
+    # settles for a caller who may not read it.
+    assert b.cached(BASE, "vol0", "done") == (True, None)
     clock.now += progress_mod.RUNNING_TTL + 1
+    assert b.forbidden(BASE, "vol0", "done") is True
+    clock.now += progress_mod.DONE_TTL
     assert b.forbidden(BASE, "vol0", "done") is False
+
+
+def test_a_403_on_a_running_volume_is_asked_again_soon(clock):
+    r, asked = reader({f"{BASE}/vol0/progress.json": httpx.Response(403)})
+    p = r.for_session(None)
+    assert p.fetch(BASE, "vol0", "active") is None
+    assert p.cached(BASE, "vol0", "active") == (True, None)
+    clock.now += progress_mod.RUNNING_TTL + 1
+    assert p.cached(BASE, "vol0", "active") == (False, None)
+
+
+def test_a_403_on_progress_json_asks_for_no_manifest():
+    """The account may not read the volume: its manifest is no different."""
+    r, asked = reader({f"{BASE}/vol0/progress.json": httpx.Response(403)})
+    p = r.for_session(None)
+    assert p.fetch(BASE, "vol0", "done") is None
+    assert asked == [f"{BASE}/vol0/progress.json"]
+    assert p.forbidden(BASE, "vol0", "done") is True
 
 
 @pytest.mark.parametrize("code", [401, 404, 503])
@@ -677,3 +698,32 @@ def test_a_pending_volume_is_never_forbidden():
     r, asked = reader({})
     assert r.for_session(None).forbidden(BASE, "vol0", "pending") is False
     assert asked == []
+
+
+# --- a caller's tally over a campaign's finished volumes ------------------
+
+
+def test_a_tally_is_one_callers_and_kept_for_the_hour(clock):
+    from htrflow_web.login_check import Session
+
+    r, _ = reader({})
+    anna = r.for_session(Session("anna", "a"))
+    bo = r.for_session(Session("bo", "b"))
+    t = anna.tally(BASE, "k")
+    assert anna.tally(BASE, "k") is t
+    assert bo.tally(BASE, "k") is not t, "one caller's sums are never another's"
+    assert anna.tally(BASE, "other volumes") is not t
+    clock.now += progress_mod.DONE_TTL + 1
+    assert anna.tally(BASE, "k") is not t
+
+
+def test_the_tallies_kept_are_bounded(monkeypatch):
+    monkeypatch.setattr(progress_mod, "MAX_TALLIES", 2)
+    r, _ = reader({})
+    p = r.for_session(None)
+    first = p.tally(BASE, "a")
+    p.tally(BASE, "b")
+    p.tally(BASE, "a")  # used again: now the most recent
+    p.tally(BASE, "c")
+    assert p.tally(BASE, "a") is first
+    assert len(r._tallies) == 2

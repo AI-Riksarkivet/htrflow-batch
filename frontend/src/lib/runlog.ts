@@ -105,21 +105,31 @@ export function parseRunLog(text: string): ParsedLog {
 }
 
 // The wrapper's last lines on each exit path (main.py): success logs
-// "[<volume>] COMPLETE <n> pages ...", failures log "<kind> failure in <stage>:".
-const TERMINAL_RE =
-  /\] COMPLETE \d+ pages|(permanent|transient) failure in \w+:/;
+// "[<volume>] COMPLETE <n> pages ...", failures log "<kind> failure in
+// <stage>:", and a transient one on the index's last attempt "transient
+// failure in <stage> on the last attempt:".
+const OUTCOME_RE =
+  /\] COMPLETE \d+ pages|(permanent|transient) failure in \w+( on the last attempt)?:/g;
+
+export type RunOutcome = "complete" | "failed" | "retrying";
 
 /**
- * True once a shipped run log carries the wrapper's terminal line, i.e. the
- * volume's process has exited and the object will not change again. Only the
- * tail is inspected: the marker is always among the last lines, and live logs
- * can be large.
+ * How the attempt a shipped run log belongs to ended, or `null` while it
+ * runs. `complete` and `failed` end the volume's run. `retrying` ends only
+ * the attempt: the Job retries the index, and the retry ships its own log
+ * to the same key. Only the tail is inspected, and its last marker counts:
+ * the marker is always among the last lines, and live logs can be large.
  */
-export function isTerminalLog(text: string): boolean {
+export function logOutcome(text: string): RunOutcome | null {
   // The failure line is followed by the traceback(s) — chained torch/htrflow
   // plus a boto one run to hundreds of lines — so the window is generous.
   const tail = text.split("\n").slice(-500).join("\n");
-  return TERMINAL_RE.test(tail);
+  const last = [...tail.matchAll(OUTCOME_RE)].at(-1);
+  if (last === undefined) return null;
+  if (last[1] === undefined) return "complete";
+  return last[1] === "transient" && last[2] === undefined
+    ? "retrying"
+    : "failed";
 }
 
 /**

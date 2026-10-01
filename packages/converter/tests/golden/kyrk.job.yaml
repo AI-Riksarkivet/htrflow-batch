@@ -72,7 +72,7 @@ spec:
         - name: S3_PREFIX
           value: htr-test/
         - name: RESULTS_URL
-          value: https://results.example.org
+          value: https://htr.example.org/results
         - name: IMAGE_DIGEST
           value: ghcr.io/riksarkivet/htrflow-batch@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         - name: HF_HUB_OFFLINE

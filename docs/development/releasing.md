@@ -271,7 +271,10 @@ The workflow itself runs in three steps:
    the release's version-bump commit (step 1 of
    [The GitHub release](#the-github-release)), which a tag, unlike a SHA,
    could later move off. Then `htrflow-campaigns init --force
-   examples/campaigns` regenerates the example repository from both.
+   examples/campaigns` regenerates the example repository from both. The
+   templates' policy render passes values only the release's own chart
+   accepts (a test renders it against this checkout's chart), so
+   `CONVERTER_REF` must move in that same commit, never later.
 
 ### Signing, SBOM and provenance
 
@@ -326,6 +329,14 @@ version's tag, since no digest of that release exists yet. `verify-published`
 and `scan-published` check the images that are pinned and report that one as
 not yet published, instead of failing; the release commit's pin brings it
 back under both checks.
+
+`entrypoints-published` looks for every program the chart, the compose
+stack and the hook start in the pinned web and converter digests. Once a
+change starts a program the last release's images do not have (a new
+console script, say), it fails on `main` (`published.yml`, weekly and by
+hand) until the release commit pins images built from that change. That is
+expected and is the point: the release commit's push must turn it green,
+and a release whose pins still fail it does not ship.
 
 The workflow then writes the notes in two parts:
 

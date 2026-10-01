@@ -5,7 +5,7 @@
 // wrapper's last line. A failure prints the seed; FC_SEED=<seed> replays it.
 import fc from "fast-check";
 import { describe, expect, test } from "vitest";
-import { isTerminalLog, parseRunLog, splitLogLine, tailOf } from "./runlog.js";
+import { logOutcome, parseRunLog, splitLogLine, tailOf } from "./runlog.js";
 import { RUNS } from "./fixtures/property.js";
 
 /** Lines shaped like a wrapper log, with the odd one that is not. */
@@ -25,23 +25,27 @@ const line = fc.oneof(
 );
 const lines = fc.array(line, { maxLength: 40 });
 
-/** The wrapper's last line on each exit path (main.py). */
+/** The wrapper's last line on each exit path (main.py), with what it says. */
 const terminal = fc.oneof(
   fc
     .tuple(fc.stringMatching(/^[A-Za-z0-9._-]{1,20}$/), fc.nat(5000))
-    .map(
-      ([vol, n]) =>
-        `2026-01-02 03:04:05,678 INFO [${vol}] COMPLETE ${n} pages in 12s`,
-    ),
+    .map(([vol, n]) => ({
+      text: `2026-01-02 03:04:05,678 INFO [${vol}] COMPLETE ${n} pages in 12s`,
+      outcome: "complete" as const,
+    })),
   fc
     .tuple(
-      fc.constantFrom("permanent", "transient"),
+      fc.constantFrom(
+        ["permanent", "", "failed"] as const,
+        ["transient", "", "retrying"] as const,
+        ["transient", " on the last attempt", "failed"] as const,
+      ),
       fc.constantFrom("setup", "load", "stream", "verify", "publish"),
     )
-    .map(
-      ([kind, stage]) =>
-        `2026-01-02 03:04:05,678 ERROR ${kind} failure in ${stage}: boom`,
-    ),
+    .map(([[kind, last, outcome], stage]) => ({
+      text: `2026-01-02 03:04:05,678 ERROR ${kind} failure in ${stage}${last}: boom`,
+      outcome,
+    })),
 );
 
 describe("parseRunLog", () => {
@@ -123,19 +127,21 @@ describe("splitLogLine", () => {
   });
 });
 
-describe("isTerminalLog", () => {
+describe("logOutcome", () => {
   test("never throws, whatever the text", () => {
     fc.assert(
       fc.property(fc.string({ unit: "binary" }), (text) => {
-        expect(typeof isTerminalLog(text)).toBe("boolean");
+        expect([null, "complete", "failed", "retrying"]).toContain(
+          logOutcome(text),
+        );
       }),
       RUNS,
     );
   });
 
-  test("a terminal line stays terminal under the tracebacks that follow it", () => {
+  test("a terminal line keeps its outcome under the tracebacks that follow it", () => {
     // The failure line is followed by the traceback(s): up to the 500-line
-    // window, whatever they say, the run is over.
+    // window, whatever they say, the attempt is over.
     fc.assert(
       fc.property(
         lines,
@@ -148,8 +154,8 @@ describe("isTerminalLog", () => {
           const after = full
             ? [...some, ...Array<string>(499 - some.length).fill("")]
             : some;
-          const text = [...before, last, ...after].join("\n");
-          expect(isTerminalLog(text)).toBe(true);
+          const text = [...before, last.text, ...after].join("\n");
+          expect(logOutcome(text)).toBe(last.outcome);
         },
       ),
       { numRuns: 100 },
@@ -172,7 +178,7 @@ describe("isTerminalLog", () => {
     );
     fc.assert(
       fc.property(running, (ls) => {
-        expect(isTerminalLog(ls.join("\n"))).toBe(false);
+        expect(logOutcome(ls.join("\n"))).toBeNull();
       }),
       RUNS,
     );

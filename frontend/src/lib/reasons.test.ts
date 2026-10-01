@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { ApiUnreachable, type VolumeReason } from "./api.js";
 import {
   describeApiError,
+  RESULTS_SERVICE_DOWN,
   describeReason,
   describeNotice,
   describeProgress,
@@ -356,6 +357,16 @@ describe("describeApiError", () => {
     expect(sentence).toBe(
       "Can't reach the campaign service right now. It will try again on its " +
         "own.",
+    );
+  });
+
+  test("a 502 from the session check blames the results service, not the campaigns", () => {
+    const down = new ApiUnreachable("HTTP 502", {
+      detail: RESULTS_SERVICE_DOWN,
+    });
+    expect(describeApiError(down, false)).toBe(
+      "The results service is not answering (HTTP 502), so nothing can be " +
+        "shown and no one can log in right now. It will try again on its own.",
     );
   });
 
