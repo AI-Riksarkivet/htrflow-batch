@@ -10,7 +10,7 @@ What changes when htrflow runs on many nodes instead of one machine:
 | **where it runs** | your machine, its GPU | whichever node has a GPU free, chosen for you |
 | **the pages** | a folder on its disk | fetched from a IIIF manifest or plain image URLs |
 | **the models** | downloaded to that disk | a shared cache every node mounts |
-| **the results** | a folder next to the pages | a bucket every node writes to and every browser reads |
+| **the results** | a folder next to the pages | a bucket every node writes to, read in the browser through a login |
 | **when a machine fails** | you start again | the volume resumes on another node from the bucket |
 | **how you start it** | a command | a file in git |
 
@@ -72,4 +72,4 @@ look for that field in the "Owns" column.
 | [From image to transcription](page-flow.md) | One page: the IIIF GET, the htrflow steps, the two XML files, the upload order |
 | [Failure Handling](failure-handling.md) | Invariants, exit codes, retries, the pod deadline, warm-up failures |
 | [Events and signals](signals.md) | Everything the system emits, who reads it, what survives the Job's TTL, and the live run log |
-| [Security](security.md) | The trust boundary, the bucket policy, pod posture, NetworkPolicies |
+| [Security](security.md) | The trust boundary, the results boundary and its login, pod posture, NetworkPolicies |

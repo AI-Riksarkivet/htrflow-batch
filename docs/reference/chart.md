@@ -93,7 +93,7 @@ credentials ([Security → The results boundary](../how-it-works/security.md#the
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `results.sessionSecret` | `""` | **Required.** The name of a Secret in the release namespace with key `key`: 32 random bytes, base64. It seals login sessions, and rotating it logs everyone out |
+| `results.sessionSecret` | `""` | **Required.** The name of a Secret in the release namespace with key `key`: 32 random bytes, base64. It seals login sessions, and rotating it logs everyone out; the results proxy follows the rotation without a restart |
 | `results.sessionHours` | `8` | How long a login lasts |
 | `results.keyDerivation` | `hcp` | `hcp`: the login takes a store account's user name and password and derives its S3 keys. `none`: the login takes the S3 access key and secret key as they are (RustFS, MinIO, AWS) |
 | `results.replicas` | `1` | Proxy replicas. Sessions need no shared state; the login limits are kept per replica |

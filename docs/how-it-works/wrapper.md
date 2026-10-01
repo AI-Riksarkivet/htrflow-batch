@@ -221,7 +221,7 @@ came out:
   tiles keep coming from the IIIF origin and the platform serves no images.
 - **Dimensions.** The **width-capped dimensions actually processed**, so the
   Universal Viewer's line overlays line up without coordinate rewriting.
-- **Text.** A `seeAlso` per canvas pointing at its public ALTO URL (ALTO v4
+- **Text.** A `seeAlso` per canvas pointing at its ALTO URL under the results URL (ALTO v4
   profile), the shape the viewer's text panel matches on.
 - **Search service.** A stub `SearchService1` entry, because the viewer
   shows the text panel only when one is present.

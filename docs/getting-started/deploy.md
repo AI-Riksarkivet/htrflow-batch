@@ -19,8 +19,10 @@ see [Dev cluster](../development/dev-cluster.md).
   supports, the NVIDIA device plugin (nodes advertise `nvidia.com/gpu`),
   and a RuntimeClass for GPU pods (`nvidia`, or whatever the campaigns
   repo's `runtime_class` names).
-- **An S3-compatible bucket** that browsers can reach at a stable URL,
-  the *results URL*. It is written into every published manifest.
+- **An S3-compatible bucket** that the campaign pods and the results proxy
+  reach. Browsers never do: they read results through the web front at the
+  *results URL*, `https://<web front host>/results`, which is written into
+  every published manifest.
 - **A IIIF source** (Presentation 2 or 3 manifests, or plain image URLs)
   that campaign pods can reach, and its address range.
 - **Public egress for the warm-up pods**, which download models from
@@ -81,13 +83,16 @@ web front's own origin, with each logged-in person's own store keys.
 
 - **Store accounts are the logins.** Everyone who should see results needs
   an account on the store with read permission on the release's namespace
-  prefix and on `status/logs/`. What an account may read is the store's
+  prefix; run logs are under it too, at `<namespace>/status/logs/`. What an
+  account may read is the store's
   decision, on every request. For a store that issues S3 keys (RustFS,
   MinIO, AWS), the login form takes the access key as the user name and the
   secret key as the password: set `results.keyDerivation=none`. For a store
   that derives keys from the account (HCP), keep the default `hcp`.
 - **Create the session Secret.** It holds the key the proxy seals login
-  sessions with, and rotating it logs everyone out:
+  sessions with. Rotating it logs everyone out, without a restart: the proxy
+  picks the new key up once the kubelet has synced the Secret, within about a
+  minute.
 
     ```bash
     kubectl -n <namespace> create secret generic htr-session \
@@ -150,15 +155,17 @@ upgrade.
 ## 5. Check it
 
 ```bash
-kubectl -n <namespace> get deploy htrflow-web
+kubectl -n <namespace> get deploy htrflow-web htrflow-results
 kubectl -n <namespace> get localqueue
 kubectl get clusterqueue
 curl -s http://<node-address>:30800/healthz
 ```
 
-`htrflow-web` is `1/1` ready, the LocalQueue and ClusterQueue exist, and
-`/healthz` answers `{"ok": true}`. `http://<node-address>:30800/` is the
-campaign browser, empty until the first campaign. The model-cache PVC may
+`htrflow-web` and `htrflow-results` are `1/1` ready, the LocalQueue and
+ClusterQueue exist, and `/healthz` answers `{"ok": true}`.
+`http://<node-address>:30800/` (behind an ingress, `https://<web front host>/`)
+shows the login page. Log in with a store account: the campaign browser is
+empty until the first campaign. The model-cache PVC may
 stay `Pending` until the first warm-up if its StorageClass binds on first
 use.
 

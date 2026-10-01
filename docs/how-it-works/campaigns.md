@@ -203,7 +203,8 @@ the file costs two small ConfigMaps and keeps the campaign on the page.
 
 `packages/web` serves the read API and the status page from one image. It
 computes every answer live from the Jobs, Pods and ConfigMaps, reads each
-running volume's `progress.json` from the bucket, and writes only the
+running volume's `progress.json` through the results proxy, with the
+caller's session, and writes only the
 status records above. Routes, fields and phases are in
 [Web front & read API](../reference/web.md). The bucket layout is in
 [S3 Layout](../reference/s3-layout.md).
@@ -225,8 +226,9 @@ status records above. Routes, fields and phases are in
    ([Security → NetworkPolicy](security.md#networkpolicy)), and whatever
    your own network's egress rules allow. A source outside both fails the
    volume at setup.
-5. **Run logs are readable by every account that may read `status/logs/`.**
-   The browser needs them, and a log can
+5. **Run logs are readable by every account that may read the namespace's
+   prefix.** They sit under `<namespace>/status/logs/`, the browser needs
+   them, and a log can
    carry the redacted host and path of a private IIIF source
    ([Security → The results boundary](security.md#the-results-boundary)).
 6. **A permanently failed volume has no "retry" or "skip".** A rendered

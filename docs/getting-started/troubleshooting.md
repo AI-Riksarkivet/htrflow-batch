@@ -2,10 +2,20 @@
 
 Symptom first, then what to run, then the fix. `<namespace>` is the release
 namespace, `<campaign>` a campaign Job's name, `<results-url>` the
-release's `resultsUrl`. Why each mechanism behaves as it does is in
+release's `resultsUrl` and `<web-front>` the address in front of it. Why
+each mechanism behaves as it does is in
 [How it Works](../how-it-works/architecture.md).
 
 ## Quick lookups
+
+Result files answer `401` without a login. Log in once with a store
+account, keeping the session cookie in a file (`Origin` must be the site's
+own address, or the login is `403`):
+
+```bash
+curl -s -c jar -H "Origin: <web-front>" -H "Content-Type: application/json" \
+  -d '{"username": "<user>", "password": "<password>"}' <web-front>/results/_login
+```
 
 | Question | Command |
 |---|---|
@@ -13,9 +23,9 @@ release's `resultsUrl`. Why each mechanism behaves as it does is in
 | Which volume is on the GPU right now? | `kubectl -n <namespace> get pods -L batch.kubernetes.io/job-completion-index` |
 | How far has this campaign got? | `kubectl -n <namespace> get job <campaign> -o jsonpath='{.status.completedIndexes} {.status.failedIndexes}'` |
 | Why did an index fail? | `kubectl -n <namespace> get pods -l batch.kubernetes.io/job-name=<campaign> -o jsonpath='{.items[*].status.containerStatuses[*].state.terminated.message}'` |
-| …and the pod is already gone? | `curl <results-url>/status/logs/<pipeline>/<volume>.txt` |
-| How far is this volume right now? | `curl <results-url>/<namespace>/<pipeline>/<volume>/progress.json` |
-| Is this volume actually finished? | `curl -I <results-url>/<namespace>/<pipeline>/<volume>/manifest.json` (only `manifest.json` means done) |
+| …and the pod is already gone? | `curl -b jar <results-url>/<namespace>/status/logs/<pipeline>/<volume>.txt` |
+| How far is this volume right now? | `curl -b jar <results-url>/<namespace>/<pipeline>/<volume>/progress.json` |
+| Is this volume actually finished? | `curl -b jar -I <results-url>/<namespace>/<pipeline>/<volume>/manifest.json` (`200` means done: only `manifest.json` does; `404` means not yet) |
 | Which image and models produced this ALTO? | Read the file: its `Processing ID="htrflow-batch"` block names them |
 
 ## The Quickstart stack
@@ -143,6 +153,29 @@ On the same pipeline id, the apply holds the new campaign back while a
 campaign that shares the volume is still running, since both would write
 the same results; it says so and starts once the old one finishes. Under a
 new pipeline id it starts at once.
+
+## Cannot log in
+
+The login page words the results proxy's answer. Each has one cause:
+
+**Check**
+
+```bash
+kubectl -n <namespace> get deploy htrflow-results
+kubectl -n <namespace> logs deploy/htrflow-results
+```
+
+**Fix**, by what the page says:
+
+| What you see | Cause | Fix |
+|---|---|---|
+| The store did not accept that user name or password (`401`) | Wrong credentials, or the wrong `results.keyDerivation`: a store that issues S3 keys (RustFS, MinIO, AWS) needs `none` and takes the access key and secret key | Check the account on the store, then the chart value |
+| The login was refused: this page is not the site's own address (`403`) | The browser's `Origin` is not the address the web front forwards: a proxy in front rewrites the host without passing `X-Forwarded-Host` and `X-Forwarded-Proto` on | Open the site at its own address, or make the proxy in front pass both headers |
+| Too many failed logins from this address, or for this user, or too many logins at once (`429`) | The limit it names: 5 failures per address a minute, 10 per user name in five minutes, 4 logins checked at once. When everyone behind an ingress is throttled together, the limiter is keying on the controller's address | Wait as it says. For the ingress case, see the forwarding rules in [Deploy → Web front access](deploy.md#web-front-access) |
+| The results service did not answer (`502`) | `htrflow-results` is not running. A `web.image` built before the results proxy existed has no `htrflow-results` program, and the pod crash-loops | Read its logs; pin the web image of the chart's own release |
+| The result store could not be reached, timed out, or answered without a reason (`502`, `504`) | The proxy cannot reach the bucket | Check `network.s3Cidrs` (or `network.s3InNamespace`), the S3 Secret's `S3_ENDPOINT`, and `S3_VERIFY_TLS` for a certificate the proxy does not accept |
+| Logins are unavailable: the session key is unreadable (`503`) | The session Secret's `key` is missing or not 32 random bytes, base64 | Recreate the Secret ([Deploy](deploy.md#the-results-bucket-stays-private)); the proxy picks a good key up without a restart |
+| Logged in, but every volume says your account may not read it | The account has no read permission on the release's namespace prefix | Grant it on the store |
 
 ## The campaign browser shows no progress for a running volume
 
