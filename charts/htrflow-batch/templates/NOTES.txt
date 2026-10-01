@@ -9,12 +9,19 @@ htrflow-batch {{ .Chart.Version }} installed.
 - Pod Security: the chart does not own the namespace — label it once (`make psa-labels`, reads
   security.psaEnforce={{ .Values.security.psaEnforce }}; warn/audit=restricted).
 - Upgrades: use --reset-then-reuse-values (plain --reuse-values keeps the old chart's defaults).
-- If Jobs stay `queued` while the GPU is idle, check the Kueue controller before the GPU (O17).
+- If Jobs stay `queued` while the GPU is idle, check the Kueue controller before the GPU.
+- S3 Secret {{ .Values.s3.existingSecret }} (you create it): `credentials` in AWS ini format for the campaign
+  pods, `S3_BUCKET` and `S3_ENDPOINT` for them and the results proxy (docs: getting-started/deploy).
 {{- if .Values.network.enabled }}
 - NetworkPolicies rendered{{ if .Values.network.defaultDeny }} with a namespace default deny{{ end }} (values: network.*).
-  The S3 Secret ({{ .Values.s3.existingSecret }}) needs a `credentials` key in AWS ini format (docs: getting-started/deploy).
 {{- end }}
-- Web front: Deployment htrflow-web on NodePort {{ .Values.web.nodePort }} — campaign browser at /,
+{{- if .Values.web.ingress.enabled }}
+- Web front: Deployment htrflow-web, Ingress at https://{{ .Values.web.ingress.host }}/ — campaign browser at /,
+{{- else if eq .Values.web.service.type "ClusterIP" }}
+- Web front: Deployment htrflow-web on ClusterIP Service htrflow-web:8081, behind an ingress of your own — campaign browser at /,
+{{- else }}
+- Web front: Deployment htrflow-web, Service htrflow-web on NodePort {{ .Values.web.nodePort }} — campaign browser at /,
+{{- end }}
   Universal Viewer at /uv.html, read API at /api/v1/jobs, result files at /results/ through the
   results proxy (Deployment htrflow-results), all behind one login with a result-store account.
   Session key: Secret {{ .Values.results.sessionSecret }}; result links: {{ .Values.resultsUrl }}.
