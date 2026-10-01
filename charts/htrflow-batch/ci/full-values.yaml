@@ -1,7 +1,7 @@
 # Every optional feature on, for `helm lint -f` / `helm template -f` /
 # kubeconform in CI. No cluster is needed: the apiserver CIDR and node CIDRs
 # are given explicitly so no Helm `lookup` is required.
-resultsUrl: http://localhost:30900/htr-results
+resultsUrl: http://localhost:30800/results
 
 modelCache:
   create: true

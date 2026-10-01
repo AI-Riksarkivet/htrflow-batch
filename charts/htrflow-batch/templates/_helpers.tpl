@@ -22,6 +22,13 @@ but only when the schema is evaluated; this fires from any template.
 {{- if hasKey .Values.web "internalResultsBase" }}
 {{- fail "web.internalResultsBase is gone (chart 0.16.0): the web front reads the bucket through the results proxy; remove the key" }}
 {{- end }}
+{{- /* Every result link the read API and the wrapper build starts here, and
+only the web front's /results reaches the proxy: a 0.15 value (the bucket's
+own URL) would render and silently break the viewer. Empty is left to
+web.yaml's `required`. */}}
+{{- if and .Values.resultsUrl (not (hasSuffix "/results" (trimSuffix "/" .Values.resultsUrl))) }}
+{{- fail "resultsUrl must end in /results (chart 0.16.0): browsers read results through the results proxy on the web front, at https://<web front host>/results, never from the bucket; set it to that, and converter.yaml's results_url to the same value" }}
+{{- end }}
 {{- if .Values.security.verifyImages.enabled }}
 {{- if or (not .Values.security.verifyImages.issuer) (not .Values.security.verifyImages.subject) }}
 {{- fail "security.verifyImages.issuer and .subject are required when security.verifyImages.enabled" }}

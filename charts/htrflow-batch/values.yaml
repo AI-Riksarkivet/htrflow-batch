@@ -39,7 +39,7 @@ s3:
 hfToken:
   existingSecret: ""
 
-resultsUrl: ""      # browser-reachable URL base for published results (REQUIRED: every result URL is built from it)
+resultsUrl: ""      # https://<web front host>/results, where browsers read results through the proxy (REQUIRED; a value not ending in /results is refused)
 
 # Model cache: one PVC holding one directory per pipeline recipe
 # (`<pipeline-id>-<recipe sha256>`). A pipeline's warm-up Job mounts its own

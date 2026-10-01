@@ -75,6 +75,12 @@ IIIF_NOWHERE_REFUSAL = (
 RESULTS_BASE_REFUSAL = (
     "resultsUrl is required (the read API serves S3 links built from it)"
 )
+RESULTS_URL_SHAPE_REFUSAL = (
+    "resultsUrl must end in /results (chart 0.16.0): browsers read results"
+    " through the results proxy on the web front, at https://<web front"
+    " host>/results, never from the bucket; set it to that, and converter.yaml's"
+    " results_url to the same value"
+)
 #: publicResultsBase was renamed; the schema lets the old key through so
 #: this sentence, not an unknown-key error, is what its author reads.
 RESULTS_BASE_RENAMED_REFUSAL = (
@@ -1462,6 +1468,13 @@ BATCH_GUARDS = {
         DEFAULT_SETS + ("resultsUrl=",),
         RESULTS_BASE_REFUSAL,
     ),
+    # A 0.15 value (the bucket's own URL) would render and leave the viewer
+    # and /alto pointing at a bucket browsers may no longer read.
+    "results-url-not-the-proxy": (
+        None,
+        DEFAULT_SETS + ("resultsUrl=https://s3.example.org/htr-results",),
+        RESULTS_URL_SHAPE_REFUSAL,
+    ),
     "results-base-renamed": (
         None,
         DEFAULT_SETS + ("publicResultsBase=https://results.example.org/r",),
@@ -1600,6 +1613,14 @@ def test_the_render_every_case_breaks_is_one_no_guard_refuses(chart: Path):
     """Each case is this render with one thing broken; if this one were
     refused, a case could pass on some other guard's sentence."""
     result = helm_template(sets=GUARDED_CHARTS[chart][1], chart=chart)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "url", ["https://htr.example.org/results", "http://192.0.2.20:30800/results/"]
+)
+def test_a_results_url_on_the_proxy_renders_with_or_without_a_slash(url: str):
+    result = helm_template(sets=DEFAULT_SETS + (f"resultsUrl={url}",))
     assert result.returncode == 0, result.stderr
 
 

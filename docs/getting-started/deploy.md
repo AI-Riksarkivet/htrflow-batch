@@ -97,9 +97,8 @@ web front's own origin, with each logged-in person's own store keys.
     Name it in `results.sessionSecret` (required).
 - **`resultsUrl` is `https://<web front host>/results`.** The results
   proxy answers under `/results` on the web front's address, so one origin
-  serves the site and the results. The chart does not check the value
-  against `/results`: a wrong one installs cleanly and silently breaks the
-  viewer and `/alto`.
+  serves the site and the results. The chart refuses a value that does not
+  end in `/results`.
 - **Writes must be able to overwrite.** The wrapper rewrites keys such as
   `progress.json`, so the bucket has to accept a write over an existing
   key. Where the store needs it for that (HCP), turn versioning on and

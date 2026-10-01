@@ -172,7 +172,7 @@ func (m *HtrflowBatch) VerifyPublished(
 	out, err := container.
 		WithExec([]string{"sh", "-c", fmt.Sprintf(`set -eu
 helm template htr /chart -n htr-batch -f /chart/values-prod.yaml \
-  --set resultsUrl=https://ci.invalid/ --set results.sessionSecret=ci-session \
+  --set resultsUrl=https://ci.invalid/results --set results.sessionSecret=ci-session \
   --set network.enabled=false \
   --show-only templates/policies/verify-images.yaml > /policy.yaml
 kyverno apply /policy.yaml --resource /pods.yaml --remove-color | tee /out.txt
