@@ -178,6 +178,17 @@ def test_the_api_is_401_without_a_session():
     assert c.get("/api/v1/jobs").status_code == 200
 
 
+def test_over_https_the_api_takes_only_the_prefixed_cookie():
+    c = TestClient(
+        create_app(FakeReader(), progress=FakeProgress(), sessions=FakeSessions()),
+        base_url="https://site.example",
+    )
+    c.cookies.set("htr_session", "tok")
+    assert c.get("/api/v1/jobs").status_code == 401
+    c.cookies.set("__Host-htr_session", "tok")
+    assert c.get("/api/v1/jobs").status_code == 200
+
+
 def test_every_api_answer_is_private_and_unstored():
     """Each /api/v1 answer is one person's view: no shared cache may keep
     it, and no browser cache past the page -- the 401 and 502 included."""

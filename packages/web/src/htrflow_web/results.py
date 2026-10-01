@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
 
-from .cookie import COOKIE, forwarded
+from .cookie import browser_cookie, forwarded, session_token
 from .results_rules import FILE_HEADERS, allowed_key, served_type
 from .session import SessionCodec, SessionData, derive_keys
 
@@ -194,7 +194,7 @@ def _secure(request: Request) -> bool:
 
 
 def session_of(request: Request, codec: SessionCodec) -> SessionData | None:
-    token = request.cookies.get(COOKIE)
+    token = session_token(request)
     return codec.open(token) if token else None
 
 
@@ -212,7 +212,7 @@ def _fail(detail: str, status: int) -> JSONResponse:
 
 def _clear(response: Response, request: Request) -> None:
     response.delete_cookie(
-        COOKIE,
+        browser_cookie(request.headers, request.url.scheme),
         path="/",
         secure=_secure(request),
         httponly=True,
@@ -306,7 +306,7 @@ def create_results_app(
         user_limiter.succeeded(body.username)
         response = Response(status_code=204)
         response.set_cookie(
-            COOKIE,
+            browser_cookie(request.headers, request.url.scheme),
             codec.seal(body.username, ak, sk),
             max_age=int(cfg.session_hours * 3600),
             path="/",

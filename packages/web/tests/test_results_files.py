@@ -10,6 +10,7 @@ from htrflow_web.results import ClientCache, ResultsConfig, create_results_app
 from htrflow_web.session import SessionCodec
 
 KEY = bytes(range(32))
+SECURE = f"__Host-{COOKIE}"
 
 
 @pytest.fixture
@@ -45,7 +46,7 @@ def setup(monkeypatch):
         )
         codec = SessionCodec(KEY, hours=8)
         c = TestClient(create_results_app(cfg, codec), base_url="https://testserver")
-        c.cookies.set(COOKIE, codec.seal("testing", "testing", "testing"))
+        c.cookies.set(SECURE, codec.seal("testing", "testing", "testing"))
         yield c, codec
 
 
@@ -149,7 +150,7 @@ def test_store_answers_map_to_statuses(setup, monkeypatch, code, status):
     r = c.get("/results/htr-test/demo-v1/R1/iiif.json")
     assert r.status_code == status
     if status == 401:
-        assert COOKIE in r.headers["set-cookie"]  # cleared
+        assert r.headers["set-cookie"].startswith(f'{SECURE}=""')  # cleared
 
 
 def test_a_head_answered_with_a_bare_403_is_403(setup, monkeypatch):

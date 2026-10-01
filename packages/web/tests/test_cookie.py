@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from htrflow_web.cookie import forwarded
+from htrflow_web.cookie import browser_cookie, forwarded
 
 SRC = Path(__file__).parent.parent / "src" / "htrflow_web"
 
@@ -39,3 +39,19 @@ def test_the_cookie_name_is_spelled_once():
 )
 def test_forwarded_is_the_browsers_scheme_and_host(headers, scheme, want):
     assert forwarded(headers, scheme) == want
+
+
+@pytest.mark.parametrize(
+    "headers,scheme,want",
+    [
+        ({"host": "h"}, "https", "__Host-htr_session"),
+        ({"host": "pod", "x-forwarded-proto": "https"}, "http", "__Host-htr_session"),
+        ({"host": "h"}, "http", "htr_session"),
+        ({"host": "h", "x-forwarded-proto": "http"}, "https", "htr_session"),
+    ],
+)
+def test_over_https_the_cookie_is_host_prefixed(headers, scheme, want):
+    """`__Host-`: the browser takes it only from a secure answer for this
+    exact host, so a sibling subdomain or a plain-HTTP answer cannot plant a
+    session. Plain HTTP (dev) cannot carry the prefix."""
+    assert browser_cookie(headers, scheme) == want
