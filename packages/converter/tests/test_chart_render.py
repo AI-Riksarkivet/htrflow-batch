@@ -2027,8 +2027,23 @@ def test_the_session_key_is_mounted_so_a_rotation_reaches_the_proxy():
             ),
             "2",
         ),
+        # A NodePort lets a browser in directly, past whatever ingressFrom
+        # names (with network.enabled=false nothing enforces it): it must not
+        # choose the entry the limit counts.
+        (
+            (
+                "network.enabled=false",
+                "network.web.ingressFrom[0].podSelector.matchLabels.app=traefik",
+            ),
+            "1",
+        ),
     ],
-    ids=["direct", "behind-ingress", "behind-the-operators-own-ingress"],
+    ids=[
+        "direct",
+        "behind-ingress",
+        "behind-the-operators-own-ingress",
+        "nodeport-with-ingressfrom",
+    ],
 )
 def test_the_proxy_trusts_as_many_forwarding_hops_as_sit_in_front_of_it(extra, hops):
     """The Ingress controller and the web front each append to

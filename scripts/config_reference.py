@@ -280,8 +280,8 @@ RESULTS_SET_BY = {
     "`key` of the `results.sessionSecret` Secret",
     "HTRFLOW_SESSION_HOURS": "the chart: `results.sessionHours`",
     "HTRFLOW_KEY_DERIVATION": "the chart: `results.keyDerivation`",
-    "HTRFLOW_TRUSTED_HOPS": "the chart, fixed: 2 with `web.ingress.enabled` or "
-    "`network.web.ingressFrom`, else 1",
+    "HTRFLOW_TRUSTED_HOPS": "the chart, fixed: 2 on a ClusterIP Service with "
+    "`web.ingress.enabled` or `network.web.ingressFrom`, else 1",
 }
 
 
