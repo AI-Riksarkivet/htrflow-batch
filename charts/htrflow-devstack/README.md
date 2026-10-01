@@ -158,7 +158,7 @@ kubectl -n kube-system label daemonset nvidia-device-plugin app.kubernetes.io/ma
 Everything below this line is history: each entry names the objects and
 value keys as they were at that version.
 
-### 0.5.0 — unreleased (the results bucket is private; a login user)
+### 0.5.0 — 2026-10-01 (v0.9.0: the results bucket is private; a login user)
 
 Breaking: the results bucket loses its anonymous-read bucket policy and its
 CORS rule, and `rustfs.publicLogs`, `rustfs.init.corsOrigins` and the
