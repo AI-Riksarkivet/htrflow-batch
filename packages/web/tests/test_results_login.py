@@ -348,13 +348,24 @@ def _slow_store(monkeypatch, code="InvalidAccessKeyId", started=None, gate=None)
     monkeypatch.setattr(ClientCache, "build", lambda self, a, s: Slow())
 
 
-def _concurrently(app, headers_list):
+def _concurrently(app, headers_list, gate, turned_away):
+    """Every login at once. The store answers nobody (``gate``) until
+    ``turned_away`` logins have been answered without it: no timing."""
+    import threading  # noqa: PLC0415
     from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+
+    answered: list[int] = []
+    lock = threading.Lock()
 
     def one(i_headers):
         i, headers = i_headers
         c = TestClient(app, base_url="https://testserver")
-        return login(c, user=f"user{i}", headers=headers).status_code
+        code = login(c, user=f"user{i}", headers=headers).status_code
+        with lock:
+            answered.append(code)
+            if len(answered) == turned_away:
+                gate.set()
+        return code
 
     with ThreadPoolExecutor(len(headers_list)) as pool:
         return list(pool.map(one, enumerate(headers_list)))
@@ -372,10 +383,7 @@ def test_concurrent_attempts_from_one_address_are_counted_before_the_probe(
     gate = threading.Event()
     _slow_store(monkeypatch, started=started, gate=gate)
     app = create_results_app(cfg, SessionCodec(KEY, hours=8), max_probes=40)
-    timer = threading.Timer(0.5, gate.set)
-    timer.start()
-    codes = _concurrently(app, [ORIGIN] * 20)
-    timer.cancel()
+    codes = _concurrently(app, [ORIGIN] * 20, gate, turned_away=15)
     assert sorted(codes) == [401] * 5 + [429] * 15
     assert len(started) == 5
 
@@ -389,12 +397,12 @@ def test_probes_past_the_cap_are_turned_away_not_queued(cfg, monkeypatch):
     gate = threading.Event()
     _slow_store(monkeypatch, started=started, gate=gate)
     app = _xff_app(cfg, 1, LoginLimiter()).app
-    timer = threading.Timer(0.5, gate.set)
-    timer.start()
     codes = _concurrently(
-        app, [{**ORIGIN, "X-Forwarded-For": f"10.0.0.{i}"} for i in range(10)]
+        app,
+        [{**ORIGIN, "X-Forwarded-For": f"10.0.0.{i}"} for i in range(10)],
+        gate,
+        turned_away=6,
     )
-    timer.cancel()
     assert sorted(codes) == [401] * 4 + [429] * 6
     assert len(started) == 4
     busy = TestClient(app, base_url="https://testserver")
