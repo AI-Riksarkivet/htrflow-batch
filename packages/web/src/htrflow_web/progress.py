@@ -261,14 +261,14 @@ def _encoded(response: httpx.Response) -> bool:
 
 class _NoAnswer(Exception):
     """The bucket did not answer: unreachable, timed out, busy, or a 5xx --
-    or the proxy refused the caller (401, 403). A refusal is not an answer
-    about the volume either, so it is asked again soon, but a 403 is kept
-    as a fact: the caller's store account may not read this volume, and the
-    card says so in place of its progress."""
+    or the proxy did not take the caller's session (401). Asked again soon."""
 
-    def __init__(self, status: int | None = None) -> None:
-        super().__init__(status)
-        self.forbidden = status == 403
+
+class _Forbidden(Exception):
+    """The proxy's 403: the store's answer that this caller's account may
+    not read this volume. An answer like any other -- counted, and kept as
+    long as one about the volume's state would be -- and the card says so
+    in place of the volume's progress."""
 
 
 class SessionProgress:
@@ -349,13 +349,13 @@ class ProgressReader:
         # normalised by the client into a request for another key
         # (2026-09-14 audit).
         base = f"{results_base}/{quote(volume_id, safe='')}"
-        known, found = self._cached(
+        known, found, forbidden = self._cached(
             user, cookie, f"{base}/progress.json", _from_progress, state, now, network
         )
-        if known and found is None and state in _FINISHED:
+        if known and found is None and not forbidden and state in _FINISHED:
             # Written by a wrapper that predates progress.json. One GET more,
             # cached for the hour: a finished volume is finished.
-            known, found = self._cached(
+            known, found, _ = self._cached(
                 user,
                 cookie,
                 f"{base}/manifest.json",
@@ -375,25 +375,26 @@ class ProgressReader:
         state: str,
         now: float,
         network: bool,
-    ) -> tuple[bool, dict | None]:
+    ) -> tuple[bool, dict | None, bool]:
+        """``(answered, progress, forbidden)`` for one file."""
         monotonic_now = time.monotonic()
         with self._lock:
             hit = self._cache.get((user, url))
         if hit is not None and hit[0] > monotonic_now:
-            return hit[2], _aged(hit[1], now)
+            return hit[2], _aged(hit[1], now), hit[3]
         if not network:
-            return False, None
+            return False, None, False
         answered, value, forbidden = self._get(cookie, url, parse, now)
         # Only an answer about a volume that is over is kept for the hour --
-        # an absent file included, since its pod wrote what it ever will. A
-        # bucket that did not answer is asked again soon.
+        # an absent file and a 403 included, since its pod wrote what it
+        # ever will. A bucket that did not answer is asked again soon.
         ttl = DONE_TTL if state in _OVER and answered else RUNNING_TTL
         with self._lock:
             self._cache.pop((user, url), None)
             if len(self._cache) >= MAX_ENTRIES:
                 del self._cache[next(iter(self._cache))]  # the oldest answer
             self._cache[(user, url)] = (monotonic_now + ttl, value, answered, forbidden)
-        return answered, value
+        return answered, value, forbidden
 
     def _get(
         self,
@@ -402,13 +403,14 @@ class ProgressReader:
         parse: Callable[[dict, float], dict | None],
         now: float,
     ) -> tuple[bool, dict | None, bool]:
-        """``(answered, progress, forbidden)``: a 404 is an answer, a 5xx, a
-        refusal or a connection that failed is not; a 403 is also
-        ``forbidden``."""
+        """``(answered, progress, forbidden)``: a 404 and a 403 are answers,
+        a 5xx, a 401 or a connection that failed is not."""
         try:
             doc = self._body(cookie, url)
-        except _NoAnswer as e:
-            return False, None, e.forbidden
+        except _Forbidden:
+            return True, None, True
+        except _NoAnswer:
+            return False, None, False
         except Exception:
             return True, None, False  # not JSON at all: the bucket did answer
         return True, parse(doc, now) if isinstance(doc, dict) else None, False
@@ -435,13 +437,14 @@ class ProgressReader:
                 },
                 follow_redirects=False,
             ) as response:
+                if response.status_code == 403:
+                    raise _Forbidden
                 if response.status_code >= 500 or response.status_code in (
                     401,
-                    403,
                     408,
                     429,
                 ):
-                    raise _NoAnswer(response.status_code)
+                    raise _NoAnswer
                 if response.status_code != 200 or _encoded(response):
                     return None
                 body = bytearray()
