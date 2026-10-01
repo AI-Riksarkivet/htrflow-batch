@@ -29,6 +29,7 @@ from htrflow_web.kube import (
     ApplyConflict,
     ClusterUnavailable,
 )
+from htrflow_web.progress import ProgressReader
 from htrflow_web.projection import FAILURES_MANAGER
 
 JOB = {
@@ -464,6 +465,70 @@ def test_a_volume_the_proxy_refused_is_forbidden_in_the_answer():
     body = client.get("/api/v1/jobs/htr-test/kyrk").json()
     # vol1 is pending: nothing of it was read, so nothing was refused.
     assert [v["forbidden"] for v in body["volumes"]] == [True, False]
+
+
+class FinishedReader(FakeReader):
+    """FakeReader's campaign, finished, over ``n`` volumes."""
+
+    def __init__(self, n: int) -> None:
+        self.job = copy.deepcopy(JOB)
+        self.job["spec"]["completions"] = n
+        self.job["status"] = {
+            "completedIndexes": f"0-{n - 1}",
+            "conditions": [{"type": "Complete", "status": "True"}],
+        }
+        lines = "".join(f"vol{i}\thttps://iiif.example.org/{i}\n" for i in range(n))
+        self.campaign = {**CONFIGMAP, "data": {"volumes.txt": lines}}
+
+    def list_jobs(self) -> list[dict]:
+        return [self.job]
+
+    def get_job(self, namespace: str, name: str) -> dict | None:
+        return self.job if name == "kyrk" else None
+
+    def get_configmap(self, namespace: str, name: str) -> dict | None:
+        if name == "campaign-kyrk":
+            return self.campaign
+        return super().get_configmap(namespace, name)
+
+
+def _detail_rounds(reader, handler, rounds):
+    """``(GETs, counted)`` per detail read, through the real ProgressReader."""
+    asked: list[str] = []
+
+    def counting(req):
+        asked.append(str(req.url))
+        return handler(req)
+
+    client = TestClient(
+        create_app(
+            reader,
+            progress=ProgressReader(
+                httpx.Client(transport=httpx.MockTransport(counting))
+            ),
+        )
+    )
+    out, body = [], {}
+    for _ in range(rounds):
+        asked.clear()
+        body = client.get("/api/v1/jobs/htr-test/kyrk").json()
+        out.append((len(asked), body["pagesCoverage"]["counted"]))
+    return out, body
+
+
+def test_a_finished_campaign_the_caller_may_not_read_settles():
+    """A 403 is the store's answer about this caller and this volume: it is
+    counted and kept like any other answer about a finished volume. It used
+    to count as no answer, so the campaign never settled, each read asked
+    the store 100 times again, and rows past those 100 kept a viewer link
+    that opened a 403."""
+    rounds, body = _detail_rounds(
+        FinishedReader(300), lambda req: httpx.Response(403), 4
+    )
+    assert rounds == [(100, 100), (100, 200), (100, 300), (0, 300)]
+    assert body["pagesCoverage"] == {"counted": 300, "of": 300}
+    assert len(body["volumes"]) == 200
+    assert all(v["forbidden"] for v in body["volumes"])
 
 
 def test_job_detail_carries_the_pipeline_steps_and_yaml(client: TestClient):
