@@ -17,7 +17,7 @@ import {
   REAPED_PAGE,
   versionSchema,
 } from "$lib/api.js";
-import { describeApiError } from "$lib/reasons.js";
+import { describeApiError, RESULTS_SERVICE_DOWN } from "$lib/reasons.js";
 import contract from "./api-contract.json";
 import { dropped } from "./dropped.js";
 
@@ -149,6 +149,20 @@ describe("the read API's contract", () => {
         );
       }
       expect(contract.errors.map((e) => e.status)).toContain(404);
+    });
+
+    // The one 502 the page words differently is matched by its detail, so
+    // the sentence the web front sends is held here, not copied.
+    test("the results service being down is told apart by its detail", async () => {
+      const down = contract.errors.find(
+        (e) => e.body.detail === RESULTS_SERVICE_DOWN,
+      );
+      expect(down?.status).toBe(502);
+      vi.stubGlobal("fetch", answer(down?.body, 502));
+      const thrown = await fetchJob("ns", "name").catch((e: unknown) => e);
+      expect(describeApiError(thrown, false)).toContain(
+        "The results service is not answering",
+      );
     });
   });
 });

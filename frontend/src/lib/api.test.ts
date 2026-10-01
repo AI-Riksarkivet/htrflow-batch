@@ -137,6 +137,20 @@ describe("fetchJobs", () => {
     await expect(fetchJobs()).rejects.toThrow("HTTP 503");
   });
 
+  test("a non-2xx keeps the service's own detail sentence", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ detail: "the results service did not answer" }, 502),
+      ),
+    );
+    const thrown = await fetchJobs().catch((e: unknown) => e);
+    expect(thrown).toBeInstanceOf(ApiUnreachable);
+    expect((thrown as ApiUnreachable).detail).toBe(
+      "the results service did not answer",
+    );
+  });
+
   test("a network error becomes ApiUnreachable", async () => {
     vi.stubGlobal(
       "fetch",

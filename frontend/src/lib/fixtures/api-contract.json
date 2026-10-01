@@ -569,6 +569,12 @@
     },
     {
       "body": {
+        "detail": "the results service did not answer"
+      },
+      "status": 502
+    },
+    {
+      "body": {
         "detail": "site-only mode (HTRFLOW_WEB_SITE_ONLY): no cluster to read"
       },
       "status": 503

@@ -58,6 +58,7 @@ def test_the_fixture_carries_what_the_routes_add_to_the_projection():
     assert [(e["status"], sorted(e["body"])) for e in doc["errors"]] == [
         (404, ["detail"]),
         (502, ["detail"]),
+        (502, ["detail"]),
         (503, ["detail"]),
     ]
     warmups = {row["name"]: row["warmup"] for row in doc["summaries"]}

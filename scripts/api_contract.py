@@ -422,20 +422,24 @@ def _answer(client: TestClient, path: str, status: int = 200) -> httpx.Response:
     return resp
 
 
-def _error(reader, path: str, status: int) -> dict:
+def _proxy_down(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(503)
+
+
+def _error(reader, path: str, status: int, proxy=_proxy) -> dict:
     with tempfile.TemporaryDirectory() as site:
-        client = logged_in(create(reader, site), raise_server_exceptions=False)
+        client = logged_in(create(reader, site, proxy), raise_server_exceptions=False)
         return {"status": status, "body": _answer(client, path, status).json()}
 
 
-def create(reader, site: str):
+def create(reader, site: str, answers=_proxy):
     """The app over ``reader``, with an empty site, and the read API's own
     session check and ProgressReader over a results proxy that knows one
     session and holds WRAPPER_PROGRESS for every volume: the progress rows
     are what `htrflow_web.progress` makes of it, never a copy of its output
     that a renamed field would leave green (2026-09-23 audit). A new one per
     app, so no answer is cached across builds."""
-    proxy = httpx.Client(transport=httpx.MockTransport(_proxy))
+    proxy = httpx.Client(transport=httpx.MockTransport(answers))
     return app.create_app(
         reader,
         static_dir=site,
@@ -468,6 +472,8 @@ def build() -> dict:
         errors = [
             _error(ContractReader(), "/api/v1/jobs/htr-test/nonesuch", 404),
             _error(UnavailableReader(), "/api/v1/jobs", 502),
+            # The results proxy down: the session check fails first.
+            _error(ContractReader(), "/api/v1/jobs", 502, proxy=_proxy_down),
             _error(app.NoCluster(), "/api/v1/jobs", 503),
         ]
     return {
