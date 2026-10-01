@@ -94,8 +94,14 @@ store keys. A missing `results.sessionSecret`, a leftover
 2. In **every campaigns repo**, in the same change: set `converter.yaml`'s
    `results_url` to that same URL (it becomes each campaign Job's
    `RESULTS_URL`, and so the URL written into every manifest that Job
-   publishes), and move the wrapper image pin in `pipelines/*.yaml` to this
+   publishes; this release's converter refuses one that does not end in
+   `/results`), and move the wrapper image pin in `pipelines/*.yaml` to this
    release's wrapper, which writes run logs where the proxy serves them.
+   Bump the hook image and `CONVERTER_REF` to this release too, and in the
+   repo's own CI file (`.github/workflows/render.yml` or
+   `azure-pipelines.yml`) give the chart's policy render
+   `--set resultsUrl=http://ci.invalid/results --set results.sessionSecret=ci-session`,
+   or regenerate the file with `htrflow-campaigns init --ci …`.
 
 | Change | What to do |
 |---|---|
@@ -103,6 +109,7 @@ store keys. A missing `results.sessionSecret`, a leftover
 | **`resultsUrl` points at the proxy**: `https://<web front host>/results`. A value that does not end in `/results` is refused, in words that name this change. | Change it, and set the same value as `converter.yaml`'s `results_url` in every campaigns repo in the same window. Volumes published under the old URL keep it: run them again to open them in the viewer. |
 | **The proxy runs the web image's `htrflow-results` program**, new in this release. A `web.image` pinned to an older build has none, and the proxy crash-loops. | Keep the chart's default `web.image`, or pin a web image built from this release. |
 | **Run logs move under the namespace**: the wrapper of this release writes `<namespace>/status/logs/…`, and the proxy serves nothing outside the release's namespace. Logs written at the bucket-root `status/logs/…`, by an older wrapper, are no longer served, and neither are the logs of campaigns still pinned to one. | Move the wrapper pin in every campaigns repo (step 2). Old root-path logs stay in the bucket; delete them when they are no longer wanted. |
+| **A campaigns repo's CI renders this chart's policies** at `CONVERTER_REF`, and this chart refuses that render without `results.sessionSecret` and with a `resultsUrl` off `/results`. A CI file written by an earlier `init` passes `resultsUrl=http://ci.invalid/` and no session Secret, so its Policy job fails once `CONVERTER_REF` names this release. | In the same change as the `CONVERTER_REF` bump, add `--set resultsUrl=http://ci.invalid/results --set results.sessionSecret=ci-session` to the policy render, or regenerate the CI file (step 2). |
 | **The session cookie is `__Host-htr_session` under HTTPS** (`htr_session` only over plain HTTP). | Nothing. A session from an earlier build of the login is no session under HTTPS, so everyone logs in once more. |
 | **`web.internalResultsBase` is refused**, in words that name this change. The web front reads progress through the proxy. | Remove the key from your values. |
 | **`results.keyDerivation`** (`hcp` by default) says how a login becomes S3 keys. | For a store that issues S3 keys (RustFS, MinIO, AWS) set `none`: the login form takes the access key and the secret key. |
