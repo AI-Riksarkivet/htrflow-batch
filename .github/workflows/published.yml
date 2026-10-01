@@ -70,3 +70,23 @@ jobs:
         run: dagger call --progress plain verify-published
         env:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+
+  # The programs this commit's chart, compose stack and hook start from the
+  # web and converter images, looked up in the digests it pins (audit 1001
+  # R1). Here and not in ci.yml: a change that starts a new program fails
+  # this until the release commit re-pins, and the push of that commit is
+  # the gate (docs/development/releasing.md).
+  entrypoints-published:
+    name: Pinned images carry the programs the chart starts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-dagger
+
+      - name: Every started program is in its pinned digest
+        run: dagger call --progress plain entrypoints-published
+        env:
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}

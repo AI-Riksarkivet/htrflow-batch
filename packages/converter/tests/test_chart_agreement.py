@@ -837,7 +837,8 @@ def test_a_web_setting_the_page_says_the_chart_sets_is_set_by_that_value():
                 "fieldRef": {"fieldPath": "metadata.namespace"}
             }
             continue
-        sentinel = f"https://{name.lower().replace('_', '-')}.example.org"
+        # A path under /results: the chart refuses a resultsUrl elsewhere.
+        sentinel = f"https://{name.lower().replace('_', '-')}.example.org/results"
         web = _rendered("Deployment", "htrflow-web", f"{paths[0]}={sentinel}")
         env = web["spec"]["template"]["spec"]["containers"][0]["env"]
         assert {e["name"]: e.get("value") for e in env}[name] == sentinel, name

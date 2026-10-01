@@ -14,16 +14,17 @@ apply of each campaign's status ConfigMap (`campaign-<name>-status`), which
 keeps a campaign on the page once its Job is past `ttlSecondsAfterFinished`.
 The chart's Role grants get/list on Jobs and Pods and get/list/create/patch on
 ConfigMaps (a server-side apply of an object that does not exist yet is a
-create), no watch; a test greps the source for any other create, patch,
-replace or delete call. Every `/api/v1` route needs a session on the results
+create), no watch; a test greps `kube.py`, the one module with a Kubernetes
+client, for any other create, patch, replace or delete call. Every `/api/v1` route needs a session on the results
 store; the static site, which asks for the login, needs none.
 
 The package has a second entrypoint, `htrflow-results`, the **results proxy**
 (`results.py`, `results_rules.py`, `session.py`): it serves the login and, under
 `/results`, result files read from S3 with each logged-in user's own keys,
 sealed in an encrypted `HttpOnly` cookie. The web front never opens that
-cookie: `sessions.py` asks the proxy whether a cookie is valid, and
-`passthrough.py` passes `/results` through to it. The design is in
+cookie: `login_check.py` asks the proxy whether a cookie is valid, and
+`passthrough.py` passes `/results` through to it. `cookie.py` holds what both
+pods share: the cookie's name and the browser's forwarded origin. The design is in
 [Results behind a login](../../docs/superpowers/specs/2026-09-30-results-proxy-login-design.md).
 
 - Design: [Campaigns as Indexed Jobs](../../docs/superpowers/specs/2026-09-01-indexed-jobs-design.md),
@@ -41,7 +42,9 @@ this directory prunes the shared venv down to the root.
 ```bash
 make install                                    # uv sync --all-packages
 uv run --all-packages pytest -q packages/web    # this package's unit tests
-HTRFLOW_RESULTS_URL=https://results.example.org uv run htrflow-web   # :8081, uses your kubeconfig
+HTRFLOW_RESULTS_URL=https://htr.example.org/results \
+  HTRFLOW_RESULTS_PROXY=http://<results-proxy>:8082/results \
+  uv run htrflow-web                            # :8081, uses your kubeconfig; the proxy is `htrflow-results`
 make build-web                                  # the image, .docker/htrflow-web.dockerfile
 make scan-web                                   # Trivy, HIGH/CRITICAL with a fix fail
 ```
@@ -65,8 +68,8 @@ Phase is derived from the Job: `Succeeded` from its `Complete` condition;
 non-empty `completedIndexes` (the campaign gave up, but what those indexes
 published is there); otherwise `Queued` or `Paused` when suspended (no index
 done yet, or some), else `Running`. Each volume row carries `manifestUrl`,
-`iiifUrl`, `altoPrefix` under the results base, `logUrl` under the shared
-`status/logs/` tree, and `sourceUrl` — the URL half of its `volumes.txt`
+`iiifUrl`, `altoPrefix` under the results base, `logUrl` under the
+namespace's `status/logs/` tree, and `sourceUrl` — the URL half of its `volumes.txt`
 line, null for an `images:` volume or for a URL a browser's URL parser would
 refuse. Only Jobs labelled `app=htrflow-batch` and `managed-by=converter` are
 listed, which excludes the warm-up Jobs — those are read separately
@@ -136,8 +139,8 @@ last apply, frozen once the campaign has finished) are stamped by `apply`.
 |---|---|---|
 | `HTRFLOW_RESULTS_URL` | required | Browser-reachable base every result URL is built from |
 | `HTRFLOW_INTERNAL_RESULTS_BASE` | `HTRFLOW_RESULTS_PROXY` | Where this pod reads progress files, with the caller's session: the chart sets it to the results proxy's Service |
-| `HTRFLOW_RESULTS_PROXY` | required | The results proxy's Service (`http://htrflow-results:8082/results`): asked whether a request's `htr_session` cookie is valid (cached 30 s per cookie), and the target of the `/results` pass-through; every `/api/v1` route answers `401` without a session, `502` when the proxy does not answer |
-| `HTRFLOW_NAMESPACES` | own namespace in-cluster, else `htr-batch` | Comma-separated namespaces to list; the chart leaves it unset |
+| `HTRFLOW_RESULTS_PROXY` | required | The results proxy's Service (`http://htrflow-results:8082/results`): asked whether a request's session cookie (`__Host-htr_session` over HTTPS, `htr_session` over plain HTTP) is valid (cached 30 s per cookie), and the target of the `/results` pass-through; every `/api/v1` route answers `401` without a session, `502` when the proxy does not answer |
+| `HTRFLOW_NAMESPACES` | own namespace in-cluster, else `htr-batch` | Comma-separated namespaces to list; the chart sets the release namespace |
 | `HTRFLOW_WEB_STATIC` | `/app/static` | The built site. Missing directory = API only, which is what a local run gets |
 | `HTRFLOW_WEB_SITE_ONLY` | unset | Any non-empty value: serve the site without a cluster — `/api/v1/…` answers `503`, nothing tries to load a kubeconfig. The local compose stack runs this way |
 | `HTRFLOW_BATCH_VERSION` | `dev` | The release this image is: baked in from the publish tag by `.docker/htrflow-web.dockerfile`, reported by `/api/v1/version` and shown in the page header. Set by the image, never by an operator |

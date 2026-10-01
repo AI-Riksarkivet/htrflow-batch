@@ -329,3 +329,12 @@ def test_every_ci_shell_step_parses_under_bash(where, script):
     expansions to bash, substituted by the CI before it ever sees them."""
     done = subprocess.run(["bash", "-n"], input=script, capture_output=True, text=True)
     assert done.returncode == 0, f"{where}: {done.stderr}"
+
+
+def test_a_new_repo_publishes_under_the_dev_web_fronts_results_url():
+    """`results_url` must equal the chart's `resultsUrl`, which the chart
+    refuses unless it ends in /results: the template starts from the dev
+    cluster's web front, never a bucket URL browsers cannot read."""
+    template = resources.files("htrflow_converter") / "template" / "converter.yaml"
+    cfg = yaml.safe_load(template.read_text(encoding="utf-8"))
+    assert cfg["results_url"] == "http://localhost:30800/results"

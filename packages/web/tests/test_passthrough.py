@@ -42,7 +42,7 @@ def app_with(handler, calls=None):
 def test_a_file_comes_through_with_its_headers():
     def handler(req):
         assert str(req.url) == "http://proxy:8082/results/ns/demo/R1/iiif.json"
-        assert req.headers["cookie"] == "htr_session=tok"
+        assert req.headers["cookie"] == "__Host-htr_session=tok"
         assert req.headers["x-forwarded-proto"] == "https"
         assert req.headers["x-forwarded-host"] == "site.example"
         return httpx.Response(
@@ -56,7 +56,7 @@ def test_a_file_comes_through_with_its_headers():
         )
 
     c = app_with(handler)
-    c.cookies.set("htr_session", "tok")
+    c.cookies.set("__Host-htr_session", "tok")
     r = c.get("/results/ns/demo/R1/iiif.json")
     assert r.status_code == 200 and r.content == b"{}"
     assert r.headers["etag"] == '"e"'
@@ -124,10 +124,27 @@ def test_the_upstream_response_is_closed_after_streaming():
 def test_only_the_session_cookie_is_forwarded():
     calls = []
     c = app_with(lambda req: httpx.Response(200), calls)
-    c.get("/results/ns/x", headers={"Cookie": "other=1; htr_session=tok; x=2"})
-    assert calls[0].headers["cookie"] == "htr_session=tok"
+    c.get(
+        "/results/ns/x",
+        headers={"Cookie": "other=1; __Host-htr_session=tok; x=2"},
+    )
+    assert calls[0].headers["cookie"] == "__Host-htr_session=tok"
     c.get("/results/ns/x", headers={"Cookie": "other=1"})
     assert "cookie" not in calls[1].headers
+
+
+def test_over_https_a_cookie_without_the_prefix_is_not_forwarded():
+    """The name follows the browser's scheme, which the proxy is told in
+    X-Forwarded-Proto: both pods take the same cookie, and a planted
+    `htr_session` on an HTTPS site is nobody's session."""
+    calls = []
+    c = app_with(lambda req: httpx.Response(200), calls)
+    c.get("/results/ns/x", headers={"Cookie": "htr_session=planted"})
+    assert "cookie" not in calls[0].headers
+    plain = TestClient(c.app, base_url="http://site.example")
+    plain.get("/results/ns/x", headers={"Cookie": "htr_session=tok"})
+    assert calls[1].headers["cookie"] == "htr_session=tok"
+    assert calls[1].headers["x-forwarded-proto"] == "http"
 
 
 def test_a_non_ascii_request_header_value_is_not_a_500():
@@ -410,8 +427,8 @@ def test_one_persons_login_never_rides_along_on_another_request():
 
 
 def test_the_web_fronts_other_proxy_clients_keep_no_cookies_either():
+    from htrflow_web.login_check import SessionChecker  # noqa: PLC0415
     from htrflow_web.progress import ProgressReader  # noqa: PLC0415
-    from htrflow_web.sessions import SessionChecker  # noqa: PLC0415
 
     for client in (
         SessionChecker("http://proxy:8082/results")._client,
@@ -439,7 +456,8 @@ def test_the_default_client_carries_no_one_elses_login(monkeypatch):
         seen.append(req.headers.get("cookie"))
         if req.url.path.endswith("/_login"):
             return httpx.Response(
-                204, headers={"set-cookie": "htr_session=alice; Path=/; HttpOnly"}
+                204,
+                headers={"set-cookie": "__Host-htr_session=alice; Path=/; HttpOnly"},
             )
         return httpx.Response(401, content=b"{}")
 
@@ -460,6 +478,6 @@ def test_the_default_client_carries_no_one_elses_login(monkeypatch):
     anonymous = TestClient(app, base_url="https://site.example")
     assert anonymous.get("/results/ns/x").status_code == 401
     bob = TestClient(app, base_url="https://site.example")
-    bob.cookies.set("htr_session", "bob")
+    bob.cookies.set("__Host-htr_session", "bob")
     assert bob.get("/results/ns/x").status_code == 401
-    assert seen == [None, None, "htr_session=bob"]
+    assert seen == [None, None, "__Host-htr_session=bob"]

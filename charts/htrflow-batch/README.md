@@ -42,7 +42,8 @@ device plugin) is a separate chart:
   `credentials` key in AWS ini format plus `S3_BUCKET` (and `S3_ENDPOINT`
   unless real AWS; optional `S3_VERIFY_TLS: "false"` skips the endpoint's
   certificate check) — this chart documents the convention but never creates
-  it. The batch/warm-up Jobs the converter renders read it; for the PoC,
+  it. The batch/warm-up Jobs the converter renders mount it, and the results
+  proxy reads its `S3_ENDPOINT`, `S3_BUCKET` and `S3_VERIFY_TLS`; for the PoC,
   `charts/htrflow-devstack`'s RustFS renders it instead (keep
   `s3.existingSecret` here in step with that chart's `s3.secretName`; the
   bucket's name is the Secret's `S3_BUCKET` key, which that chart writes
@@ -84,32 +85,44 @@ version.
 
 Results are read through a new pod, the results proxy (`htrflow-results`,
 Deployment and Service on the web image), with each logged-in person's own
-store keys. A campaign Job renders as before. Only a missing
-`results.sessionSecret`, or a leftover `web.internalResultsBase`, stops the
-render; `resultsUrl` is not checked, and an unchanged one silently leaves
-the viewer and `/alto` pointing at the old address. So, in one change
-window:
+store keys. A missing `results.sessionSecret`, a leftover
+`web.internalResultsBase`, or a `resultsUrl` that does not end in
+`/results` stops the render. So, in one change window:
 
-1. Set `results.sessionSecret` and change `resultsUrl` by hand to
-   `https://<web front host>/results`.
-2. In **every campaigns repo**, set `converter.yaml`'s `results_url` to the
-   same URL. It becomes each campaign Job's `RESULTS_URL`, and so the URL
-   written into every manifest that Job publishes.
+1. Create the session Secret and set `results.sessionSecret`; set
+   `resultsUrl` to `https://<web front host>/results`.
+2. In **every campaigns repo**, in the same change: set `converter.yaml`'s
+   `results_url` to that same URL (it becomes each campaign Job's
+   `RESULTS_URL`, and so the URL written into every manifest that Job
+   publishes; this release's converter refuses one that does not end in
+   `/results`), and move the wrapper image pin in `pipelines/*.yaml` to this
+   release's wrapper, which writes run logs where the proxy serves them.
+   Bump the hook image and `CONVERTER_REF` to this release too, and in the
+   repo's own CI file (`.github/workflows/render.yml` or
+   `azure-pipelines.yml`) give the chart's policy render
+   `--set resultsUrl=http://ci.invalid/results --set results.sessionSecret=ci-session`,
+   or regenerate the file with `htrflow-campaigns init --ci …`.
 
 | Change | What to do |
 |---|---|
-| **`results.sessionSecret` is required**: the name of a Secret with key `key`, 32 random bytes, base64. It seals the login cookie; rotating it logs everyone out. | `kubectl -n <namespace> create secret generic htr-session --from-literal=key="$(openssl rand -base64 32)"`, then set `results.sessionSecret=htr-session`. |
-| **`resultsUrl` points at the proxy**: `https://<web front host>/results`. Not validated: the chart renders with the old value. | Change it by hand, and set the same value as `converter.yaml`'s `results_url` in every campaigns repo in the same window. Volumes published under the old URL keep it: run them again to open them in the viewer. |
+| **`results.sessionSecret` is required**: the name of a Secret with key `key`, 32 random bytes, base64. It seals the login cookie. Rotating it logs everyone out; the proxy follows the new key without a restart, within the kubelet's Secret sync. | `kubectl -n <namespace> create secret generic htr-session --from-literal=key="$(openssl rand -base64 32)"`, then set `results.sessionSecret=htr-session`. |
+| **`resultsUrl` points at the proxy**: `https://<web front host>/results`. A value that does not end in `/results` is refused, in words that name this change. | Change it, and set the same value as `converter.yaml`'s `results_url` in every campaigns repo in the same window. Volumes published under the old URL keep it: run them again to open them in the viewer. |
+| **The proxy runs the web image's `htrflow-results` program**, new in this release. A `web.image` pinned to an older build has none, and the proxy crash-loops. | Keep the chart's default `web.image`, or pin a web image built from this release. |
+| **Run logs move under the namespace**: the wrapper of this release writes `<namespace>/status/logs/…`, and the proxy serves nothing outside the release's namespace. Logs written at the bucket-root `status/logs/…`, by an older wrapper, are no longer served, and neither are the logs of campaigns still pinned to one. | Move the wrapper pin in every campaigns repo (step 2). Old root-path logs stay in the bucket; delete them when they are no longer wanted. |
+| **A campaigns repo's CI renders this chart's policies** at `CONVERTER_REF`, and this chart refuses that render without `results.sessionSecret` and with a `resultsUrl` off `/results`. A CI file written by an earlier `init` passes `resultsUrl=http://ci.invalid/` and no session Secret, so its Policy job fails once `CONVERTER_REF` names this release. | In the same change as the `CONVERTER_REF` bump, add `--set resultsUrl=http://ci.invalid/results --set results.sessionSecret=ci-session` to the policy render, or regenerate the CI file (step 2). |
+| **The session cookie is `__Host-htr_session` under HTTPS** (`htr_session` only over plain HTTP). | Nothing. A session from an earlier build of the login is no session under HTTPS, so everyone logs in once more. |
 | **`web.internalResultsBase` is refused**, in words that name this change. The web front reads progress through the proxy. | Remove the key from your values. |
 | **`results.keyDerivation`** (`hcp` by default) says how a login becomes S3 keys. | For a store that issues S3 keys (RustFS, MinIO, AWS) set `none`: the login form takes the access key and the secret key. |
 | **The bucket no longer needs anonymous read or CORS.** | After the upgrade, remove both from the bucket. |
-| **Store accounts need read permission** on the release's namespace prefix and on `status/logs/`: they are the logins. | Create or adjust the accounts on the store. |
+| **Store accounts need read permission** on the release's namespace prefix, which holds the run logs too: they are the logins. | Create or adjust the accounts on the store. |
 | **The web front no longer reads the S3 Secret**, and its NetworkPolicy loses its S3 egress; the proxy gets the S3 egress (`network.s3Cidrs`, `network.s3InNamespace`) and an ingress from the web front only. | Nothing. |
 | **`HTRFLOW_S3_VERIFY_TLS` is gone** from the web front; the Secret's `S3_VERIFY_TLS` key now applies to the proxy. | Nothing. |
 
-Behind an Ingress, the chart expects one more forwarding hop in front of the
-proxy, for the login's rate limit; the controller must pass the client's
-address in `X-Forwarded-For` and not believe one the browser sent (see
+Behind an ingress controller in front of a ClusterIP Service (`web.ingress`,
+or an ingress of your own admitted through `network.web.ingressFrom`), the
+chart expects one more forwarding hop in front of the proxy, for the login's
+rate limit; the controller must pass the client's address in
+`X-Forwarded-For` and not believe one the browser sent (see
 [docs/getting-started/deploy.md](../../docs/getting-started/deploy.md#web-front-access)).
 
 ### From 0.14.0 to 0.15.0 — chart first, then the converter
@@ -257,7 +270,8 @@ namespace, never a ClusterRole. It is the one pod in this chart with
 *is* a Kubernetes API client. NetworkPolicy `htr-web` lets browsers in from
 `network.web.ingressCidrs` (behind an ingress controller, `web.ingress`, the
 controller named by `network.web.ingressFrom` instead) and lets it out to DNS, the apiserver and the
-results bucket. The pod also **serves `/config.js` itself**, written from its
+results proxy (`htrflow-results:8082`); it has no S3 egress, since the proxy
+alone reads the bucket. The pod also **serves `/config.js` itself**, written from its
 own environment: `window.API_BASE = "/api/v1"` (same-origin, no proxy) and
 `window.RESULTS_BASE` from `resultsUrl`. There is nothing for an
 operator to overwrite — set `resultsUrl` and the campaign browser
@@ -285,13 +299,19 @@ Added:
   `sessionHours` (8), `keyDerivation` (`hcp` or `none`), `resources`.
 - The web front's `HTRFLOW_RESULTS_PROXY`, and its `HTRFLOW_INTERNAL_RESULTS_BASE`
   set to the proxy's Service.
+- The proxy's `HTRFLOW_TRUSTED_HOPS`, derived: 2 in front of a ClusterIP
+  Service with `web.ingress.enabled` or `network.web.ingressFrom`, else 1.
 
 Changed:
-- **`resultsUrl`** is `https://<web front host>/results`.
+- **`resultsUrl`** is `https://<web front host>/results`, and a value that
+  does not end in `/results` is refused.
 - **The web front no longer touches the S3 Secret** (`HTRFLOW_S3_VERIFY_TLS`
   is gone) and its NetworkPolicy has no S3 egress.
 - **`web.internalResultsBase`** is refused by name.
 - **The S3-nowhere refusal** names the results proxy, not the web front.
+- **The install notes** say how the web front is reached (NodePort,
+  Ingress host, or a ClusterIP Service behind your own ingress) and name
+  the S3 Secret whether or not NetworkPolicies are rendered.
 
 ### 0.15.0 — 2026-09-29 (v0.8.0: S3_VERIFY_TLS)
 

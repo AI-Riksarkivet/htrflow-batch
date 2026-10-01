@@ -58,6 +58,7 @@ def test_the_fixture_carries_what_the_routes_add_to_the_projection():
     assert [(e["status"], sorted(e["body"])) for e in doc["errors"]] == [
         (404, ["detail"]),
         (502, ["detail"]),
+        (502, ["detail"]),
         (503, ["detail"]),
     ]
     warmups = {row["name"]: row["warmup"] for row in doc["summaries"]}
@@ -96,3 +97,28 @@ def test_only_the_scored_campaign_says_it_scores_page_quality():
     }
     for d in doc["details"]:
         assert d["qualityPrediction"] is (d["name"] == "kyrk")
+
+
+def test_the_contract_is_read_through_the_login_gate_and_the_proxy():
+    """Generated with the gate off and a direct bucket read, the fixture
+    described an API no deployment serves. It is read as a logged-in caller,
+    progress comes through the results proxy, and every link is under the
+    chart's `<web front>/results`."""
+    import tempfile
+
+    from api_contract import CFG, ContractReader, create
+    from fastapi.testclient import TestClient
+
+    assert CFG.results_url.endswith("/results")
+    assert CFG.internal_results_base == CFG.results_proxy
+    with tempfile.TemporaryDirectory() as site:
+        anonymous = TestClient(create(ContractReader(), site))
+        assert anonymous.get("/api/v1/jobs").status_code == 401
+    links = [
+        v[key]
+        for d in build()["details"]
+        for v in d["volumes"]
+        for key in ("iiifUrl", "manifestUrl", "logUrl")
+        if v.get(key)
+    ]
+    assert links and all(u.startswith(CFG.results_url + "/htr-test/") for u in links)

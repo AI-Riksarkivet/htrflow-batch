@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
-from .sessions import no_cookie_jar
+from .cookie import browser_cookie, forwarded, no_cookie_jar
 
 _LOG = logging.getLogger("htrflow_web.passthrough")
 
@@ -29,7 +29,6 @@ _DOWN = (
     "www-authenticate",
 )
 _PREFIX = b"/results/"
-_COOKIE = "htr_session"
 _MAX_BODY = 16 * 1024
 
 
@@ -38,7 +37,7 @@ def proxy_client(
 ) -> httpx.AsyncClient:
     """One client for everyone's requests, so it must keep no cookies: the
     login's Set-Cookie would otherwise ride along on every later request
-    that arrives without one (sessions.no_cookie_jar)."""
+    that arrives without one (cookie.no_cookie_jar)."""
     return httpx.AsyncClient(
         timeout=httpx.Timeout(10.0, read=60.0),
         cookies=no_cookie_jar(),
@@ -77,15 +76,15 @@ def results_route(
         headers[b"x-forwarded-for"] = (f"{prior}, {peer}" if prior else peer).encode(
             "latin-1"
         )
-        headers[b"x-forwarded-proto"] = request.headers.get(
-            "x-forwarded-proto", request.url.scheme
-        ).encode("latin-1")
-        headers[b"x-forwarded-host"] = request.headers.get(
-            "x-forwarded-host", request.headers.get("host", "")
-        ).encode("latin-1")
-        cookie = request.cookies.get(_COOKIE)
+        proto, host = forwarded(request.headers, request.url.scheme)
+        headers[b"x-forwarded-proto"] = proto.encode("latin-1")
+        headers[b"x-forwarded-host"] = host.encode("latin-1")
+        # Under the name the browser keeps it by, which the proxy derives
+        # from the X-Forwarded-Proto above by the same rule.
+        name = browser_cookie(request.headers, request.url.scheme)
+        cookie = request.cookies.get(name)
         if cookie is not None:
-            headers[b"cookie"] = f"{_COOKIE}={cookie}".encode("utf-8", "replace")
+            headers[b"cookie"] = f"{name}={cookie}".encode("utf-8", "replace")
         body = None
         if request.method == "POST":
             too_big = JSONResponse({"detail": "body too large"}, status_code=413)

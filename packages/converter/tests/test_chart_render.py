@@ -75,6 +75,12 @@ IIIF_NOWHERE_REFUSAL = (
 RESULTS_BASE_REFUSAL = (
     "resultsUrl is required (the read API serves S3 links built from it)"
 )
+RESULTS_URL_SHAPE_REFUSAL = (
+    "resultsUrl must end in /results (chart 0.16.0): browsers read results"
+    " through the results proxy on the web front, at https://<web front"
+    " host>/results, never from the bucket; set it to that, and converter.yaml's"
+    " results_url to the same value"
+)
 #: publicResultsBase was renamed; the schema lets the old key through so
 #: this sentence, not an unknown-key error, is what its author reads.
 RESULTS_BASE_RENAMED_REFUSAL = (
@@ -367,6 +373,58 @@ def test_ingress_mode_admits_the_controller_not_address_ranges():
         }
     ]
     assert rule["ports"] == [{"port": 8081}]
+
+
+def install_notes(sets: tuple[str, ...], tmp_path: Path) -> str:
+    """What `helm install` prints after an install. NOTES.txt renders only on
+    an install, which needs a cluster under Helm 3, so a copy of the chart
+    defines it as a named template and a one-key manifest prints it."""
+    chart = tmp_path / "chart"
+    shutil.copytree(CHART, chart)
+    notes = (chart / "templates" / "NOTES.txt").read_text(encoding="utf-8")
+    (chart / "templates" / "NOTES.txt").unlink()
+    (chart / "templates" / "_notes.tpl").write_text(
+        '{{- define "notes" -}}\n' + notes + "{{- end }}\n", encoding="utf-8"
+    )
+    (chart / "templates" / "notes.yaml").write_text(
+        '{{ dict "notes" (include "notes" .) | toYaml }}\n', encoding="utf-8"
+    )
+    result = helm_template(values=REQUIRED_VALUES, sets=sets, chart=chart)
+    assert result.returncode == 0, result.stderr
+    (doc,) = [d for d in yaml.safe_load_all(result.stdout) if d and set(d) == {"notes"}]
+    return doc["notes"]
+
+
+@pytest.mark.parametrize(
+    "sets,says",
+    [
+        (DEFAULT_SETS, "Service htrflow-web on NodePort 30800"),
+        (
+            REQUIRED_SETS + (POLICIES_OFF,) + INGRESS,
+            "Ingress at https://htr.example.org/",
+        ),
+        (
+            REQUIRED_SETS + (POLICIES_OFF, "web.service.type=ClusterIP") + INGRESS[-1:],
+            "ClusterIP Service htrflow-web:8081, behind an ingress of your own",
+        ),
+    ],
+    ids=["nodeport", "ingress", "operators-own-ingress"],
+)
+def test_the_install_notes_say_how_the_web_front_is_reached(
+    sets: tuple[str, ...], says: str, tmp_path: Path
+):
+    notes = install_notes(sets, tmp_path)
+    assert says in notes
+    assert ("NodePort" in notes) is ("NodePort" in says)
+
+
+def test_the_install_notes_name_the_s3_secret_without_network_policies(
+    tmp_path: Path,
+):
+    """The campaign Jobs and the results proxy read it whether or not
+    NetworkPolicies are rendered."""
+    notes = install_notes(DEFAULT_SETS + ("network.enabled=false",), tmp_path)
+    assert "S3 Secret htr-batch-s3" in notes
 
 
 def test_ingress_from_refuses_an_address_range():
@@ -1462,6 +1520,13 @@ BATCH_GUARDS = {
         DEFAULT_SETS + ("resultsUrl=",),
         RESULTS_BASE_REFUSAL,
     ),
+    # A 0.15 value (the bucket's own URL) would render and leave the viewer
+    # and /alto pointing at a bucket browsers may no longer read.
+    "results-url-not-the-proxy": (
+        None,
+        DEFAULT_SETS + ("resultsUrl=https://s3.example.org/htr-results",),
+        RESULTS_URL_SHAPE_REFUSAL,
+    ),
     "results-base-renamed": (
         None,
         DEFAULT_SETS + ("publicResultsBase=https://results.example.org/r",),
@@ -1600,6 +1665,14 @@ def test_the_render_every_case_breaks_is_one_no_guard_refuses(chart: Path):
     """Each case is this render with one thing broken; if this one were
     refused, a case could pass on some other guard's sentence."""
     result = helm_template(sets=GUARDED_CHARTS[chart][1], chart=chart)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "url", ["https://htr.example.org/results", "http://192.0.2.20:30800/results/"]
+)
+def test_a_results_url_on_the_proxy_renders_with_or_without_a_slash(url: str):
+    result = helm_template(sets=DEFAULT_SETS + (f"resultsUrl={url}",))
     assert result.returncode == 0, result.stderr
 
 
@@ -1996,6 +2069,17 @@ def test_the_results_proxy_holds_no_token_and_no_bucket_credential():
     )
 
 
+def test_the_session_key_is_mounted_so_a_rotation_reaches_the_proxy():
+    """The proxy re-reads its key file when it changes, which ends every
+    session sealed under the old key. The kubelet updates a Secret volume
+    in place, but never one mounted by subPath."""
+    objs = render(sets=DEFAULT_SETS)
+    spec = named(objs, "Deployment", "htrflow-results")["spec"]["template"]["spec"]
+    mounts = {m["name"]: m for m in spec["containers"][0]["volumeMounts"]}
+    assert mounts["session"]["mountPath"] == "/secrets/session"
+    assert "subPath" not in mounts["session"]
+
+
 @pytest.mark.parametrize(
     "extra,hops",
     [
@@ -2009,12 +2093,38 @@ def test_the_results_proxy_holds_no_token_and_no_bucket_credential():
             ),
             "2",
         ),
+        (
+            (
+                "web.service.type=ClusterIP",
+                "network.web.ingressFrom[0].podSelector.matchLabels.app=traefik",
+            ),
+            "2",
+        ),
+        # A NodePort lets a browser in directly, past whatever ingressFrom
+        # names (with network.enabled=false nothing enforces it): it must not
+        # choose the entry the limit counts.
+        (
+            (
+                "network.enabled=false",
+                "network.web.ingressFrom[0].podSelector.matchLabels.app=traefik",
+            ),
+            "1",
+        ),
     ],
-    ids=["direct", "behind-ingress"],
+    ids=[
+        "direct",
+        "behind-ingress",
+        "behind-the-operators-own-ingress",
+        "nodeport-with-ingressfrom",
+    ],
 )
 def test_the_proxy_trusts_as_many_forwarding_hops_as_sit_in_front_of_it(extra, hops):
     """The Ingress controller and the web front each append to
-    X-Forwarded-For; the login's rate limit reads the client from the right."""
+    X-Forwarded-For; the login's rate limit reads the client from the right.
+    An operator's own Ingress, admitted through network.web.ingressFrom
+    without the chart's, is a controller in front all the same: counted as
+    one hop less, every browser would share the controller's address and
+    five wrong passwords a minute would block every login."""
     objs = render(sets=DEFAULT_SETS + extra)
     env = {
         e["name"]: e.get("value")

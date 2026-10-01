@@ -8,7 +8,7 @@
 // there is no derivation layer left to keep them in.
 import { z } from "zod";
 import { resolveApiBase, resolveResultsBase } from "./config.js";
-import { goToLogin } from "./session.js";
+import { errorDetail, goToLogin } from "./session.js";
 
 /**
  * Only absolute http(s) URLs may reach an href/src: query strings and
@@ -377,9 +377,15 @@ export type CampaignQuality = z.infer<typeof campaignQualitySchema>;
  * since every response is computed live from the Kubernetes API.
  */
 export class ApiUnreachable extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
+  /** The service's own `detail` sentence, when it answered with one. */
+  readonly detail: string | undefined;
+  constructor(
+    message: string,
+    options?: { cause?: unknown; detail?: string | undefined },
+  ) {
     super(message, options);
     this.name = "ApiUnreachable";
+    this.detail = options?.detail;
   }
 }
 
@@ -409,7 +415,10 @@ async function getResponse(
     goToLogin();
     throw new NotLoggedIn("not logged in");
   }
-  if (!res.ok) throw new ApiUnreachable(`HTTP ${res.status}`);
+  if (!res.ok)
+    throw new ApiUnreachable(`HTTP ${res.status}`, {
+      detail: await errorDetail(res),
+    });
   return res;
 }
 

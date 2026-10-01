@@ -29,7 +29,8 @@ from htrflow_web.kube import (
     ApplyConflict,
     ClusterUnavailable,
 )
-from htrflow_web.projection import FAILURES_MANAGER
+from htrflow_web.progress import ProgressReader
+from htrflow_web.projection import FAILURES_MANAGER, Tally
 
 JOB = {
     "metadata": {
@@ -148,6 +149,9 @@ class FakeProgress:
     def forbidden(self, results_base: str, volume_id: str, state: str) -> bool:
         return volume_id in self.refused
 
+    def tally(self, results_base: str, key: str) -> Tally:
+        return Tally()  # nothing outlives the request: every read counts anew
+
     def for_session(self, session):
         return self
 
@@ -162,7 +166,7 @@ class FakeSessions:
         self.users = users if users is not None else {"tok": "anna"}
 
     def check(self, cookie):
-        from htrflow_web.sessions import Session
+        from htrflow_web.login_check import Session
 
         user = self.users.get(cookie or "")
         return Session(user, cookie) if user else None
@@ -178,10 +182,21 @@ def test_the_api_is_401_without_a_session():
     assert c.get("/api/v1/jobs").status_code == 200
 
 
+def test_over_https_the_api_takes_only_the_prefixed_cookie():
+    c = TestClient(
+        create_app(FakeReader(), progress=FakeProgress(), sessions=FakeSessions()),
+        base_url="https://site.example",
+    )
+    c.cookies.set("htr_session", "tok")
+    assert c.get("/api/v1/jobs").status_code == 401
+    c.cookies.set("__Host-htr_session", "tok")
+    assert c.get("/api/v1/jobs").status_code == 200
+
+
 def test_every_api_answer_is_private_and_unstored():
     """Each /api/v1 answer is one person's view: no shared cache may keep
     it, and no browser cache past the page -- the 401 and 502 included."""
-    from htrflow_web.sessions import SessionsUnavailable
+    from htrflow_web.login_check import SessionsUnavailable
 
     c = TestClient(
         create_app(FakeReader(), progress=FakeProgress(), sessions=FakeSessions())
@@ -220,7 +235,7 @@ def test_the_site_itself_needs_no_session():
 
 
 def test_a_session_check_that_cannot_be_made_is_502():
-    from htrflow_web.sessions import SessionsUnavailable
+    from htrflow_web.login_check import SessionsUnavailable
 
     class Down:
         def check(self, cookie):
@@ -441,7 +456,9 @@ def test_job_detail_carries_each_volume_progress_and_the_campaign_total():
     assert (body["pagesDone"], body["pagesTotal"]) == (137, 638)
     assert (body["pagesFailed"], body["errors"]) == (1, 2)
     assert body["lastError"]["volume"] == "vol0"
-    assert body["lastError"]["logUrl"].endswith("/status/logs/demo-v1/vol0.txt")
+    assert body["lastError"]["logUrl"].endswith(
+        "/htr-test/status/logs/demo-v1/vol0.txt"
+    )
 
 
 def test_a_volume_the_proxy_refused_is_forbidden_in_the_answer():
@@ -451,6 +468,129 @@ def test_a_volume_the_proxy_refused_is_forbidden_in_the_answer():
     body = client.get("/api/v1/jobs/htr-test/kyrk").json()
     # vol1 is pending: nothing of it was read, so nothing was refused.
     assert [v["forbidden"] for v in body["volumes"]] == [True, False]
+
+
+class FinishedReader(FakeReader):
+    """FakeReader's campaign, finished, over ``n`` volumes."""
+
+    def __init__(self, n: int) -> None:
+        self.job = copy.deepcopy(JOB)
+        self.job["spec"]["completions"] = n
+        self.job["status"] = {
+            "completedIndexes": f"0-{n - 1}",
+            "conditions": [{"type": "Complete", "status": "True"}],
+        }
+        lines = "".join(f"vol{i}\thttps://iiif.example.org/{i}\n" for i in range(n))
+        self.campaign = {**CONFIGMAP, "data": {"volumes.txt": lines}}
+
+    def list_jobs(self) -> list[dict]:
+        return [self.job]
+
+    def get_job(self, namespace: str, name: str) -> dict | None:
+        return self.job if name == "kyrk" else None
+
+    def get_configmap(self, namespace: str, name: str) -> dict | None:
+        if name == "campaign-kyrk":
+            return self.campaign
+        return super().get_configmap(namespace, name)
+
+
+def _detail_rounds(reader, handler, rounds):
+    """``(GETs, counted)`` per detail read, through the real ProgressReader."""
+    asked: list[str] = []
+
+    def counting(req):
+        asked.append(str(req.url))
+        return handler(req)
+
+    client = TestClient(
+        create_app(
+            reader,
+            progress=ProgressReader(
+                httpx.Client(transport=httpx.MockTransport(counting))
+            ),
+        )
+    )
+    out, body = [], {}
+    for _ in range(rounds):
+        asked.clear()
+        body = client.get("/api/v1/jobs/htr-test/kyrk").json()
+        out.append((len(asked), body["pagesCoverage"]["counted"]))
+    return out, body
+
+
+def test_a_finished_campaign_the_caller_may_not_read_settles():
+    """A 403 is the store's answer about this caller and this volume: it is
+    counted and kept like any other answer about a finished volume, so the
+    campaign settles, the store is not asked again, and every row on the
+    page says the account may not read it."""
+    rounds, body = _detail_rounds(
+        FinishedReader(300), lambda req: httpx.Response(403), 4
+    )
+    assert rounds == [(100, 100), (100, 200), (100, 300), (0, 300)]
+    assert body["pagesCoverage"] == {"counted": 300, "of": 300}
+    assert len(body["volumes"]) == 200
+    assert all(v["forbidden"] for v in body["volumes"])
+
+
+def _two_readers(monkeypatch, reader, rounds=40, between=None):
+    """``{cookie: (GETs, counted)}`` of each reader's last detail read, two
+    readers taking turns, under a progress cache of 2000 answers (ten times
+    smaller than the real one, like the campaigns below). ``between(i)``
+    runs before round ``i``."""
+    from htrflow_web import progress as progress_mod  # noqa: PLC0415
+
+    monkeypatch.setattr(progress_mod, "MAX_ENTRIES", 2000)
+    asked: list[str] = []
+
+    def handler(req):
+        asked.append(req.headers.get("cookie", ""))
+        return httpx.Response(200, json={"pages_total": 2, "pages_done": 2})
+
+    app = create_app(
+        reader,
+        progress=ProgressReader(httpx.Client(transport=httpx.MockTransport(handler))),
+        sessions=FakeSessions({"a": "anna", "b": "bo"}),
+    )
+    readers = {}
+    for cookie in ("a", "b"):
+        readers[cookie] = TestClient(app)
+        readers[cookie].cookies.set("htr_session", cookie)
+    last, body = {}, {}
+    for i in range(rounds):
+        if between is not None:
+            between(i)
+        for cookie, client in readers.items():
+            asked.clear()
+            body = client.get("/api/v1/jobs/htr-test/kyrk").json()
+            last[cookie] = (len(asked), body["pagesCoverage"]["counted"])
+    return last, body
+
+
+def test_two_readers_of_a_large_finished_campaign_both_settle(monkeypatch):
+    """Each reader's totals hold however many volumes the campaign has and
+    however many people read it: 1200 volumes, two readers, a cache of 2000
+    answers."""
+    last, body = _two_readers(monkeypatch, FinishedReader(1200))
+    assert last == {"a": (0, 1200), "b": (0, 1200)}
+    assert body["pagesDone"] == 2400
+
+
+def test_a_volume_that_finishes_keeps_the_rest_of_the_tally(monkeypatch):
+    """A running campaign's finished volumes stay summed when one more
+    finishes: only the newcomer is read, late in the campaign included."""
+    reader = FinishedReader(1200)
+    reader.job["status"] = {"completedIndexes": "0-1198", "conditions": []}
+
+    def finish_the_last(i):
+        if i == 39:  # the last round: no time to read everything again
+            reader.job["status"] = {
+                "completedIndexes": "0-1199",
+                "conditions": [{"type": "Complete", "status": "True"}],
+            }
+
+    last, _ = _two_readers(monkeypatch, reader, between=finish_the_last)
+    assert last == {"a": (1, 1200), "b": (1, 1200)}  # the newcomer alone
 
 
 def test_job_detail_carries_the_pipeline_steps_and_yaml(client: TestClient):
@@ -632,16 +772,24 @@ def test_job_detail_carries_the_warmup_field_too():
 
 
 def test_the_only_mutating_call_is_the_campaign_record():
-    """RBAC is get/list/watch on jobs and pods, and create/patch on
-    ConfigMaps for the one write there is: the per-campaign status ConfigMap
-    (B76). Nothing here may ever delete, or write a Job or a Pod."""
+    """RBAC is get/list on jobs and pods, and create/patch on ConfigMaps for
+    the one write there is: the per-campaign status ConfigMap (B76). Nothing
+    may ever delete, or write a Job or a Pod. kube.py is the only module
+    that holds a Kubernetes client, so it is the one checked."""
     src = Path(__file__).parent.parent / "src" / "htrflow_web"
-    offenders = []
+    holders = [
+        p.name
+        for p in src.rglob("*.py")
+        if re.search(r"^\s*(from|import) kubernetes\b", p.read_text(), re.M)
+    ]
+    assert holders == ["kube.py"]
+    kube = src / "kube.py"
     pattern = re.compile(r"\.(create_|patch_|delete_|replace_)\w*\(")
-    for path in src.rglob("*.py"):
-        for lineno, line in enumerate(path.read_text().splitlines(), start=1):
-            if pattern.search(line) and "patch_namespaced_config_map" not in line:
-                offenders.append(f"{path}:{lineno}: {line.strip()}")
+    offenders = [
+        f"kube.py:{lineno}: {line.strip()}"
+        for lineno, line in enumerate(kube.read_text().splitlines(), start=1)
+        if pattern.search(line) and "patch_namespaced_config_map" not in line
+    ]
     assert offenders == []
 
 
@@ -982,7 +1130,9 @@ def test_the_detail_of_a_reaped_campaign_still_opens_its_volumes():
     base = "https://results.example.org/htr-test/demo-v1"
     assert body["volumes"][0]["iiifUrl"] == f"{base}/vol9/iiif.json"
     assert body["volumes"][0]["altoPrefix"] == f"{base}/vol9/alto/"
-    assert body["volumes"][0]["logUrl"].endswith("/status/logs/demo-v1/vol9.txt")
+    assert body["volumes"][0]["logUrl"].endswith(
+        "/htr-test/status/logs/demo-v1/vol9.txt"
+    )
     assert [v["state"] for v in body["volumes"]] == ["done", "failed", "done"]
     assert body["volumes"][1]["reason"]["error"] == "manifest 404"
     assert [v["id"] for v in body["failures"]] == ["vol8"]

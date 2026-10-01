@@ -752,6 +752,35 @@ def test_the_all_failed_guard_does_not_fire_on_a_resumed_run(env, cfg, s3):
     assert body["results"]["0001"]["status"] == "skipped"
 
 
+@pytest.mark.parametrize(
+    "failures,prefix",
+    [
+        ("0", "transient failure in verify: "),
+        ("3", "transient failure in verify on the last attempt: "),
+    ],
+)
+def test_a_transient_failure_on_the_last_attempt_says_no_retry_follows(
+    env, s3, monkeypatch, caplog, failures, prefix
+):
+    """The run viewer follows a volume through a transient failure, waiting
+    for the retry. On the index's last attempt no retry comes, and the line
+    says so in the shape the viewer reads as a failed run
+    (frontend/src/lib/runlog.ts)."""
+    real = ResultStore.upload_page
+
+    def drop_0002(self, name, files, source=None):
+        if name != "0002":
+            return real(self, name, files, source)
+
+    monkeypatch.setattr(ResultStore, "upload_page", drop_0002)
+    env = dict(env, INDEX_FAILURE_COUNT=failures, BACKOFF_LIMIT_PER_INDEX="3")
+    with caplog.at_level("ERROR"):
+        assert main(env, process_page_factory=fake_factory) == EXIT_TRANSIENT
+    line = next(m for m in caplog.messages if "failure in" in m)
+    assert line.startswith(prefix)
+    assert ("no retry follows" in line) == (failures == "3")
+
+
 def test_a_missing_page_is_still_a_verify_failure(env, cfg, s3, monkeypatch):
     """A page that is neither in the bucket nor recorded as failed is an
     inconsistency, not an outcome: that stays transient."""
@@ -1138,6 +1167,17 @@ def test_run_log_is_shipped_to_the_status_tree(env, cfg, s3):
     assert "status/logs/demo-v1/SE-RA-1234.txt" not in [
         k for k in _keys(s3, cfg) if k.startswith("demo-v1/")
     ]
+
+
+def test_the_run_log_lives_under_the_namespace_prefix(env, cfg, s3):
+    """Under S3_PREFIX like every other key: the results proxy serves only
+    keys under the release's namespace, and two releases sharing a bucket
+    must not write each other's logs."""
+    rc = main(dict(env, S3_PREFIX="htr-test"), process_page_factory=fake_factory)
+    assert rc == EXIT_OK
+    keys = _keys(s3, cfg)
+    assert "htr-test/status/logs/demo-v1/SE-RA-1234.txt" in keys
+    assert not [k for k in keys if k.startswith("status/")]
 
 
 def test_the_run_log_carries_no_per_request_url(env, cfg, s3):

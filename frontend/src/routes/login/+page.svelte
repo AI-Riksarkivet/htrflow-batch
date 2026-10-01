@@ -1,36 +1,29 @@
 <script lang="ts">
-  import { login, safeNext } from "$lib/session.js";
+  import { LOGIN_UNREACHABLE, login, safeNext } from "$lib/session.js";
 
   let username = $state("");
   let password = $state("");
   let error = $state("");
   let busy = $state(false);
 
-  const messages = {
-    wrong: "The result store did not accept that user name or password.",
-    throttled: "Too many failed attempts. Wait a minute and try again.",
-    malformed: "The user name or password is too long or malformed.",
-    store: "The result store could not be reached. Try again shortly.",
-  } as const;
-
   async function submit(e: SubmitEvent) {
     e.preventDefault();
     busy = true;
     error = "";
-    let outcome: Awaited<ReturnType<typeof login>>;
+    let refused: string | null;
     try {
-      outcome = await login(username, password);
+      refused = await login(username, password);
     } catch {
-      outcome = "store";
+      refused = LOGIN_UNREACHABLE;
     }
     busy = false;
     password = "";
-    if (outcome === "ok") {
+    if (refused === null) {
       location.assign(
         safeNext(new URLSearchParams(location.search).get("next")),
       );
     } else {
-      error = messages[outcome];
+      error = refused;
     }
   }
 </script>

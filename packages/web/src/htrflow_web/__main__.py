@@ -26,10 +26,10 @@ def main() -> None:
 
 def results_app_from_env(env=None):
     from .results import ResultsConfig, create_results_app
-    from .session import SessionCodec, load_key
+    from .session import KeyFileCodec
 
     cfg = ResultsConfig.from_env(env)
-    codec = SessionCodec(load_key(cfg.session_key_file), cfg.session_hours)
+    codec = KeyFileCodec(cfg.session_key_file, cfg.session_hours)
     if not cfg.s3_verify_tls:
         import logging
 

@@ -31,7 +31,7 @@ This page lists every signal and who reads it.
 | Workload conditions `QuotaReserved`, `Admitted`, `Finished`, `Evicted` | Kueue | operator ([Troubleshooting](../getting-started/troubleshooting.md)) | no. The Workload is owned by the Job |
 | Events: `Suspended`, `Resumed`, `SuccessfulCreate`, `Killing`, `FailedIndexes` | Kueue, Job controller, kubelet | operator (`kubectl get events`) | no, and the API server drops them after its event TTL (an hour by default) |
 | Warm-up marker `/data/warmup/<pipeline-id>.done`, in the recipe's own directory of the cache (`<pipeline-id>-<recipe sha256>/` on the volume) | The warm-up Job, before it logs success | Every batch pod's init container of the same recipe | **yes**, it lives on the cache PVC |
-| Run log `status/logs/<pipeline>/<volume>.txt` | wrapper, every 15 s and once on every exit path | Run viewer, operator ([below](#the-run-log)) | **yes** |
+| Run log `<namespace>/status/logs/<pipeline>/<volume>.txt` | wrapper, every 15 s and once on every exit path | Run viewer, operator ([below](#the-run-log)) | **yes** |
 | `page/NNNN.xml` and `alto/NNNN.xml` | wrapper uploader, PAGE first, each with the `source-digest` of its image as object metadata | Resume (both must exist, and the ALTO's digest must match the page's source now), verify, the viewer | **yes** |
 | `progress.json` | wrapper, after every page outcome and at every stage change, and with stage `failed` on any exit that is not a success | The read API, and so the campaign page's page counts and its failure notice. It caches each: 5 s for a running volume, an hour once it is over | **yes** |
 | `iiif.json`, `pipeline.yaml` | Publish, after verify. `iiif.json` covers the pages that came out, so a volume with a failed page is one canvas short. `iiif.json` is also written every 10 pages *during* the run, covering the pages done so far | The Universal Viewer, and a person reading the recipe back | **yes** |
@@ -68,10 +68,11 @@ rather than missing:
 
 The campaign browser follows a running volume without anything writing a
 status document for it. **The pod ships its own log to S3.** The browser reads
-the log straight from S3, and asks the read API, the only component with
-cluster credentials, which volumes exist and what state they are in.
+the log through the results proxy, with the logged-in person's own store
+keys, and asks the read API, the only component with cluster credentials,
+which volumes exist and what state they are in.
 
-![The live run log: the wrapper claims the key, ships the buffer every 15 s and once more on exit, while the log view reads it](../assets/diagrams/seq-run-log.svg)
+![The live run log: the wrapper claims the key, ships the buffer every 15 s and once more on exit, while the log view reads it through the results proxy](../assets/diagrams/seq-run-log.svg)
 
 ### Wrapper side (`htrflow_batch.logship`)
 
@@ -101,10 +102,11 @@ cluster credentials, which volumes exist and what state they are in.
   dropped with a marker line, keeping the first 1 MiB and the last 2 MiB, cut
   on line boundaries. A pathological run cannot grow memory or upload size
   without bound.
-- **The key.** `status/logs/<PIPELINE_ID>/<VOLUME_REF>.txt`, at the bucket
-  root. It is a shared `status/` namespace, deliberately not under the volume
-  prefix. `LOG_SHIP_SECONDS=0` disables periodic shipping, and `finish` still
-  ships.
+- **The key.** `<namespace>/status/logs/<PIPELINE_ID>/<VOLUME_REF>.txt`:
+  under the release's namespace prefix (`S3_PREFIX`) like every other key, so
+  two releases sharing a bucket keep their logs apart, but not under the
+  volume prefix. `LOG_SHIP_SECONDS=0` disables periodic shipping, and
+  `finish` still ships.
 
 **Limits.** Only Python-level writes are teed. Anything writing to file
 descriptors 1 and 2 directly, such as CUDA and C++ warnings or subprocesses,
@@ -116,11 +118,11 @@ or set `LOG_SHIP_SECONDS=0`.
 
 - **`logUrl`.** `GET /api/v1/jobs/{namespace}/{name}` returns a
   deterministic, **absolute** `logUrl`,
-  `<results-url>/status/logs/<pipeline>/<volume>.txt`, for every volume
-  row regardless of state. There is no existence check and nothing is cached.
-  The URL is absolute because the browser has no bucket base URL of its own:
-  the API is the component that knows the results base. The browser fetches
-  `logUrl` directly and treats a 404 as "no log yet".
+  `<results-url>/<namespace>/status/logs/<pipeline>/<volume>.txt`, for every
+  volume row regardless of state. There is no existence check and nothing is
+  cached. The URL is absolute because the API is the component that knows the
+  results URL. The browser fetches `logUrl` through the results proxy, with
+  its session cookie, and treats a 404 as "no log yet".
 - **Retries.** A retry does not retire or copy the key. The wrapper claims
   the same key again at the start of the new attempt, so the new attempt's log
   overwrites the previous one. The log is the complete evidence for the most
@@ -128,16 +130,25 @@ or set `LOG_SHIP_SECONDS=0`.
   termination message, is the failure summary for as long as the failed pod
   exists.
 - **Access.** Run logs are read through the results proxy, so a person needs a
-  login and an account the store lets read `status/logs/*`
-  ([Security](security.md#the-results-boundary)).
+  login and an account the store lets read the namespace's prefix; the proxy
+  serves nothing outside it ([Security](security.md#the-results-boundary)).
 
 ### Browser side
 
-The run viewer (`/log`) follows a running volume live and stops at the
-wrapper's terminal line, a complete `manifest.json`, or a run of failed polls
-([Web front & read API](../reference/web.md)). The terminal lines it keys on
-are `[<volume>] COMPLETE <n> pages`, `permanent failure in <stage>:` and
-`transient failure in <stage>:`; a SIGTERMed attempt ends with the last.
+The run viewer (`/log`) follows a running volume live
+([Web front & read API](../reference/web.md)). It reads the last terminal line
+the wrapper wrote:
+
+- `[<volume>] COMPLETE <n> pages`, or a complete `manifest.json`: finished,
+  and it stops.
+- `permanent failure in <stage>:`, or a transient failure that says
+  `on the last attempt` and that no retry follows: failed, and it stops.
+- Any other `transient failure in <stage>:` (a SIGTERMed attempt ends with
+  one too): the attempt failed and a retry is pending, so it keeps polling
+  and shows the retry's log when it starts.
+
+It also stops after a run of failed polls, or when the proxy refuses the log
+(401 or 403).
 
 ## Known limits
 

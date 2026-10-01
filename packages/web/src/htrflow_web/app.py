@@ -34,10 +34,11 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import projection
+from .cookie import session_token
 from .kube import ApplyConflict, ClusterUnavailable, is_campaign
+from .login_check import Session, SessionChecker, SessionsUnavailable
 from .passthrough import results_route
 from .progress import ProgressReader
-from .sessions import COOKIE, Session, SessionChecker, SessionsUnavailable
 
 _LOG = logging.getLogger(__name__)
 
@@ -76,11 +77,14 @@ API_CACHE_CONTROL = "private, no-store"
 #: keyword would make a browser ignore the keyword (2026-09-16, the viewer
 #: rendered unstyled under the hashed policy). Script stays hashed: an
 #: injected style is a layout nuisance, an injected script is the bucket.
+#: The manifest's metadata is rendered on this origin, so no form on the
+#: page may post anywhere else, and no <base> may move its links.
 UV_CSP = (
     "default-src 'self'; script-src 'self'{scripts}; "
     "style-src 'self' 'unsafe-inline'; "
     "object-src 'none'; img-src * data: blob:; connect-src *; "
-    "worker-src 'self' blob:; frame-ancestors 'none'"
+    "worker-src 'self' blob:; form-action 'self'; base-uri 'none'; "
+    "frame-ancestors 'none'"
 )
 
 
@@ -396,7 +400,7 @@ def create_app(
         if sessions is None:
             return None
         try:
-            found = sessions.check(request.cookies.get(COOKIE))
+            found = sessions.check(session_token(request))
         except SessionsUnavailable as e:
             _LOG.warning("session check failed: %s", e)
             raise HTTPException(
@@ -684,6 +688,7 @@ def create_app(
             fetch_progress=bound.fetch if bound is not None else None,
             cached_progress=bound.cached if bound is not None else None,
             forbidden_progress=bound.forbidden if bound is not None else None,
+            tally_progress=bound.tally if bound is not None else None,
         )
         status_name = f"{cm_name or 'campaign-' + name}{projection.STATUS_SUFFIX}"
         live = reader.get_configmap(namespace, status_name)
@@ -730,6 +735,7 @@ def create_app(
             fetch_progress=bound.fetch if bound is not None else None,
             cached_progress=bound.cached if bound is not None else None,
             forbidden_progress=bound.forbidden if bound is not None else None,
+            tally_progress=bound.tally if bound is not None else None,
         )
 
     def _warmup_status(

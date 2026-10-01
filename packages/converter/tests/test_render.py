@@ -316,7 +316,7 @@ def test_s3_prefix_is_always_the_namespace():
     with pytest.raises(ValidationError):
         ConverterConfig(
             namespace="htr-test",
-            results_url="https://results.example.org",
+            results_url="https://htr.example.org/results",
             retired_flag=True,
         )
 
@@ -742,10 +742,10 @@ def test_the_records_results_base_has_no_doubled_slash():
     that ends in one wrote a different resultsBase for the same campaign,
     and two managers disagreeing on a value is a conflict (3081)."""
     _, _, cfg = _kyrk()
-    cfg = cfg.model_copy(update={"results_url": "http://x/htr-results/"})
+    cfg = cfg.model_copy(update={"results_url": "http://x/results/"})
     job = _live_job([{"type": "Complete", "status": "True"}], succeeded=3)
     data = render.status_configmap(job, cfg)["data"]
-    assert data["resultsBase"] == "http://x/htr-results/htr-test/demo-v1"
+    assert data["resultsBase"] == "http://x/results/htr-test/demo-v1"
 
 
 def test_a_job_that_gave_up_with_some_indexes_done_is_partially_failed():

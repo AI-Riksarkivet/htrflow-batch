@@ -375,7 +375,9 @@ fail=0
 # 4732 -> 4747 (S3_VERIFY_TLS: config.py +4 (the field and its comment), store.py +6
 # (verify on both S3 clients, urllib3's per-request warning silenced),
 # main.py +5 (the one warning at start).)
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 4747
+# 4747 -> 4749 (audit 1001 R15): the run log key goes under S3_PREFIX.
+# 4749 -> 4766 (audit 1001 review I2): the last attempt's failure line says no retry follows.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 4766
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
@@ -812,7 +814,8 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 4747
 # comment, and _reject_moved_settings collecting the moved and the renamed
 # keys into one error, so converter.yaml's old public_results_base is
 # refused naming results_url instead of as a spelling mistake.
-check converter "$(count packages/converter/src -name '*.py')" 5074
+# 5074 -> 5084 (audit 1001 review 1B): results_url must end in /results, as the chart's resultsUrl.
+check converter "$(count packages/converter/src -name '*.py')" 5084
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
@@ -1107,7 +1110,8 @@ check converter "$(count packages/converter/src -name '*.py')" 5074
 # flag and the lookup threaded through both details); app.py +10: every
 # /api/v1 answer is `private, no-store` and the lookup is wired; kube.py +2:
 # the internal base falls back to the proxy.
-check web       "$(count packages/web/src -name '*.py')" 3751
+# 3751 -> 4027 (audit 1001 round 1A): __Host- cookie module, login flood bounds, key-file reload, per-caller progress tallies.
+check web       "$(count packages/web/src -name '*.py')" 4027
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
@@ -1490,7 +1494,10 @@ check web       "$(count packages/web/src -name '*.py')" 3751
 # ALTO viewer +4 for a 403 on a file, session.ts +9 (the sentence, and a 413
 # or 422 login read as too long or malformed), api.ts +3 and the login page
 # +1.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 6213
+# 6213 -> 6259 (audit 1001 R14): the run log tells a retried attempt from a failed or finished run.
+# 6259 -> 6263 (audit 1001 review I2): a transient failure on the last attempt reads as failed.
+# 6263 -> 6317 (audit 1001 R26): login refusals and a down results proxy worded from the proxy's own detail.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 6317
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
@@ -1682,5 +1689,8 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 6213
 # web front no longer reads the S3 Secret or reaches S3, and gains the proxy's
 # address and egress. _helpers.tpl +3: the refusal of web.internalResultsBase
 # and the results.sessionSecret requirement.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2173
+# 2173 -> 2174 (audit 1001 R5): trusted hops follow network.web.ingressFrom too.
+# 2174 -> 2176 (audit 1001 review): two hops need a ClusterIP Service too.
+# 2176 -> 2183 (audit 1001 R7): a resultsUrl not ending in /results is refused.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2183
 exit $fail

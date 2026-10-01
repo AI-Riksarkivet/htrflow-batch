@@ -26,6 +26,7 @@ lists what the module exposes on your checkout.
 | `scan-sarif` | Trivy over one built image (`--image wrapper\|web\|campaigns`) as a SARIF report: `CRITICAL,HIGH`, unfixed findings included, never fails on findings; what `security.yml` uploads to the Security tab, while `scan`, `scan-web` and `scan-campaigns` stay the gates |
 | `scan-published` | Trivy over a published image by the digest this commit pins (`--image wrapper\|web\|campaigns`, `--arch`), pulled, not rebuilt: what clusters run now, where the scans above cover the next release |
 | `verify-published` | the chart's verify-images `ClusterPolicy`, rendered with `values-prod.yaml`, run by the Kyverno CLI against those three pinned digests: their Sigstore signatures and transparency-log entries, checked the way the admission webhook checks them |
+| `entrypoints-published` | every program the chart, the compose stack and the Argo CD hook start from the web and converter images (`publishedEntrypoints` in `.dagger/published.go`, which a test holds to the tree), looked up in the digests this commit pins: a chart that starts a program its pinned image predates fails here instead of crash-looping on install |
 | `publish-docker` | refuses a tag already on the registry, then tests, builds, runs the driver test (wrapper) and the Trivy CRITICAL gate on the image it will push, pushes it (`--component wrapper\|web\|campaigns`) and returns its reference with the digest; passes `--base-revision` and `--transformers-version` on to the wrapper build ([Releasing](releasing.md#publishing)) |
 | `check-tag-free` | `publish-docker`'s "never overwrite a tag" check on its own: fails when the tag (or, with `--tag-suffix`, the suffixed or the bare tag) is on the registry or the registry gives no answer |
 | `compose-up` | starts the `web` service of the `.docker/docker-compose.yml` project as a dagger Service |
@@ -160,7 +161,10 @@ The cluster constants these targets use come from `.env`
   wrapper, the Argo CD hook's converter image). It builds nothing:
   `scan-published` gates each pinned digest on both architectures, and
   `verify-published` checks their signatures, so a signature that stops
-  verifying fails a scheduled run too.
+  verifying fails a scheduled run too. `entrypoints-published` runs here
+  and not in `ci.yml`: a change that starts a new program fails it until
+  the release commit re-pins the images, and that commit's push is the gate
+  ([Releasing](releasing.md)).
 - **`codeql.yml`** ("CodeQL") — on push and pull request to `main` and weekly:
   static analysis of the Python, frontend, dagger and workflow code.
 - **`trufflehog.yml`** ("Secret Leaks") — on every push and pull request:

@@ -32,7 +32,7 @@ from htrflow_web.kube import (
     Config,
     Reader,
 )
-from htrflow_web.sessions import Session
+from htrflow_web.login_check import Session
 
 
 class _LoggedIn:

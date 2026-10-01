@@ -108,14 +108,17 @@ what, key by key, and listing is never offered.
 | Piece | What it holds |
 |---|---|
 | Results proxy | No bucket credential of its own and no Kubernetes token. It reads the store's endpoint, bucket and TLS switch from the S3 Secret's non-secret keys (the `credentials` key is not mounted), and the session key from its own Secret |
-| Session cookie `htr_session` | The derived access key, secret key, user name and an expiry, never the password. Encrypted and authenticated with AES-GCM under the session key, `HttpOnly`, `SameSite=Strict`, `Secure` unless the request arrived over plain HTTP |
+| Session cookie | The derived access key, secret key, user name and an expiry, never the password. Encrypted and authenticated with AES-GCM under the session key, `HttpOnly` and `SameSite=Strict`. When the browser is on HTTPS it is `__Host-htr_session`: `Secure`, and bound to the exact host, so neither a sibling subdomain nor a plain-HTTP answer can plant one, and a cookie by any other name is no session. Over plain HTTP (a dev cluster) it is `htr_session`, without `Secure` |
 | Web front | No session key and no S3 key. It cannot open the cookie: it asks the proxy whether a cookie is a valid session (cached for a short time per cookie) and passes `/results` through to the proxy |
 | Everything else | A campaign pod holds the write credential for its own prefix; warm-up pods hold none |
 
 - **One login for everything.** Without a valid session the campaign
   browser's API, the viewer's files and every `/results/…` URL answer `401`.
   A cookie that fails to decrypt, is past its expiry or predates a rotation
-  of the session Secret counts as no session.
+  of the session Secret counts as no session. The proxy follows a rotated
+  Secret without a restart, once the kubelet has synced it (about a minute);
+  a key file that turns unreadable or invalid opens no session and seals
+  none (login `503`) until a good key is back.
 - **The keys are as sensitive as the password.** Anyone holding the derived
   secret key can read what the account can, so it is never handed to
   JavaScript: it exists inside the encrypted cookie and, for one request, in
@@ -127,7 +130,9 @@ what, key by key, and listing is never offered.
   naming which limit. The address is the `X-Forwarded-For` element the
   chart's hop count selects. A login also needs the site's own `Origin`, or
   it is `403` even with valid credentials, and the web front forwards only
-  the `htr_session` cookie and caps the posted body.
+  the session cookie and caps the posted body. At most four logins are
+  checked against the store at once; one past that is `429` with
+  `Retry-After: 1`.
 - **What revoking ends, and what it does not.** File reads use the user's
   own keys, so a store account that is revoked or disabled stops reading at
   once: the next file read is `401` and clears the cookie. The session
@@ -136,9 +141,9 @@ what, key by key, and listing is never offered.
   is unexpired, so `/api/v1` accepts any such cookie, a copied one
   included, until it expires (`results.sessionHours`). Logging out clears
   the browser's copy and nothing else. Rotating the session Secret ends
-  every session.
+  every session, without a restart.
 - **Only allowed keys are asked for.** A key must start with the release's
-  namespace or `status/logs/`, and is refused before the store is asked when
+  namespace, and is refused before the store is asked when
   a segment is empty, `.` or `..`, contains a backslash, or the path held an
   encoded slash.
 - **The content-type rule.** Result files are served from the campaign
@@ -152,10 +157,11 @@ what, key by key, and listing is never offered.
   'none'; sandbox`, `X-Content-Type-Options: nosniff` and `Cache-Control:
   private, no-cache`.
 
-`status/logs/<pipeline>/<volume>.txt` is the only key anything writes under
-`status/` (`ResultStore.run_log_key`). A run log can carry the redacted form
-of a private IIIF URL and whatever htrflow prints, so give accounts read
-access to it only where that is acceptable. The devstack's `rustfs-init` hook
+`<namespace>/status/logs/<pipeline>/<volume>.txt` is the only key anything
+writes under `status/` (`ResultStore.run_log_key`). A run log can carry the
+redacted form of a private IIIF URL and whatever htrflow prints, so an
+account that may read the namespace's prefix reads its run logs too; deny
+`<namespace>/status/logs/` on the store where that is not acceptable. The devstack's `rustfs-init` hook
 takes any bucket policy and CORS rule off its buckets and creates a read-only
 login user; `scripts/compose_init.py` does the same for the compose stack,
 except for the fixtures bucket that plays the IIIF server.
@@ -179,7 +185,7 @@ comments), never the stored value.
 
 One S3 Secret is mounted, and only into campaign pods. Each campaign pod
 writes under its own `[<namespace>/]<pipeline>/<volume>/` prefix and
-`status/logs/`. That scoping is a convention, because the credential itself
+`[<namespace>/]status/logs/`. That scoping is a convention, because the credential itself
 covers the bucket.
 
 - **Warm-up pods** mount no S3 Secret.

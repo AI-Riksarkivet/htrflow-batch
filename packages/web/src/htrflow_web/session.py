@@ -1,5 +1,5 @@
 """The results proxy's session: the logged-in user's store keys, sealed into
-the ``htr_session`` cookie with AES-GCM. Never the password; never readable
+the session cookie (``cookie.COOKIE``) with AES-GCM. Never the password; never readable
 by JavaScript (the cookie is HttpOnly) or by the web front (it has no key).
 """
 
@@ -9,7 +9,9 @@ import base64
 import binascii
 import hashlib
 import json
+import logging
 import os
+import threading
 import time
 from dataclasses import dataclass
 from typing import Callable, Literal
@@ -17,8 +19,10 @@ from typing import Callable, Literal
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-COOKIE = "htr_session"
+_LOG = logging.getLogger("htrflow_web.session")
 _NONCE = 12
+#: Binds a sealed session to this use. Not the cookie's name, which may
+#: change without logging anyone out; changing this would.
 _ASSOCIATED_DATA = b"htr_session"
 
 
@@ -80,3 +84,56 @@ class SessionCodec:
         except (binascii.Error, ValueError, InvalidTag, KeyError, TypeError):
             return None
         return data if data.expires > self._clock() else None
+
+
+class SessionKeyUnavailable(Exception):
+    """The mounted session key file is missing or not a key."""
+
+
+class KeyFileCodec:
+    """A ``SessionCodec`` over the mounted key file, re-read whenever the
+    file changes: rotating the Secret ends every session sealed under the
+    old key without restarting the pod. An unchanged file costs a stat per
+    call. A file that turns unreadable opens no session and seals none
+    until a good key is back: a rotation meant to end sessions must never
+    leave the old key in use. Unreadable at start, it stops the start."""
+
+    def __init__(
+        self, path: str, hours: float, clock: Callable[[], float] = time.time
+    ) -> None:
+        self._path, self._hours, self._clock = path, hours, clock
+        self._lock = threading.Lock()
+        self._seen = self._stat()
+        self._codec: SessionCodec | None = SessionCodec(load_key(path), hours, clock)
+
+    def _stat(self) -> tuple[int, int, int] | None:
+        try:
+            st = os.stat(self._path)
+        except OSError:
+            return None
+        return st.st_ino, st.st_mtime_ns, st.st_size
+
+    def _current(self) -> SessionCodec | None:
+        seen = self._stat()
+        with self._lock:
+            if seen != self._seen:
+                self._seen = seen
+                try:
+                    self._codec = SessionCodec(
+                        load_key(self._path), self._hours, self._clock
+                    )
+                    _LOG.info("session key changed: earlier sessions have ended")
+                except (OSError, ValueError) as e:
+                    self._codec = None
+                    _LOG.error("session key unreadable, no session opens: %s", e)
+            return self._codec
+
+    def seal(self, user: str, access_key: str, secret_key: str) -> str:
+        codec = self._current()
+        if codec is None:
+            raise SessionKeyUnavailable(self._path)
+        return codec.seal(user, access_key, secret_key)
+
+    def open(self, token: str) -> SessionData | None:
+        codec = self._current()
+        return None if codec is None else codec.open(token)

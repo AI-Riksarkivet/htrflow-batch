@@ -6,7 +6,13 @@ import os
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from htrflow_web.session import COOKIE, SessionCodec, derive_keys, load_key
+from htrflow_web.session import (
+    KeyFileCodec,
+    SessionCodec,
+    SessionKeyUnavailable,
+    derive_keys,
+    load_key,
+)
 
 KEY = bytes(range(32))
 
@@ -115,5 +121,86 @@ def test_the_key_file_must_hold_32_bytes(tmp_path):
         load_key(str(short))
 
 
-def test_the_cookie_name():
-    assert COOKIE == "htr_session"
+def _write_key(path, key: bytes, bump: int) -> None:
+    """A new key file, as the kubelet swaps one in: a new file (new inode)
+    whose mtime differs too."""
+    tmp = path.with_suffix(".new")
+    tmp.write_text(base64.b64encode(key).decode())
+    os.utime(tmp, ns=(bump, bump))
+    os.replace(tmp, path)
+
+
+def test_a_rotated_key_file_ends_every_session_sealed_under_the_old_one(tmp_path):
+    """Rotating the session Secret is how an operator ends a leaked session:
+    the running proxy follows the new key, with no restart."""
+    path = tmp_path / "key"
+    _write_key(path, KEY, 1)
+    codec = KeyFileCodec(str(path), hours=8)
+    old = codec.seal("anna", "AK", "SK")
+    assert codec.open(old) is not None
+    _write_key(path, bytes(reversed(KEY)), 2)
+    assert codec.open(old) is None
+    new = codec.seal("anna", "AK", "SK")
+    assert codec.open(new) is not None
+
+
+def _kubelet_volume(root, key: bytes, stamp: str) -> None:
+    """A Secret volume as the kubelet lays it out and updates it: the files
+    in a timestamped directory, `..data` a symlink to it, `key` a symlink
+    through `..data`; an update writes a new directory and renames a new
+    `..data` link over the old one."""
+    target = root / stamp
+    target.mkdir()
+    (target / "key").write_text(base64.b64encode(key).decode())
+    (root / "..data_tmp").symlink_to(stamp)
+    os.replace(root / "..data_tmp", root / "..data")
+    if not (root / "key").is_symlink():
+        (root / "key").symlink_to("..data/key")
+
+
+def test_a_kubelet_secret_update_ends_the_old_sessions(tmp_path):
+    _kubelet_volume(tmp_path, KEY, "..2026_10_01_09_00_00.1")
+    codec = KeyFileCodec(str(tmp_path / "key"), hours=8)
+    old = codec.seal("anna", "AK", "SK")
+    assert codec.open(old) is not None
+    _kubelet_volume(tmp_path, bytes(reversed(KEY)), "..2026_10_01_09_05_00.2")
+    assert codec.open(old) is None
+    assert codec.open(codec.seal("anna", "AK", "SK")) is not None
+
+
+def test_an_unchanged_key_file_is_not_read_again(tmp_path, monkeypatch):
+    import htrflow_web.session as session_mod
+
+    path = tmp_path / "key"
+    _write_key(path, KEY, 1)
+    reads = []
+    real = session_mod.load_key
+    monkeypatch.setattr(session_mod, "load_key", lambda p: reads.append(p) or real(p))
+    codec = KeyFileCodec(str(path), hours=8)
+    token = codec.seal("anna", "AK", "SK")
+    for _ in range(5):
+        assert codec.open(token) is not None
+    assert len(reads) == 1
+
+
+def test_a_key_file_that_turns_unreadable_opens_no_session(tmp_path, caplog):
+    """Fail closed: a rotation meant to end sessions must never leave the
+    old key in use because the new file was wrong."""
+    path = tmp_path / "key"
+    _write_key(path, KEY, 1)
+    codec = KeyFileCodec(str(path), hours=8)
+    token = codec.seal("anna", "AK", "SK")
+    _write_key(path, b"short", 2)
+    assert codec.open(token) is None
+    with pytest.raises(SessionKeyUnavailable):
+        codec.seal("anna", "AK", "SK")
+    assert "session key" in caplog.text
+    _write_key(path, KEY, 3)
+    assert codec.open(token) is not None
+
+
+def test_a_bad_key_file_still_stops_startup(tmp_path):
+    path = tmp_path / "key"
+    _write_key(path, b"short", 1)
+    with pytest.raises(ValueError, match="32 bytes"):
+        KeyFileCodec(str(path), hours=8)
