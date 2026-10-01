@@ -2020,12 +2020,23 @@ def test_the_session_key_is_mounted_so_a_rotation_reaches_the_proxy():
             ),
             "2",
         ),
+        (
+            (
+                "web.service.type=ClusterIP",
+                "network.web.ingressFrom[0].podSelector.matchLabels.app=traefik",
+            ),
+            "2",
+        ),
     ],
-    ids=["direct", "behind-ingress"],
+    ids=["direct", "behind-ingress", "behind-the-operators-own-ingress"],
 )
 def test_the_proxy_trusts_as_many_forwarding_hops_as_sit_in_front_of_it(extra, hops):
     """The Ingress controller and the web front each append to
-    X-Forwarded-For; the login's rate limit reads the client from the right."""
+    X-Forwarded-For; the login's rate limit reads the client from the right.
+    An operator's own Ingress, admitted through network.web.ingressFrom
+    without the chart's, is a controller in front all the same: counted as
+    one hop less, every browser would share the controller's address and
+    five wrong passwords a minute would block every login."""
     objs = render(sets=DEFAULT_SETS + extra)
     env = {
         e["name"]: e.get("value")
