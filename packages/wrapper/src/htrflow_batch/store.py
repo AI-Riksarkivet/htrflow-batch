@@ -286,10 +286,12 @@ class ResultStore:
         self._put(self._key(rel_key), text.encode(), content_type)
 
     def run_log_key(self) -> str:
-        """Bucket-root key the read API/frontend read the run log from
-        (``status/logs/<pipeline>/<volume>.txt``) — deliberately not under
-        ``volume_prefix``: it is a shared namespace, not per-volume."""
-        return f"status/logs/{self.cfg.pipeline_id}/{self.cfg.volume_ref}.txt"
+        """Where the run log goes: ``<S3_PREFIX>/status/logs/<pipeline>/
+        <volume>.txt``, outside ``volume_prefix`` but under the namespace
+        like every other key -- the results proxy serves nothing else."""
+        return self.cfg.root_key(
+            f"status/logs/{self.cfg.pipeline_id}/{self.cfg.volume_ref}.txt"
+        )
 
     def put_run_log(self, text: str) -> None:
         self._put(

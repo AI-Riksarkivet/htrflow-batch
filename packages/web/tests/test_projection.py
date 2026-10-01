@@ -225,11 +225,10 @@ class TestDetail:
         assert row3["altoPrefix"] == (
             "https://results.example.org/htr-test/demo-v1/vol3/alto/"
         )
-        # Absolute URL, no namespace/S3_PREFIX prefix: matches
-        # ResultStore.run_log_key() (packages/wrapper/src/htrflow_batch/store.py),
-        # which writes the run log outside volume_prefix on purpose.
+        # Under the namespace, outside the volume: matches
+        # ResultStore.run_log_key() (packages/wrapper/src/htrflow_batch/store.py).
         assert row3["logUrl"] == (
-            "https://results.example.org/status/logs/demo-v1/vol3.txt"
+            "https://results.example.org/htr-test/status/logs/demo-v1/vol3.txt"
         )
 
     def test_source_url_is_the_manifest_half_of_the_line(self):
@@ -1121,7 +1120,7 @@ class TestCampaignNotice:
             "page": "0044",
             "error": "the worker thread died",
             "volume": "vol1",
-            "logUrl": "https://results.example.org/status/logs/demo-v1/vol1.txt",
+            "logUrl": "https://results.example.org/htr-test/status/logs/demo-v1/vol1.txt",
         }
 
     def test_nothing_wrong_is_no_notice(self):
@@ -1364,7 +1363,7 @@ class TestTheReapedDetailStillHasItsVolumes:
         assert vol0["manifestUrl"] == f"{base}/vol0/manifest.json"
         assert vol0["iiifUrl"] == f"{base}/vol0/iiif.json"
         assert vol0["altoPrefix"] == f"{base}/vol0/alto/"
-        assert vol0["logUrl"].endswith("/status/logs/demo-v1/vol0.txt")
+        assert vol0["logUrl"].endswith("/htr-test/status/logs/demo-v1/vol0.txt")
         assert vol0["sourceUrl"] == "https://iiif.example.org/vol0/manifest"
 
     def test_an_images_volume_has_no_source_manifest_to_open(self):
@@ -1690,7 +1689,7 @@ def test_a_volume_id_is_encoded_into_every_url_a_row_carries():
     assert row["manifestUrl"] == f"{base}/..%2F..%2Fstatus/manifest.json"
     assert row["iiifUrl"] == f"{base}/..%2F..%2Fstatus/iiif.json"
     assert row["altoPrefix"] == f"{base}/..%2F..%2Fstatus/alto/"
-    assert row["logUrl"].endswith("/status/logs/demo-v1/..%2F..%2Fstatus.txt")
+    assert row["logUrl"].endswith("/htr-test/status/logs/demo-v1/..%2F..%2Fstatus.txt")
 
 
 def test_an_ordinary_volume_id_is_left_alone_in_its_urls():
@@ -1699,7 +1698,9 @@ def test_an_ordinary_volume_id_is_left_alone_in_its_urls():
     )["volumes"][0]
     base = "https://results.example.org/htr-test/demo-v1"
     assert row["manifestUrl"] == f"{base}/vol0/manifest.json"
-    assert row["logUrl"] == "https://results.example.org/status/logs/demo-v1/vol0.txt"
+    assert row["logUrl"] == (
+        "https://results.example.org/htr-test/status/logs/demo-v1/vol0.txt"
+    )
 
 
 def test_an_oom_killed_volume_is_failed_live_and_after_the_reap():

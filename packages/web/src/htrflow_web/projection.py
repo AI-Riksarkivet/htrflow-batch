@@ -390,6 +390,7 @@ def record_detail(
     pipeline_yaml = _pipeline_yaml(pipeline_configmap)
     reasons = _recorded_reasons(status)
     results_base, pipeline = row["resultsBase"], row["pipeline"]
+    log_base = _log_base(row["namespace"], pipeline, cfg)
     ending = _RECORD_STATE.get(row["phase"], UNKNOWN_STATE)
     lines = _volume_lines(record)
     named = {line.split("\t", 1)[0] for line in lines} & reasons.keys()
@@ -402,7 +403,7 @@ def record_detail(
     for idx, line in enumerate(lines):
         vol_id = line.split("\t", 1)[0]
         state = "failed" if vol_id in reasons else ending
-        volume = _volume_row(idx, line, state, results_base, pipeline, cfg)
+        volume = _volume_row(idx, line, state, results_base, log_base)
         if reasons.get(vol_id):
             volume["reason"] = {
                 "stage": None,
@@ -935,7 +936,7 @@ def newest(pods: list[dict]) -> dict:
 
 
 def _volume_row(
-    idx: int, line: str, state: str, results_base: str, pipeline: str, cfg
+    idx: int, line: str, state: str, results_base: str, log_base: str
 ) -> dict:
     """One row of a campaign's volume table, from its ``volumes.txt`` line.
     Every URL below is derived from the id, so the same function builds a
@@ -954,7 +955,7 @@ def _volume_row(
         "manifestUrl": f"{results_base}/{key}/manifest.json",
         "iiifUrl": f"{results_base}/{key}/iiif.json",
         "altoPrefix": f"{results_base}/{key}/alto/",
-        "logUrl": _log_url(pipeline, vol_id, cfg),
+        "logUrl": f"{log_base}/{key}.txt",
         "sourceUrl": _source_url(line),
         # The proxy refused this caller the volume's files (a 403): the card
         # says their account may not read it, in place of its results.
@@ -972,18 +973,12 @@ def _volume_state(
     return "active" if has_pod else "pending"
 
 
-def _log_url(pipeline: str, volume_id: str, cfg) -> str:
-    """Absolute URL at a bucket-root key, no namespace/S3_PREFIX prefix —
-    matches ``ResultStore.run_log_key()``
-    (packages/wrapper/src/htrflow_batch/store.py), which writes the run log
-    outside ``volume_prefix`` on purpose: the ``status/`` tree is shared
-    across namespaces, unlike the per-namespace results under
-    ``resultsBase``. Absolute (not a bare key) because the browser has no
-    bucket base URL to resolve a key against."""
-    return (
-        f"{cfg.results_url}/status/logs/"
-        f"{quote(pipeline, safe='')}/{quote(volume_id, safe='')}.txt"
-    )
+def _log_base(namespace: str, pipeline: str, cfg) -> str:
+    """Where a campaign's run logs are, one ``<volume>.txt`` each: under the
+    namespace, outside the volumes -- ``ResultStore.run_log_key()``
+    (packages/wrapper/src/htrflow_batch/store.py). Absolute, because the
+    browser has no results base to resolve a key against."""
+    return f"{cfg.results_url}/{namespace}/status/logs/{quote(pipeline, safe='')}"
 
 
 def _pipeline_yaml(configmap: dict | None) -> str:
@@ -1237,6 +1232,7 @@ def detail(
     pods_by_index = _pods_by_index(pods)
     results_base = summary["resultsBase"]
     pipeline = summary["pipeline"]
+    log_base = _log_base(summary["namespace"], pipeline, cfg)
     internal_base = _internal_results_base(summary["namespace"], pipeline, cfg)
 
     # Annotated because the rows are heterogeneous (int index, str URLs,
@@ -1244,7 +1240,7 @@ def detail(
     volumes: list[dict] = []
     for idx, line in enumerate(_volume_lines(configmap)):
         state = _volume_state(idx, completed, failed, idx in pods_by_index)
-        row = _volume_row(idx, line, state, results_base, pipeline, cfg)
+        row = _volume_row(idx, line, state, results_base, log_base)
         # A done index's pods are history: no Succeeded pod is listed
         # (kube.list_pods), so the newest one left is an attempt that failed
         # before the one that published, and its sentence is not why the

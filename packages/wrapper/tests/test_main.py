@@ -1140,6 +1140,17 @@ def test_run_log_is_shipped_to_the_status_tree(env, cfg, s3):
     ]
 
 
+def test_the_run_log_lives_under_the_namespace_prefix(env, cfg, s3):
+    """Under S3_PREFIX like every other key: the results proxy serves only
+    keys under the release's namespace, and two releases sharing a bucket
+    must not write each other's logs."""
+    rc = main(dict(env, S3_PREFIX="htr-test"), process_page_factory=fake_factory)
+    assert rc == EXIT_OK
+    keys = _keys(s3, cfg)
+    assert "htr-test/status/logs/demo-v1/SE-RA-1234.txt" in keys
+    assert not [k for k in keys if k.startswith("status/")]
+
+
 def test_the_run_log_carries_no_per_request_url(env, cfg, s3):
     """Audit 0923 W-3: httpx logs `HTTP Request: GET <full url>` at INFO for
     every fetch -- one line a page, and the whole URL, query included, one

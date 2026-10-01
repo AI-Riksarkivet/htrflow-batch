@@ -452,7 +452,9 @@ def test_job_detail_carries_each_volume_progress_and_the_campaign_total():
     assert (body["pagesDone"], body["pagesTotal"]) == (137, 638)
     assert (body["pagesFailed"], body["errors"]) == (1, 2)
     assert body["lastError"]["volume"] == "vol0"
-    assert body["lastError"]["logUrl"].endswith("/status/logs/demo-v1/vol0.txt")
+    assert body["lastError"]["logUrl"].endswith(
+        "/htr-test/status/logs/demo-v1/vol0.txt"
+    )
 
 
 def test_a_volume_the_proxy_refused_is_forbidden_in_the_answer():
@@ -1001,7 +1003,9 @@ def test_the_detail_of_a_reaped_campaign_still_opens_its_volumes():
     base = "https://results.example.org/htr-test/demo-v1"
     assert body["volumes"][0]["iiifUrl"] == f"{base}/vol9/iiif.json"
     assert body["volumes"][0]["altoPrefix"] == f"{base}/vol9/alto/"
-    assert body["volumes"][0]["logUrl"].endswith("/status/logs/demo-v1/vol9.txt")
+    assert body["volumes"][0]["logUrl"].endswith(
+        "/htr-test/status/logs/demo-v1/vol9.txt"
+    )
     assert [v["state"] for v in body["volumes"]] == ["done", "failed", "done"]
     assert body["volumes"][1]["reason"]["error"] == "manifest 404"
     assert [v["id"] for v in body["failures"]] == ["vol8"]

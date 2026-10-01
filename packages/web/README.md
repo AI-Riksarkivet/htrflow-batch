@@ -66,8 +66,8 @@ Phase is derived from the Job: `Succeeded` from its `Complete` condition;
 non-empty `completedIndexes` (the campaign gave up, but what those indexes
 published is there); otherwise `Queued` or `Paused` when suspended (no index
 done yet, or some), else `Running`. Each volume row carries `manifestUrl`,
-`iiifUrl`, `altoPrefix` under the results base, `logUrl` under the shared
-`status/logs/` tree, and `sourceUrl` — the URL half of its `volumes.txt`
+`iiifUrl`, `altoPrefix` under the results base, `logUrl` under the
+namespace's `status/logs/` tree, and `sourceUrl` — the URL half of its `volumes.txt`
 line, null for an `images:` volume or for a URL a browser's URL parser would
 refuse. Only Jobs labelled `app=htrflow-batch` and `managed-by=converter` are
 listed, which excludes the warm-up Jobs — those are read separately
