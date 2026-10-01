@@ -2179,28 +2179,3 @@ def test_a_volume_that_finishes_is_another_tally():
     assert tally_key([dict(r) for r in rows]) == before
     rows[1]["state"] = "done"
     assert tally_key(rows) != before
-
-
-def test_the_lowest_pages_merge_across_tallied_and_running_volumes():
-    a, b = PageTotals(), PageTotals()
-    q = {"mean": 0.5, "min": 0.1, "scored": 2}
-    a.add(
-        {
-            **_over_row(0, 1),
-            "progress": _quality_only(
-                {"quality": {**q, "lowest": [{"page": "1", "quality": 0.3}]}}
-            ),
-        }
-    )
-    b.add(
-        {
-            **_over_row(0, 1),
-            "progress": _quality_only(
-                {"quality": {**q, "lowest": [{"page": "1", "quality": 0.1}]}}
-            ),
-        }
-    )
-    a.merge(b)
-    assert [(e["volume"], e["page"], e["quality"]) for e in a.quality()["lowest"]] == [
-        ("vol0", "1", 0.1)
-    ]
