@@ -13,7 +13,7 @@ from htrflow_web import projection
 from htrflow_web.progress import MAX_SCORED
 from htrflow_web.projection import PageTotals
 
-CFG = SimpleNamespace(results_url="https://results.example.org")
+CFG = SimpleNamespace(results_url="https://htr.example.org/results")
 #: `warmup` is required (Task 28 fix round item 4) -- this is what every
 #: pre-existing test that does not care about it passes explicitly.
 MISSING_WARMUP = {"phase": "missing"}
@@ -148,14 +148,19 @@ class TestSummarize:
         assert summary["pipeline"] == "demo-v1"
         assert summary["suspended"] is False
         assert summary["createdAt"] == "2026-01-01T00:00:00Z"
-        assert summary["resultsBase"] == "https://results.example.org/htr-test/demo-v1"
+        assert (
+            summary["resultsBase"] == "https://htr.example.org/results/htr-test/demo-v1"
+        )
 
     def test_resultsbase_is_always_namespaced(self):
         """The namespaced layout is the only layout (B63 task 15): the
         namespace is in every `resultsBase`, whatever the namespace is."""
         job = _job(namespace="htr-batch")
         summary = projection.summarize(job, CFG, MISSING_WARMUP)
-        assert summary["resultsBase"] == "https://results.example.org/htr-batch/demo-v1"
+        assert (
+            summary["resultsBase"]
+            == "https://htr.example.org/results/htr-batch/demo-v1"
+        )
 
     COMPLETE = {"type": "Complete", "status": "True"}
     FAILED = {"type": "Failed", "status": "True"}
@@ -217,18 +222,18 @@ class TestDetail:
         assert "reason" not in row4
         assert row3["id"] == "vol3"
         assert row3["manifestUrl"] == (
-            "https://results.example.org/htr-test/demo-v1/vol3/manifest.json"
+            "https://htr.example.org/results/htr-test/demo-v1/vol3/manifest.json"
         )
         assert row3["iiifUrl"] == (
-            "https://results.example.org/htr-test/demo-v1/vol3/iiif.json"
+            "https://htr.example.org/results/htr-test/demo-v1/vol3/iiif.json"
         )
         assert row3["altoPrefix"] == (
-            "https://results.example.org/htr-test/demo-v1/vol3/alto/"
+            "https://htr.example.org/results/htr-test/demo-v1/vol3/alto/"
         )
         # Under the namespace, outside the volume: matches
         # ResultStore.run_log_key() (packages/wrapper/src/htrflow_batch/store.py).
         assert row3["logUrl"] == (
-            "https://results.example.org/htr-test/status/logs/demo-v1/vol3.txt"
+            "https://htr.example.org/results/htr-test/status/logs/demo-v1/vol3.txt"
         )
 
     def test_source_url_is_the_manifest_half_of_the_line(self):
@@ -1120,7 +1125,7 @@ class TestCampaignNotice:
             "page": "0044",
             "error": "the worker thread died",
             "volume": "vol1",
-            "logUrl": "https://results.example.org/htr-test/status/logs/demo-v1/vol1.txt",
+            "logUrl": "https://htr.example.org/results/htr-test/status/logs/demo-v1/vol1.txt",
         }
 
     def test_nothing_wrong_is_no_notice(self):
@@ -1210,7 +1215,7 @@ def test_status_record_field_names_are_the_ones_apply_reads():
         "volumesFailed": "1",
         "startedAt": "2026-09-08T08:00:00Z",
         "finishedAt": "2026-09-08T10:00:00Z",
-        "resultsBase": "https://results.example.org/htr-test/demo-v1",
+        "resultsBase": "https://htr.example.org/results/htr-test/demo-v1",
         "jobUid": "uid-kyrk",
     }
 
@@ -1277,7 +1282,7 @@ def _stored(**data) -> dict:
             "volumesFailed": "0",
             "startedAt": "2026-09-08T08:00:00Z",
             "finishedAt": "2026-09-08T10:00:00Z",
-            "resultsBase": "https://results.example.org/htr-test/demo-v1",
+            "resultsBase": "https://htr.example.org/results/htr-test/demo-v1",
             **data,
         },
     }
@@ -1291,7 +1296,7 @@ def test_a_reaped_campaign_is_a_row_like_any_other():
     assert row["phase"] == "Succeeded"
     assert row["counts"] == {"total": 3, "active": 0, "done": 3, "failed": 0}
     assert row["finishedAt"] == "2026-09-08T10:00:00Z"
-    assert row["resultsBase"] == "https://results.example.org/htr-test/demo-v1"
+    assert row["resultsBase"] == "https://htr.example.org/results/htr-test/demo-v1"
     assert row["jobGone"] is True
     assert set(row) == set(
         projection.summarize(_finished_job(), CFG, MISSING_WARMUP)
@@ -1306,7 +1311,7 @@ def test_a_reaped_rows_links_come_from_the_config_this_process_has():
     review): a bucket that moved gave a page of links to the old one."""
     status = _stored(resultsBase="https://moved.example.org/old/demo-v1")
     row = projection.record_summary(RECORD, status, CFG, MISSING_WARMUP)
-    assert row["resultsBase"] == "https://results.example.org/htr-test/demo-v1"
+    assert row["resultsBase"] == "https://htr.example.org/results/htr-test/demo-v1"
     body = projection.record_detail(row, RECORD, status, CFG, None)
     assert body["volumes"][0]["iiifUrl"].startswith(row["resultsBase"])
 
@@ -1359,7 +1364,7 @@ class TestTheReapedDetailStillHasItsVolumes:
 
     def test_the_links_are_the_ones_a_live_row_would_carry(self):
         vol0 = self._body(self._failed())["volumes"][0]
-        base = "https://results.example.org/htr-test/demo-v1"
+        base = "https://htr.example.org/results/htr-test/demo-v1"
         assert vol0["manifestUrl"] == f"{base}/vol0/manifest.json"
         assert vol0["iiifUrl"] == f"{base}/vol0/iiif.json"
         assert vol0["altoPrefix"] == f"{base}/vol0/alto/"
@@ -1685,7 +1690,7 @@ def test_a_volume_id_is_encoded_into_every_url_a_row_carries():
         _job(completed="", failed=""), cm, [], CFG, warmup=MISSING_WARMUP
     )["volumes"][0]
     assert row["id"] == "../../status", "the id itself is the id"
-    base = "https://results.example.org/htr-test/demo-v1"
+    base = "https://htr.example.org/results/htr-test/demo-v1"
     assert row["manifestUrl"] == f"{base}/..%2F..%2Fstatus/manifest.json"
     assert row["iiifUrl"] == f"{base}/..%2F..%2Fstatus/iiif.json"
     assert row["altoPrefix"] == f"{base}/..%2F..%2Fstatus/alto/"
@@ -1696,10 +1701,10 @@ def test_an_ordinary_volume_id_is_left_alone_in_its_urls():
     row = projection.detail(
         _job(completed="", failed=""), _configmap(n=1), [], CFG, warmup=MISSING_WARMUP
     )["volumes"][0]
-    base = "https://results.example.org/htr-test/demo-v1"
+    base = "https://htr.example.org/results/htr-test/demo-v1"
     assert row["manifestUrl"] == f"{base}/vol0/manifest.json"
     assert row["logUrl"] == (
-        "https://results.example.org/htr-test/status/logs/demo-v1/vol0.txt"
+        "https://htr.example.org/results/htr-test/status/logs/demo-v1/vol0.txt"
     )
 
 
@@ -1779,7 +1784,7 @@ class TestRecordWrite:
             "volumesDone": "2",
             "volumesFailed": "0",
             "startedAt": "",
-            "resultsBase": "https://results.example.org/htr-test/demo-v1",
+            "resultsBase": "https://htr.example.org/results/htr-test/demo-v1",
             "jobUid": "uid-1",
         }
         assert body["metadata"]["labels"]["htrflow.riksarkivet.se/kind"] == "status"
@@ -1801,7 +1806,7 @@ class TestRecordWrite:
         row = projection.summarize(_finished_job(), CFG, MISSING_WARMUP)
         theirs = {
             **projection.status_record(row, job_uid="uid-1"),
-            "resultsBase": "https://results.example.org//htr-test/demo-v1",
+            "resultsBase": "https://htr.example.org/results//htr-test/demo-v1",
         }
         stored = _stored_cm(theirs, _managed(*APPLY_KEYS))
         failures = [{"id": "vol2", "reason": {"error": "manifest 404"}}]
