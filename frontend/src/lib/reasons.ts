@@ -281,11 +281,6 @@ export function describeLastError(
   return page === null || named ? error : `page ${page}: ${error}`;
 }
 
-/**
- * One sentence for a read-API call that did not come back usable.
- * `showingLast` says whether the caller still has an older answer on screen,
- * which is the difference between "nothing is here" and "this is stale".
- */
 /** Rows the list could not read (api.fetchJobs): hidden, counted, one next step. */
 export function describeUnreadable(n: number): string {
   const what =
@@ -299,6 +294,16 @@ export function describeUnreadable(n: number): string {
 }
 
 /**
+ * The web front's 502 `detail` when the results proxy did not answer its
+ * session check (packages/web app.py): every read-API call then fails,
+ * though the cluster is fine.
+ */
+export const RESULTS_SERVICE_DOWN = "the results service did not answer";
+
+/**
+ * One sentence for a read-API call that did not come back usable.
+ * `showingLast` says whether the caller still has an older answer on screen,
+ * which is the difference between "nothing is here" and "this is stale".
  * `retryAt` is when the poll asks next, from $lib/poll's `onWait`: it backs
  * off after a miss, so "every 60 seconds" was wrong from the first one. The
  * sentence names the time, which stays true while it is on screen.
@@ -327,14 +332,19 @@ export function describeApiError(
       "campaigns repo."
     );
   }
+  const last = showingLast ? "Showing the list we last received. " : "";
+  const next =
+    retryAt === undefined
+      ? "It will try again on its own."
+      : `Next try at ${clockTime(retryAt.toISOString(), timeZone)}.`;
+  if (e.message === "HTTP 502" && e.detail === RESULTS_SERVICE_DOWN) {
+    return (
+      "The results service is not answering (HTTP 502), so nothing can be " +
+      `shown and no one can log in right now. ${last}${next}`
+    );
+  }
   // An HTTP status is worth showing an operator; a raw fetch error string
   // ("Failed to fetch", "NetworkError when attempting...") is not.
   const status = /^HTTP \d+$/.test(e.message) ? ` (${e.message})` : "";
-  const last = showingLast ? "Showing the list we last received. " : "";
-  return (
-    `Can't reach the campaign service right now${status}. ${last}` +
-    (retryAt === undefined
-      ? "It will try again on its own."
-      : `Next try at ${clockTime(retryAt.toISOString(), timeZone)}.`)
-  );
+  return `Can't reach the campaign service right now${status}. ${last}${next}`;
 }

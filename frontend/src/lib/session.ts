@@ -35,23 +35,78 @@ export function safeNext(raw: string | null): string {
   }
 }
 
+/**
+ * The `detail` sentence the web front and the results proxy put in an error
+ * body, when there is one.
+ */
+export async function errorDetail(res: Response): Promise<string | undefined> {
+  try {
+    const body: unknown = await res.json();
+    const detail = (body as { detail?: unknown } | null)?.detail;
+    return typeof detail === "string" && detail !== "" ? detail : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export type LoginResult =
+  | { outcome: "ok" }
+  | { outcome: "wrong" | "forbidden" | "malformed" }
+  | {
+      outcome: "throttled" | "unavailable";
+      /** The proxy's own sentence: which limit, or what did not answer. */
+      detail?: string | undefined;
+    };
+export type LoginFailure = Exclude<LoginResult, { outcome: "ok" }>;
+
 export async function login(
   username: string,
   password: string,
-): Promise<"ok" | "wrong" | "throttled" | "malformed" | "store"> {
+): Promise<LoginResult> {
   const res = await fetch("/results/_login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "same-origin",
     body: JSON.stringify({ username, password }),
   });
-  if (res.status === 204) return "ok";
-  if (res.status === 401) return "wrong";
-  if (res.status === 429) return "throttled";
+  if (res.status === 204) return { outcome: "ok" };
+  if (res.status === 401) return { outcome: "wrong" };
+  // The proxy refuses a login whose Origin is not the address the web front
+  // forwards as the browser's: a front proxy that drops X-Forwarded-Host.
+  if (res.status === 403) return { outcome: "forbidden" };
   // The body the proxy refused before asking the store: too large for the
   // web front's pass-through (413), or fields past the proxy's limits (422).
-  if (res.status === 413 || res.status === 422) return "malformed";
-  return "store";
+  if (res.status === 413 || res.status === 422) return { outcome: "malformed" };
+  // 429 names its limit (per address, per user, or logins at once); a 502,
+  // 503 or 504 says what did not answer.
+  const outcome = res.status === 429 ? "throttled" : "unavailable";
+  return { outcome, detail: await errorDetail(res) };
+}
+
+const LOGIN_ERRORS = {
+  wrong: "The result store did not accept that user name or password.",
+  forbidden:
+    "The login was refused: this page is not the site's own address. Open " +
+    "the site at its usual address; if that is where you are, the proxy in " +
+    "front of it must pass the browser's host and scheme on.",
+  malformed: "The user name or password is too long or malformed.",
+} as const;
+
+function sentence(detail: string): string {
+  return detail.charAt(0).toUpperCase() + detail.slice(1) + ".";
+}
+
+/** What the login page says about a login that did not succeed. */
+export function loginError(result: LoginFailure): string {
+  if (result.outcome === "throttled")
+    return result.detail
+      ? sentence(result.detail)
+      : "Too many login attempts. Wait a few minutes and try again.";
+  if (result.outcome === "unavailable")
+    return result.detail
+      ? `${sentence(result.detail)} Try again shortly.`
+      : "The result store could not be reached. Try again shortly.";
+  return LOGIN_ERRORS[result.outcome];
 }
 
 export async function logout(): Promise<void> {
