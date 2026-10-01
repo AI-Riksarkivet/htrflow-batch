@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   LOG_TAIL_BYTES,
-  isTerminalLog,
+  logOutcome,
   parseRunLog,
   splitLogLine,
   tailOf,
@@ -147,56 +147,67 @@ describe("splitLogLine", () => {
   });
 });
 
-describe("isTerminalLog", () => {
-  test("success line ends the run", () => {
+describe("logOutcome", () => {
+  test("the success line ends the run", () => {
     expect(
-      isTerminalLog(
+      logOutcome(
         "2026-08-26 07:15:33,903 INFO Wrote AltoXML file to /work/outputs/alto/0022.xml\n" +
           "2026-08-26 08:50:01,000 INFO [R0001696] COMPLETE 480 pages (480 processed) in 5700.0s, viewer: http://x\n",
       ),
-    ).toBe(true);
+    ).toBe("complete");
   });
 
-  test("failure lines end the run", () => {
+  test("a permanent failure ends the run; a transient one only the attempt", () => {
+    // The Job retries a transient failure under backoffLimitPerIndex, and
+    // the retry ships its log to the same key.
     expect(
-      isTerminalLog(
+      logOutcome(
         "... \n2026-08-26 07:15:33,903 ERROR transient failure in stream: boom\n",
       ),
-    ).toBe(true);
+    ).toBe("transient");
     expect(
-      isTerminalLog(
+      logOutcome(
         "2026-08-26 07:15:33,903 ERROR permanent failure in setup: bad manifest\n",
       ),
-    ).toBe(true);
+    ).toBe("permanent");
   });
 
   // B63 Task 20G: the wrapper appends a plain-language sentence after the
   // prefix (main._advice). The prefix is what this rule keys on, so the two
   // have to coexist — this is the test that says so out loud.
-  test("a failure line with its plain-language tail is still terminal", () => {
+  test("a failure line with its plain-language tail keeps its kind", () => {
     expect(
-      isTerminalLog(
+      logOutcome(
         "2026-08-26 07:15:33,903 ERROR permanent failure in setup: manifest " +
           "is not JSON — a retry changes nothing — fix the campaign or " +
           "pipeline file\n",
       ),
-    ).toBe(true);
+    ).toBe("permanent");
     expect(
-      isTerminalLog(
+      logOutcome(
         "2026-08-26 07:15:33,903 ERROR transient failure in verify: verify " +
           "failed: 1 missing, 0 failed missing=['0002'] failed=[] — some " +
           "pages produced no result; the retry redoes only those\n",
       ),
-    ).toBe(true);
+    ).toBe("transient");
   });
 
-  test("an in-flight log is not terminal", () => {
+  test("an in-flight log has no outcome", () => {
     expect(
-      isTerminalLog(
+      logOutcome(
         "2026-08-26 07:15:33,903 INFO Wrote AltoXML file to /work/outputs/alto/0022.xml\n0022: Done!\n",
       ),
-    ).toBe(false);
-    expect(isTerminalLog("")).toBe(false);
+    ).toBeNull();
+    expect(logOutcome("")).toBeNull();
+  });
+
+  test("the last marker in the tail is the one that counts", () => {
+    expect(
+      logOutcome(
+        "2026-08-26 07:00:00,000 ERROR transient failure in stream: x\n" +
+          "2026-08-26 07:05:00,000 INFO [v] COMPLETE 2 pages (2 processed) in 1.0s, viewer: x\n",
+      ),
+    ).toBe("complete");
   });
 
   test("only the tail counts", () => {
@@ -205,17 +216,17 @@ describe("isTerminalLog", () => {
     const filler = Array.from({ length: 600 }, (_, i) => `line ${i}`).join(
       "\n",
     );
-    expect(isTerminalLog(early + filler)).toBe(false);
+    expect(logOutcome(early + filler)).toBeNull();
   });
 
-  test("a failure marker followed by a long traceback is still terminal", () => {
+  test("a failure marker followed by a long traceback still counts", () => {
     const marker =
-      "2026-08-26 07:00:00,000 ERROR transient failure in stream: CUDA error\n";
+      "2026-08-26 07:00:00,000 ERROR permanent failure in stream: CUDA error\n";
     const traceback = Array.from(
       { length: 150 },
       (_, i) => `  File "x.py", line ${i}, in f`,
     ).join("\n");
-    expect(isTerminalLog(marker + traceback)).toBe(true);
+    expect(logOutcome(marker + traceback)).toBe("permanent");
   });
 });
 
