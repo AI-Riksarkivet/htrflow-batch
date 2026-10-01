@@ -1,5 +1,5 @@
 namespace: htr-test
 queue: htr-test
 window: 10
-results_url: https://results.example.org
+results_url: https://htr.example.org/results
 source_template: "https://iiif.example.org/{ref}/manifest"

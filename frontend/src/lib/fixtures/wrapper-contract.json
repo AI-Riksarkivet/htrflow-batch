@@ -50,7 +50,7 @@
       }
     },
     "source_manifest": "https://iiif.example.org/vol0/manifest",
-    "viewer_url": "https://results.example.org/htr-test/demo-v1/vol0/iiif.json",
+    "viewer_url": "https://htr.example.org/results/htr-test/demo-v1/vol0/iiif.json",
     "volume": "vol0",
     "wall_seconds": 12.5
   },
@@ -133,7 +133,7 @@
       }
     },
     "source_manifest": "https://iiif.example.org/vol0/manifest",
-    "viewer_url": "https://results.example.org/htr-test/demo-v1/vol0/iiif.json",
+    "viewer_url": "https://htr.example.org/results/htr-test/demo-v1/vol0/iiif.json",
     "volume": "vol0",
     "wall_seconds": 12.5
   },
