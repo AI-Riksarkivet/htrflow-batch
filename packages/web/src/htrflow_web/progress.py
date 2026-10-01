@@ -23,6 +23,7 @@ import json
 import math
 import threading
 import time
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Callable
 from urllib.parse import quote
@@ -30,6 +31,7 @@ from urllib.parse import quote
 import httpx
 
 from .cookie import internal_cookie, no_cookie_jar
+from .projection import FINISHED_STATES, OVER_STATES, Tally
 
 if TYPE_CHECKING:
     from .login_check import Session
@@ -41,17 +43,16 @@ DONE_TTL = 3600.0
 
 #: Bounded so a long-lived process browsing a large archive cannot grow this
 #: without limit: an entry is under 1 KB, so this is ~20 MB of the pod's
-#: memory. It is also the largest campaign whose page totals can be every
-#: volume's at once (3076) -- past it the oldest answers go first, and the
-#: page says how many volumes its totals cover.
+#: memory. Past it the oldest answers go first. A campaign's totals do not
+#: depend on its answers staying here (each caller's ``Tally`` keeps them),
+#: so this holds what every reader has on screen and what is running.
 MAX_ENTRIES = 20_000
 
-#: States whose file will not change again: the volume is over, or its
-#: campaign's Job is gone and nothing is left to write one (`unknown`).
-_FINISHED = ("done", "unknown")
-#: ...and so whose answer is kept for the hour, an absent file included: a
-#: failed index is final too, and its pod wrote what it ever will.
-_OVER = (*_FINISHED, "failed")
+#: Callers' tallies kept, one per (caller, campaign's set of volumes),
+#: least recently used first out. A tally is a few hundred bytes plus its
+#: five lowest pages, so this is a few MB at most.
+MAX_TALLIES = 4096
+
 
 #: The two files a volume's progress is read from, in the order they are
 #: asked for (``ProgressReader._read``).
@@ -302,6 +303,12 @@ class SessionProgress:
             return False
         return self._r._forbidden(self._user, results_base, volume_id)
 
+    def tally(self, results_base: str, key: str) -> Tally:
+        """This caller's sums over one campaign's volumes that are over
+        (``projection.Tally``), kept as long as an answer about a finished
+        volume is."""
+        return self._r._tally(self._user, results_base, key)
+
 
 class ProgressReader:
     """One HTTP client and one small cache for the life of the app."""
@@ -311,6 +318,10 @@ class ProgressReader:
         #: (user, url) -> (expiry, progress, whether the proxy answered at
         #: all, whether it refused this user with a 403)
         self._cache: dict[tuple[str, str], tuple[float, dict | None, bool, bool]] = {}
+        #: (user, results base, projection.tally_key) -> (expiry, tally)
+        self._tallies: OrderedDict[tuple[str, str, str], tuple[float, Tally]] = (
+            OrderedDict()
+        )
         #: Held around every touch of the cache, never across a GET. The
         #: reader is shared by every thread of the pool, and once the cache
         #: is full -- the normal state at scale -- two requests evicting
@@ -321,6 +332,21 @@ class ProgressReader:
         if session is None:
             return SessionProgress(self, "", None)
         return SessionProgress(self, session.user, session.cookie)
+
+    def _tally(self, user: str, results_base: str, key: str) -> Tally:
+        now = time.monotonic()
+        k = (user, results_base, key)
+        with self._lock:
+            hit = self._tallies.get(k)
+            if hit is not None and hit[0] > now:
+                self._tallies.move_to_end(k)
+                return hit[1]
+            tally = Tally()
+            self._tallies[k] = (now + DONE_TTL, tally)
+            self._tallies.move_to_end(k)
+            while len(self._tallies) > MAX_TALLIES:
+                self._tallies.popitem(last=False)
+            return tally
 
     def _forbidden(self, user: str, results_base: str, volume_id: str) -> bool:
         base = f"{results_base}/{quote(volume_id, safe='')}"
@@ -352,7 +378,7 @@ class ProgressReader:
         known, found, forbidden = self._cached(
             user, cookie, f"{base}/progress.json", _from_progress, state, now, network
         )
-        if known and found is None and not forbidden and state in _FINISHED:
+        if known and found is None and not forbidden and state in FINISHED_STATES:
             # Written by a wrapper that predates progress.json. One GET more,
             # cached for the hour: a finished volume is finished.
             known, found, _ = self._cached(
@@ -388,7 +414,7 @@ class ProgressReader:
         # Only an answer about a volume that is over is kept for the hour --
         # an absent file and a 403 included, since its pod wrote what it
         # ever will. A bucket that did not answer is asked again soon.
-        ttl = DONE_TTL if state in _OVER and answered else RUNNING_TTL
+        ttl = DONE_TTL if state in OVER_STATES and answered else RUNNING_TTL
         with self._lock:
             self._cache.pop((user, url), None)
             if len(self._cache) >= MAX_ENTRIES:

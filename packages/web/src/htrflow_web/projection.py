@@ -8,9 +8,12 @@ cluster (docs: task-4-brief).
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import ipaddress
 import json
 import re
+import threading
 import time
 import unicodedata
 from datetime import datetime, timezone
@@ -36,6 +39,11 @@ _MAX_FAILURES = 50
 #: A campaign in one of these is over: nothing more will be written about
 #: it, and `apply` leaves it alone rather than recreating a reaped Job.
 FINISHED_PHASES = ("Succeeded", "Failed", "PartiallyFailed")
+#: Volume states whose results will not change again: the volume is done,
+#: or its campaign's Job is gone and nothing is left to write (`unknown`).
+FINISHED_STATES = ("done", "unknown")
+#: ...and a failed index, which is final too: its pod wrote what it ever will.
+OVER_STATES = (*FINISHED_STATES, "failed")
 
 
 def parse_index_ranges(spec: str | None) -> set[int]:
@@ -374,6 +382,7 @@ def record_detail(
     fetch_progress=None,
     cached_progress=None,
     forbidden_progress=None,
+    tally_progress=None,
 ) -> dict:
     """``JobDetail`` for a campaign whose Job is gone.
 
@@ -415,14 +424,18 @@ def record_detail(
     failures = _failures(volumes)
     page = volumes[offset : offset + limit]
     latest = _latest(volumes)
+    internal_base = _internal_results_base(row["namespace"], pipeline, cfg)
     pages = _read_progress(
         volumes,
         page,
         [*failures, *([latest] if latest else [])],
-        _internal_results_base(row["namespace"], pipeline, cfg),
+        internal_base,
         fetch_progress or (lambda *_args: None),
         cached_progress or _not_cached,
         forbidden_progress or (lambda *_args: False),
+        tally_progress(internal_base, tally_key(volumes))
+        if tally_progress
+        else Tally(),
     )
     return {
         **row,
@@ -1083,9 +1096,10 @@ def _read_progress(
     fetch,
     cached,
     forbidden,
+    tally,
 ) -> dict:
     """Give every run volume its ``progress``, and sum them into the
-    campaign's page totals (``_campaign_pages``) plus how many of the run
+    campaign's page totals (``PageTotals``) plus how many of the run
     volumes those totals cover.
 
     Summed over the rows the response carried, the totals were the page's,
@@ -1093,21 +1107,32 @@ def _read_progress(
     volume past the page read as a clean campaign (3076). Every run volume
     is read now, in this order -- running ones (theirs is the progress
     actually changing), then the failures and ``latest`` (``lead``), then
-    the ``page``, then the rest -- from the cache when it has the answer, and over the
-    network only while the cap and the deadline allow. ``pagesCoverage``
-    says how many were read, so the page never calls a campaign clean on
-    totals that are not yet everyone's. ``fetch``/``cached`` are passed in
-    (progress.py does the HTTP) so this module stays pure; so is
-    ``forbidden``, which says from what those two just read whether the
-    proxy refused the caller the volume (a 403)."""
+    the ``page``, then the rest -- from the cache when it has the answer,
+    and over the network only while the cap and the deadline allow.
+    ``pagesCoverage`` says how many were read, so the page never calls a
+    campaign clean on totals that are not yet everyone's.
+
+    A volume that is over is summed once into the caller's ``tally`` for
+    this set of volumes (``Tally``), which outlives the per-volume answers:
+    a large campaign settles however many people read it at once, while
+    only the rows on screen need their own answer kept. ``fetch``,
+    ``cached``, ``forbidden`` (whether the proxy refused the caller the
+    volume, a 403) and ``tally`` are passed in (progress.py does the HTTP
+    and keeps the state) so this module stays pure."""
     ahead, shown = {id(row) for row in lead}, {id(row) for row in page}
     order = sorted(  # stable: by index within each band
         (row for row in volumes if row["state"] != "pending"),
         key=lambda r: (r["state"] != "active", id(r) not in ahead, id(r) not in shown),
     )
+    on_screen = ahead | shown
     deadline = time.monotonic() + PROGRESS_FETCH_BUDGET
     misses = counted = 0
+    live = PageTotals()
     for row in order:
+        over = row["state"] in OVER_STATES
+        if over and id(row) not in on_screen and tally.has(row["index"]):
+            counted += 1  # summed already, and not drawn: nothing to read
+            continue
         known, row["progress"] = cached(results_base, row["id"], row["state"])
         if not known and misses < PROGRESS_FETCH_CAP and time.monotonic() < deadline:
             misses += 1
@@ -1119,10 +1144,15 @@ def _read_progress(
             )
         row["forbidden"] = forbidden(results_base, row["id"], row["state"])
         counted += known
+        if over and known:
+            tally.add(row)
+        elif not over and row["progress"]:
+            live.add(row)
     for row in [*page, *lead]:
         row.setdefault("progress", None)  # pending: nothing to read
+    live.merge(tally.totals())  # running volumes first, as in ``order``
     return {
-        **_campaign_pages([row for row in order if row["progress"]]),
+        **live.result(),
         "pagesCoverage": {"counted": counted, "of": len(order)},
     }
 
@@ -1135,70 +1165,137 @@ def _not_cached(*_args) -> tuple[bool, None]:
 CAMPAIGN_LOWEST = 5
 
 
-def _campaign_quality(rows: list[dict]) -> dict | None:
-    """The campaign's predicted quality over the volumes whose progress
-    carries one: the mean weighted by each volume's scored pages, and the
-    worst pages anywhere, each with the viewer manifest it opens in.
-    ``volumes`` says how many volumes it covers; the card says so when that
-    is not all of them."""
-    scored = [
-        (row, q)
-        for row in rows
-        if (q := (row.get("progress") or {}).get("quality")) is not None
-    ]
-    if not scored:
-        return None
-    pages = sum(q["scored"] for _, q in scored)
-    # Sorted lowest first, so the first of a (volume, page) named twice (a
-    # volume listed twice in the campaign) is its lowest; the card keys its
-    # list by volume and page, and a duplicate would throw there.
-    ranked = sorted(
-        (
-            {"volume": row["id"], **entry, "iiifUrl": row["iiifUrl"]}
-            for row, q in scored
-            for entry in q["lowest"]
-        ),
-        key=lambda e: (e["quality"], e["volume"], e["page"]),
+class PageTotals:
+    """What the card says above its table, summed one volume at a time over
+    the volumes whose progress was read. ``lastError`` is the most recent
+    page failure among them, carrying the volume it happened in and that
+    volume's run log: the row it came from is often outside the page the
+    reader is looking at. ``quality`` is the predicted quality over the
+    volumes whose progress carries one: the mean weighted by each volume's
+    scored pages, and the worst pages anywhere, each with the viewer
+    manifest it opens in; ``volumes`` says how many volumes it covers."""
+
+    def __init__(self) -> None:
+        self.done = self.total = self.failed = self.errors = 0
+        self.last_error: tuple[str, dict] | None = None
+        self.scored = self.scored_volumes = 0
+        self.weighted = 0.0
+        self.low: float | None = None
+        #: The worst pages so far, lowest first, at most CAMPAIGN_LOWEST.
+        self.lowest: list[dict] = []
+
+    def add(self, row: dict) -> None:
+        p = row["progress"]
+        if not p:
+            return  # forbidden, or no file: counted, with nothing to sum
+        self.done += p["done"]
+        self.total += p["total"]
+        self.failed += p["failed"]
+        self.errors += p["errors"]
+        if p["lastError"]:
+            when = p["updatedAt"] or ""
+            if self.last_error is None or when > self.last_error[0]:
+                error = {**p["lastError"], "volume": row["id"], "logUrl": row["logUrl"]}
+                self.last_error = (when, error)
+        if (q := p.get("quality")) is not None:
+            self.scored += q["scored"]
+            self.scored_volumes += 1
+            self.weighted += q["mean"] * q["scored"]
+            self.low = q["min"] if self.low is None else min(self.low, q["min"])
+            for entry in q["lowest"]:
+                self._rank({"volume": row["id"], **entry, "iiifUrl": row["iiifUrl"]})
+
+    def _rank(self, entry: dict) -> None:
+        # Each (volume, page) once, at its lowest: a volume listed twice in
+        # the campaign names its pages twice, and the card keys its list by
+        # volume and page.
+        key = (entry["volume"], entry["page"])
+        kept = [e for e in self.lowest if (e["volume"], e["page"]) == key]
+        if kept and kept[0]["quality"] <= entry["quality"]:
+            return
+        self.lowest = sorted(
+            [e for e in self.lowest if (e["volume"], e["page"]) != key] + [entry],
+            key=lambda e: (e["quality"], e["volume"], e["page"]),
+        )[:CAMPAIGN_LOWEST]
+
+    def merge(self, other: "PageTotals") -> None:
+        out = self
+        out.done += other.done
+        out.total += other.total
+        out.failed += other.failed
+        out.errors += other.errors
+        if other.last_error is not None and (
+            out.last_error is None or other.last_error[0] > out.last_error[0]
+        ):
+            out.last_error = other.last_error
+        out.scored += other.scored
+        out.scored_volumes += other.scored_volumes
+        out.weighted += other.weighted
+        if other.low is not None:
+            out.low = other.low if out.low is None else min(out.low, other.low)
+        for entry in other.lowest:
+            out._rank(entry)
+
+    def quality(self) -> dict | None:
+        if not self.scored_volumes:
+            return None
+        return {
+            "mean": round(self.weighted / self.scored, 4),
+            "min": self.low,
+            "scored": self.scored,
+            "volumes": self.scored_volumes,
+            "lowest": self.lowest,
+        }
+
+    def result(self) -> dict:
+        return {
+            "pagesDone": self.done,
+            "pagesTotal": self.total,
+            "pagesFailed": self.failed,
+            "errors": self.errors,
+            "lastError": self.last_error[1] if self.last_error else None,
+            "quality": self.quality(),
+        }
+
+
+class Tally:
+    """One caller's sums over one campaign's volumes that are over, each
+    added once by its index (a bit in ``_seen``, so a few hundred bytes
+    for a campaign of thousands). A volume that is over writes nothing
+    more, so its sum holds for as long as its own answer would be kept;
+    the set of volumes is part of the key it is kept under
+    (``tally_key``). Shared by that caller's concurrent requests."""
+
+    def __init__(self) -> None:
+        self._seen = 0
+        self._totals = PageTotals()
+        self._lock = threading.Lock()
+
+    def has(self, index: int) -> bool:
+        return bool(self._seen >> index & 1)
+
+    def add(self, row: dict) -> None:
+        with self._lock:
+            if self._seen >> row["index"] & 1:
+                return
+            self._seen |= 1 << row["index"]
+            self._totals.add(row)
+
+    def totals(self) -> PageTotals:
+        with self._lock:
+            return copy.deepcopy(self._totals)
+
+
+def tally_key(volumes: list[dict]) -> str:
+    """The set of volumes, and which of them are over, a ``Tally`` is for:
+    a volume that finishes, or a campaign re-applied with other volumes,
+    is another tally."""
+    over = "\n".join(
+        f"{row['index']}\t{row['id']}\t{row['state']}"
+        for row in volumes
+        if row["state"] in OVER_STATES
     )
-    lowest: list[dict] = []
-    seen: set[tuple[str, str]] = set()
-    for entry in ranked:
-        if len(lowest) == CAMPAIGN_LOWEST:
-            break
-        if (key := (entry["volume"], entry["page"])) not in seen:
-            seen.add(key)
-            lowest.append(entry)
-    return {
-        "mean": round(sum(q["mean"] * q["scored"] for _, q in scored) / pages, 4),
-        "min": min(q["min"] for _, q in scored),
-        "scored": pages,
-        "volumes": len(scored),
-        "lowest": lowest,
-    }
-
-
-def _campaign_pages(rows: list[dict]) -> dict:
-    """What the card says above its table, summed over the volumes whose
-    progress was read. ``lastError`` is the most recent page failure among
-    them, carrying the volume it happened in and that volume's run log: the
-    row it came from is often outside the page the reader is looking at."""
-    known = [row["progress"] for row in rows]
-    last_errors = [
-        (
-            p["updatedAt"] or "",
-            {**p["lastError"], "volume": row["id"], "logUrl": row["logUrl"]},
-        )
-        for row in rows
-        if (p := row["progress"])["lastError"]
-    ]
-    return {
-        "pagesDone": sum(p["done"] for p in known),
-        "pagesTotal": sum(p["total"] for p in known),
-        "pagesFailed": sum(p["failed"] for p in known),
-        "errors": sum(p["errors"] for p in known),
-        "lastError": max(last_errors, key=lambda e: e[0])[1] if last_errors else None,
-        "quality": _campaign_quality(rows),
-    }
+    return hashlib.sha256(over.encode()).hexdigest()
 
 
 def detail(
@@ -1214,14 +1311,17 @@ def detail(
     fetch_progress=None,
     cached_progress=None,
     forbidden_progress=None,
+    tally_progress=None,
 ) -> dict:
     """``JobDetail``: ``JobSummary`` plus per-index rows and top failures for
     ``GET /api/v1/jobs/{ns}/{name}``, paged by index. ``warmup`` passes
     through to ``summarize`` unchanged (Task 28); ``fetch_progress`` is
     ``(results_base, volume id, state) -> progress | None``
     (``app.py`` wires ``progress.ProgressReader.fetch``, and its ``cached``
-    as ``cached_progress``, ``(...) -> (known, progress)``, and its
-    ``forbidden`` as ``forbidden_progress``, ``(...) -> bool``) -- called with the
+    as ``cached_progress``, ``(...) -> (known, progress)``, its
+    ``forbidden`` as ``forbidden_progress``, ``(...) -> bool``, and its
+    ``tally`` as ``tally_progress``, ``(results_base, key) -> Tally``) --
+    called with the
     INTERNAL results base (this pod's own way to the bucket), never the
     public one every URL below is built from: on the PoC they are not the
     same address (docs: development/local-k3s)."""
@@ -1262,6 +1362,9 @@ def detail(
         fetch_progress or (lambda *_args: None),
         cached_progress or _not_cached,
         forbidden_progress or (lambda *_args: False),
+        tally_progress(internal_base, tally_key(volumes))
+        if tally_progress
+        else Tally(),
     )
 
     pipeline_yaml = _pipeline_yaml(pipeline_configmap)

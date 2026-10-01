@@ -685,6 +685,7 @@ def create_app(
             fetch_progress=bound.fetch if bound is not None else None,
             cached_progress=bound.cached if bound is not None else None,
             forbidden_progress=bound.forbidden if bound is not None else None,
+            tally_progress=bound.tally if bound is not None else None,
         )
         status_name = f"{cm_name or 'campaign-' + name}{projection.STATUS_SUFFIX}"
         live = reader.get_configmap(namespace, status_name)
@@ -731,6 +732,7 @@ def create_app(
             fetch_progress=bound.fetch if bound is not None else None,
             cached_progress=bound.cached if bound is not None else None,
             forbidden_progress=bound.forbidden if bound is not None else None,
+            tally_progress=bound.tally if bound is not None else None,
         )
 
     def _warmup_status(
