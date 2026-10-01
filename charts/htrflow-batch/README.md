@@ -42,7 +42,8 @@ device plugin) is a separate chart:
   `credentials` key in AWS ini format plus `S3_BUCKET` (and `S3_ENDPOINT`
   unless real AWS; optional `S3_VERIFY_TLS: "false"` skips the endpoint's
   certificate check) — this chart documents the convention but never creates
-  it. The batch/warm-up Jobs the converter renders read it; for the PoC,
+  it. The batch/warm-up Jobs the converter renders mount it, and the results
+  proxy reads its `S3_ENDPOINT`, `S3_BUCKET` and `S3_VERIFY_TLS`; for the PoC,
   `charts/htrflow-devstack`'s RustFS renders it instead (keep
   `s3.existingSecret` here in step with that chart's `s3.secretName`; the
   bucket's name is the Secret's `S3_BUCKET` key, which that chart writes
@@ -256,7 +257,8 @@ namespace, never a ClusterRole. It is the one pod in this chart with
 *is* a Kubernetes API client. NetworkPolicy `htr-web` lets browsers in from
 `network.web.ingressCidrs` (behind an ingress controller, `web.ingress`, the
 controller named by `network.web.ingressFrom` instead) and lets it out to DNS, the apiserver and the
-results bucket. The pod also **serves `/config.js` itself**, written from its
+results proxy (`htrflow-results:8082`); it has no S3 egress, since the proxy
+alone reads the bucket. The pod also **serves `/config.js` itself**, written from its
 own environment: `window.API_BASE = "/api/v1"` (same-origin, no proxy) and
 `window.RESULTS_BASE` from `resultsUrl`. There is nothing for an
 operator to overwrite — set `resultsUrl` and the campaign browser
