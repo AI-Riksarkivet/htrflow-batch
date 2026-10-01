@@ -4,13 +4,14 @@ import pytest
 from fastapi.testclient import TestClient
 from moto import mock_aws
 
+from htrflow_web.cookie import COOKIE
 from htrflow_web.results import (
     ClientCache,
     LoginLimiter,
     ResultsConfig,
     create_results_app,
 )
-from htrflow_web.session import COOKIE, SessionCodec
+from htrflow_web.session import SessionCodec
 
 KEY = bytes(range(32))
 ORIGIN = {"Origin": "https://testserver"}

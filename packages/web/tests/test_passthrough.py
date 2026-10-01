@@ -410,8 +410,8 @@ def test_one_persons_login_never_rides_along_on_another_request():
 
 
 def test_the_web_fronts_other_proxy_clients_keep_no_cookies_either():
+    from htrflow_web.login_check import SessionChecker  # noqa: PLC0415
     from htrflow_web.progress import ProgressReader  # noqa: PLC0415
-    from htrflow_web.sessions import SessionChecker  # noqa: PLC0415
 
     for client in (
         SessionChecker("http://proxy:8082/results")._client,

@@ -575,7 +575,7 @@ def test_the_session_cookie_goes_to_the_proxy():
         return httpx.Response(200, json={"pages_done": 1, "pages_total": 2})
 
     r = ProgressReader(httpx.Client(transport=httpx.MockTransport(handler)))
-    from htrflow_web.sessions import Session
+    from htrflow_web.login_check import Session
 
     r.for_session(Session("anna", "tok")).fetch(
         "http://p/results/ns/demo", "R1", "running"
@@ -607,7 +607,7 @@ def test_one_users_answer_is_never_anothers():
         return httpx.Response(403)
 
     r = ProgressReader(httpx.Client(transport=httpx.MockTransport(handler)))
-    from htrflow_web.sessions import Session
+    from htrflow_web.login_check import Session
 
     a = r.for_session(Session("anna", "a"))
     b = r.for_session(Session("bo", "b"))
@@ -636,7 +636,7 @@ def test_a_refused_read_on_a_finished_volume_is_not_kept_for_the_hour(clock):
 
 
 def test_a_403_marks_the_volume_forbidden_for_that_caller_only(clock):
-    from htrflow_web.sessions import Session
+    from htrflow_web.login_check import Session
 
     def handler(req):
         if req.headers.get("cookie") == "htr_session=a":

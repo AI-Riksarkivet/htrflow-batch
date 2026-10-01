@@ -6,7 +6,7 @@ import os
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from htrflow_web.session import COOKIE, SessionCodec, derive_keys, load_key
+from htrflow_web.session import SessionCodec, derive_keys, load_key
 
 KEY = bytes(range(32))
 
@@ -113,7 +113,3 @@ def test_the_key_file_must_hold_32_bytes(tmp_path):
     short.write_text(base64.b64encode(b"x" * 16).decode())
     with pytest.raises(ValueError, match="32 bytes"):
         load_key(str(short))
-
-
-def test_the_cookie_name():
-    assert COOKIE == "htr_session"

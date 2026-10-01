@@ -28,8 +28,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
 
+from .cookie import COOKIE, forwarded
 from .results_rules import FILE_HEADERS, allowed_key, served_type
-from .session import COOKIE, SessionCodec, SessionData, derive_keys
+from .session import SessionCodec, SessionData, derive_keys
 
 _LOG = logging.getLogger("htrflow_web.results")
 
@@ -184,19 +185,12 @@ def _client_addr(request: Request, trusted_hops: int) -> str:
 
 def _same_origin(request: Request) -> bool:
     origin = request.headers.get("origin", "")
-    expected = f"{request.url.scheme}://{request.headers.get('host', '')}"
-    fwd_proto = request.headers.get("x-forwarded-proto")
-    fwd_host = request.headers.get("x-forwarded-host")
-    if fwd_proto and fwd_host:
-        expected = f"{fwd_proto}://{fwd_host}"
-    return bool(origin) and origin == expected
+    scheme, host = forwarded(request.headers, request.url.scheme)
+    return bool(origin) and origin == f"{scheme}://{host}"
 
 
 def _secure(request: Request) -> bool:
-    fwd_proto = request.headers.get("x-forwarded-proto")
-    if fwd_proto and request.headers.get("x-forwarded-host"):
-        return fwd_proto == "https"
-    return request.url.scheme == "https"
+    return forwarded(request.headers, request.url.scheme)[0] == "https"
 
 
 def session_of(request: Request, codec: SessionCodec) -> SessionData | None:
@@ -217,13 +211,8 @@ def _fail(detail: str, status: int) -> JSONResponse:
 
 
 def _clear(response: Response, request: Request) -> None:
-    # set_cookie with Max-Age=0 rather than delete_cookie: the web package's
-    # read-only guard test bans every `.delete_*(` call in the source.
-    response.set_cookie(
+    response.delete_cookie(
         COOKIE,
-        "",
-        max_age=0,
-        expires=0,
         path="/",
         secure=_secure(request),
         httponly=True,

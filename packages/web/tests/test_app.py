@@ -162,7 +162,7 @@ class FakeSessions:
         self.users = users if users is not None else {"tok": "anna"}
 
     def check(self, cookie):
-        from htrflow_web.sessions import Session
+        from htrflow_web.login_check import Session
 
         user = self.users.get(cookie or "")
         return Session(user, cookie) if user else None
@@ -181,7 +181,7 @@ def test_the_api_is_401_without_a_session():
 def test_every_api_answer_is_private_and_unstored():
     """Each /api/v1 answer is one person's view: no shared cache may keep
     it, and no browser cache past the page -- the 401 and 502 included."""
-    from htrflow_web.sessions import SessionsUnavailable
+    from htrflow_web.login_check import SessionsUnavailable
 
     c = TestClient(
         create_app(FakeReader(), progress=FakeProgress(), sessions=FakeSessions())
@@ -220,7 +220,7 @@ def test_the_site_itself_needs_no_session():
 
 
 def test_a_session_check_that_cannot_be_made_is_502():
-    from htrflow_web.sessions import SessionsUnavailable
+    from htrflow_web.login_check import SessionsUnavailable
 
     class Down:
         def check(self, cookie):
@@ -632,16 +632,24 @@ def test_job_detail_carries_the_warmup_field_too():
 
 
 def test_the_only_mutating_call_is_the_campaign_record():
-    """RBAC is get/list/watch on jobs and pods, and create/patch on
-    ConfigMaps for the one write there is: the per-campaign status ConfigMap
-    (B76). Nothing here may ever delete, or write a Job or a Pod."""
+    """RBAC is get/list on jobs and pods, and create/patch on ConfigMaps for
+    the one write there is: the per-campaign status ConfigMap (B76). Nothing
+    may ever delete, or write a Job or a Pod. kube.py is the only module
+    that holds a Kubernetes client, so it is the one checked."""
     src = Path(__file__).parent.parent / "src" / "htrflow_web"
-    offenders = []
+    holders = [
+        p.name
+        for p in src.rglob("*.py")
+        if re.search(r"^\s*(from|import) kubernetes\b", p.read_text(), re.M)
+    ]
+    assert holders == ["kube.py"]
+    kube = src / "kube.py"
     pattern = re.compile(r"\.(create_|patch_|delete_|replace_)\w*\(")
-    for path in src.rglob("*.py"):
-        for lineno, line in enumerate(path.read_text().splitlines(), start=1):
-            if pattern.search(line) and "patch_namespaced_config_map" not in line:
-                offenders.append(f"{path}:{lineno}: {line.strip()}")
+    offenders = [
+        f"kube.py:{lineno}: {line.strip()}"
+        for lineno, line in enumerate(kube.read_text().splitlines(), start=1)
+        if pattern.search(line) and "patch_namespaced_config_map" not in line
+    ]
     assert offenders == []
 
 

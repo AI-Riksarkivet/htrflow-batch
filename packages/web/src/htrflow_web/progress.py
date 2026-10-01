@@ -29,10 +29,10 @@ from urllib.parse import quote
 
 import httpx
 
-from .sessions import no_cookie_jar
+from .cookie import COOKIE, no_cookie_jar
 
 if TYPE_CHECKING:
-    from .sessions import Session
+    from .login_check import Session
 
 #: A running volume rewrites its file after every page, so a few seconds of
 #: staleness is at most a page or two; a finished one never changes again.
@@ -431,7 +431,7 @@ class ProgressReader:
                 url,
                 headers={
                     "Accept-Encoding": "identity",
-                    **({"Cookie": f"htr_session={cookie}"} if cookie else {}),
+                    **({"Cookie": f"{COOKIE}={cookie}"} if cookie else {}),
                 },
                 follow_redirects=False,
             ) as response:
