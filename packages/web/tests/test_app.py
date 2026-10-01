@@ -521,10 +521,9 @@ def _detail_rounds(reader, handler, rounds):
 
 def test_a_finished_campaign_the_caller_may_not_read_settles():
     """A 403 is the store's answer about this caller and this volume: it is
-    counted and kept like any other answer about a finished volume. It used
-    to count as no answer, so the campaign never settled, each read asked
-    the store 100 times again, and rows past those 100 kept a viewer link
-    that opened a 403."""
+    counted and kept like any other answer about a finished volume, so the
+    campaign settles, the store is not asked again, and every row on the
+    page says the account may not read it."""
     rounds, body = _detail_rounds(
         FinishedReader(300), lambda req: httpx.Response(403), 4
     )
