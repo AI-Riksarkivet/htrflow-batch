@@ -375,16 +375,24 @@ def test_ingress_mode_admits_the_controller_not_address_ranges():
     assert rule["ports"] == [{"port": 8081}]
 
 
-def install_notes(sets: tuple[str, ...]) -> str:
-    """What `helm install` prints after an install: NOTES.txt, rendered
-    client-side (no cluster)."""
-    cmd = ["helm", "install", "htr", str(CHART), "-n", NAMESPACE, "--dry-run=client"]
-    cmd += ["-f", str(CHART / REQUIRED_VALUES)]
-    for setting in sets:
-        cmd += ["--set", setting]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+def install_notes(sets: tuple[str, ...], tmp_path: Path) -> str:
+    """What `helm install` prints after an install. NOTES.txt renders only on
+    an install, which needs a cluster under Helm 3, so a copy of the chart
+    defines it as a named template and a one-key manifest prints it."""
+    chart = tmp_path / "chart"
+    shutil.copytree(CHART, chart)
+    notes = (chart / "templates" / "NOTES.txt").read_text(encoding="utf-8")
+    (chart / "templates" / "NOTES.txt").unlink()
+    (chart / "templates" / "_notes.tpl").write_text(
+        '{{- define "notes" -}}\n' + notes + "{{- end }}\n", encoding="utf-8"
+    )
+    (chart / "templates" / "notes.yaml").write_text(
+        '{{ dict "notes" (include "notes" .) | toYaml }}\n', encoding="utf-8"
+    )
+    result = helm_template(values=REQUIRED_VALUES, sets=sets, chart=chart)
     assert result.returncode == 0, result.stderr
-    return result.stdout.split("NOTES:\n", 1)[1]
+    (doc,) = [d for d in yaml.safe_load_all(result.stdout) if d and set(d) == {"notes"}]
+    return doc["notes"]
 
 
 @pytest.mark.parametrize(
@@ -403,17 +411,19 @@ def install_notes(sets: tuple[str, ...]) -> str:
     ids=["nodeport", "ingress", "operators-own-ingress"],
 )
 def test_the_install_notes_say_how_the_web_front_is_reached(
-    sets: tuple[str, ...], says: str
+    sets: tuple[str, ...], says: str, tmp_path: Path
 ):
-    notes = install_notes(sets)
+    notes = install_notes(sets, tmp_path)
     assert says in notes
     assert ("NodePort" in notes) is ("NodePort" in says)
 
 
-def test_the_install_notes_name_the_s3_secret_without_network_policies():
+def test_the_install_notes_name_the_s3_secret_without_network_policies(
+    tmp_path: Path,
+):
     """The campaign Jobs and the results proxy read it whether or not
     NetworkPolicies are rendered."""
-    notes = install_notes(DEFAULT_SETS + ("network.enabled=false",))
+    notes = install_notes(DEFAULT_SETS + ("network.enabled=false",), tmp_path)
     assert "S3 Secret htr-batch-s3" in notes
 
 
