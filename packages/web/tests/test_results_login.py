@@ -167,21 +167,30 @@ def test_an_unreachable_store_is_502(app, monkeypatch):
     assert login(c).status_code == 502
 
 
-def test_five_failures_block_the_address(cfg):
+def test_five_attempts_block_the_address(cfg):
     now = [0.0]
     limiter = LoginLimiter(clock=lambda: now[0])
     for _ in range(5):
-        limiter.failed("1.2.3.4")
-    assert limiter.blocked("1.2.3.4")
-    assert not limiter.blocked("5.6.7.8")
+        assert limiter.begin("1.2.3.4") is not None
+    assert limiter.begin("1.2.3.4") is None
+    assert limiter.begin("5.6.7.8") is not None
     now[0] += 61
-    assert not limiter.blocked("1.2.3.4")
+    assert limiter.begin("1.2.3.4") is not None
+
+
+def test_a_released_attempt_is_not_counted():
+    limiter = LoginLimiter(max_failures=1)
+    stamp = limiter.begin("a")
+    assert stamp is not None
+    limiter.release("a", stamp)
+    assert limiter.begin("a") is not None
+    assert limiter.begin("a") is None
 
 
 def test_a_blocked_address_gets_429(cfg, monkeypatch):
     limiter = LoginLimiter()
     for _ in range(5):
-        limiter.failed("testclient")
+        limiter.begin("testclient")
     app = create_results_app(cfg, SessionCodec(KEY, hours=8), limiter=limiter)
     c = TestClient(app, base_url="https://testserver")
     assert login(c).status_code == 429
@@ -259,7 +268,7 @@ def _xff_app(cfg, hops, limiter):
 def test_rotating_the_left_most_forwarded_for_does_not_escape(cfg):
     limiter = LoginLimiter()
     for _ in range(5):
-        limiter.failed("9.9.9.9")
+        limiter.begin("9.9.9.9")
     c = _xff_app(cfg, 1, limiter)
     for i in range(3):
         h = {**ORIGIN, "X-Forwarded-For": f"10.0.0.{i}, 9.9.9.9"}
@@ -271,7 +280,7 @@ def test_rotating_the_left_most_forwarded_for_does_not_escape(cfg):
 def test_two_hops_pick_the_second_from_right(cfg):
     limiter = LoginLimiter()
     for _ in range(5):
-        limiter.failed("7.7.7.7")
+        limiter.begin("7.7.7.7")
     c = _xff_app(cfg, 2, limiter)
     h = {**ORIGIN, "X-Forwarded-For": "1.1.1.1, 7.7.7.7, 8.8.8.8"}
     assert login(c, headers=h).status_code == 429
@@ -280,7 +289,7 @@ def test_two_hops_pick_the_second_from_right(cfg):
 def test_a_short_forwarded_list_falls_back_to_the_peer(cfg):
     limiter = LoginLimiter()
     for _ in range(5):
-        limiter.failed("testclient")
+        limiter.begin("testclient")
     c = _xff_app(cfg, 2, limiter)
     h = {**ORIGIN, "X-Forwarded-For": "1.1.1.1"}
     assert login(c, headers=h).status_code == 429
@@ -305,21 +314,125 @@ def test_ten_failures_for_one_user_block_it_from_any_address(cfg, monkeypatch):
     assert "five minutes" in r.json()["detail"]
 
 
-def test_the_limiter_is_bounded_and_reads_add_nothing():
-    lim = LoginLimiter(max_keys=3)
-    assert not lim.blocked("unknown")
-    assert len(lim) == 0
+def test_the_limiter_is_bounded_and_a_refusal_adds_nothing():
+    lim = LoginLimiter(max_failures=1, max_keys=3)
     for k in "abcd":
-        lim.failed(k)
+        lim.begin(k)
     assert len(lim) == 3
-    assert not lim.blocked("a")
+    assert lim.begin("d") is None
+    assert len(lim) == 3
+    assert lim.begin("a") is not None  # evicted, so a fresh key
 
 
-def test_eviction_is_least_recently_failed():
+def test_eviction_is_least_recently_attempted():
     lim = LoginLimiter(max_keys=2)
-    lim.failed("a")
-    lim.failed("b")
-    lim.failed("a")
-    lim.failed("c")
+    lim.begin("a")
+    lim.begin("b")
+    lim.begin("a")
+    lim.begin("c")
     assert "b" not in lim._fails
     assert "a" in lim._fails and "c" in lim._fails
+
+
+def _slow_store(monkeypatch, code="InvalidAccessKeyId", started=None, gate=None):
+    """Every probe answers ``code`` once ``gate`` is set; ``started`` counts
+    the probes that reached the store."""
+    from botocore.exceptions import ClientError  # noqa: PLC0415
+
+    class Slow:
+        def get_object(self, **kw):
+            started.append(1)
+            assert gate.wait(10)
+            raise ClientError({"Error": {"Code": code}}, "GetObject")
+
+    monkeypatch.setattr(ClientCache, "build", lambda self, a, s: Slow())
+
+
+def _concurrently(app, headers_list):
+    from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+
+    def one(i_headers):
+        i, headers = i_headers
+        c = TestClient(app, base_url="https://testserver")
+        return login(c, user=f"user{i}", headers=headers).status_code
+
+    with ThreadPoolExecutor(len(headers_list)) as pool:
+        return list(pool.map(one, enumerate(headers_list)))
+
+
+def test_concurrent_attempts_from_one_address_are_counted_before_the_probe(
+    cfg, monkeypatch
+):
+    """The limiter used to check before the probe and record after it, so
+    forty attempts in flight from one address all reached the store. Each
+    attempt now counts the moment it starts."""
+    import threading  # noqa: PLC0415
+
+    started: list[int] = []
+    gate = threading.Event()
+    _slow_store(monkeypatch, started=started, gate=gate)
+    app = create_results_app(cfg, SessionCodec(KEY, hours=8), max_probes=40)
+    timer = threading.Timer(0.5, gate.set)
+    timer.start()
+    codes = _concurrently(app, [ORIGIN] * 20)
+    timer.cancel()
+    assert sorted(codes) == [401] * 5 + [429] * 15
+    assert len(started) == 5
+
+
+def test_probes_past_the_cap_are_turned_away_not_queued(cfg, monkeypatch):
+    """At most ``max_probes`` logins wait on the store at once, from any
+    number of addresses: each holds a store client and a worker thread."""
+    import threading  # noqa: PLC0415
+
+    started: list[int] = []
+    gate = threading.Event()
+    _slow_store(monkeypatch, started=started, gate=gate)
+    app = _xff_app(cfg, 1, LoginLimiter()).app
+    timer = threading.Timer(0.5, gate.set)
+    timer.start()
+    codes = _concurrently(
+        app, [{**ORIGIN, "X-Forwarded-For": f"10.0.0.{i}"} for i in range(10)]
+    )
+    timer.cancel()
+    assert sorted(codes) == [401] * 4 + [429] * 6
+    assert len(started) == 4
+    busy = TestClient(app, base_url="https://testserver")
+    assert login(busy).status_code == 401  # the cap is free again
+
+
+def test_a_login_the_store_could_not_judge_is_not_counted(cfg, monkeypatch):
+    from botocore.exceptions import EndpointConnectionError  # noqa: PLC0415
+
+    class Down:
+        def get_object(self, **kw):
+            raise EndpointConnectionError(endpoint_url="https://store")
+
+    monkeypatch.setattr(ClientCache, "build", lambda self, a, s: Down())
+    c = TestClient(
+        create_results_app(cfg, SessionCodec(KEY, hours=8)),
+        base_url="https://testserver",
+    )
+    for _ in range(12):
+        assert login(c).status_code == 502
+
+
+def test_clients_share_one_session(cfg):
+    """A botocore Session holds the whole S3 service model, ~12 MB: one per
+    client let a login flood, or about fifteen logged-in users, push the
+    proxy past its memory limit. Clients now come from one Session."""
+    import gc  # noqa: PLC0415
+    import tracemalloc  # noqa: PLC0415
+
+    cache = ClientCache(cfg)
+    cache.get("warm", "up")
+    gc.collect()
+    tracemalloc.start()
+    try:
+        for i in range(10):
+            cache.get(f"ak{i}", "sk")
+        gc.collect()
+        grown, _ = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert grown / 10 < 2_000_000, f"{grown / 10 / 1e6:.1f} MB per client"
