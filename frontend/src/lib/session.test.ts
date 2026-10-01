@@ -1,17 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import {
-  type LoginFailure,
-  login,
-  loginError,
-  loginUrl,
-  safeNext,
-} from "./session";
-
-async function failedLogin(): Promise<LoginFailure> {
-  const result = await login("a", "b");
-  if (result.outcome === "ok") throw new Error("the login succeeded");
-  return result;
-}
+import { LOGIN_UNREACHABLE, login, loginUrl, safeNext } from "./session";
 
 describe("session helpers", () => {
   test("loginUrl keeps where the user was", () => {
@@ -36,22 +24,24 @@ describe("session helpers", () => {
     ])
       expect(safeNext(bad)).toBe("/");
   });
-  test("login maps the proxy's answers", async () => {
+  test("login words each of the proxy's answers", async () => {
     for (const [status, want] of [
-      [204, "ok"],
-      [401, "wrong"],
-      [403, "forbidden"],
-      [429, "throttled"],
-      [413, "malformed"],
-      [422, "malformed"],
-      [502, "unavailable"],
-      [503, "unavailable"],
-      [504, "unavailable"],
+      [204, null],
+      [401, /did not accept/],
+      [403, /not the site's own address/],
+      [429, /Too many login attempts/],
+      [413, /too long or malformed/],
+      [422, /too long or malformed/],
+      [502, LOGIN_UNREACHABLE],
+      [503, LOGIN_UNREACHABLE],
+      [504, LOGIN_UNREACHABLE],
     ] as const) {
       globalThis.fetch = vi
         .fn()
         .mockResolvedValue(new Response(null, { status }));
-      expect((await login("a", "b")).outcome).toBe(want);
+      const said = await login("a", "b");
+      if (want === null || typeof want === "string") expect(said).toBe(want);
+      else expect(said).toMatch(want);
     }
   });
 
@@ -65,7 +55,7 @@ describe("session helpers", () => {
         { status: 429 },
       ),
     );
-    expect(loginError(await failedLogin())).toBe(
+    expect(await login("a", "b")).toBe(
       "Too many failed logins for this user: wait five minutes and try again.",
     );
   });
@@ -79,7 +69,7 @@ describe("session helpers", () => {
           { status: 502 },
         ),
       );
-    expect(loginError(await failedLogin())).toBe(
+    expect(await login("a", "b")).toBe(
       "The results service did not answer. Try again shortly.",
     );
   });
@@ -88,7 +78,7 @@ describe("session helpers", () => {
     globalThis.fetch = vi
       .fn()
       .mockResolvedValue(new Response(null, { status: 403 }));
-    const sentence = loginError(await failedLogin());
+    const sentence = await login("a", "b");
     expect(sentence).toContain("not the site's own address");
     expect(sentence).not.toContain("store");
   });
@@ -98,7 +88,7 @@ describe("session helpers", () => {
       globalThis.fetch = vi
         .fn()
         .mockResolvedValue(new Response("<html>", { status }));
-      expect(loginError(await failedLogin())).toMatch(/\.$/);
+      expect(await login("a", "b")).toMatch(/\.$/);
     }
   });
 });
