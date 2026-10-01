@@ -72,7 +72,7 @@ the log through the results proxy, with the logged-in person's own store
 keys, and asks the read API, the only component with cluster credentials,
 which volumes exist and what state they are in.
 
-![The live run log: the wrapper claims the key, ships the buffer every 15 s and once more on exit, while the log view reads it](../assets/diagrams/seq-run-log.svg)
+![The live run log: the wrapper claims the key, ships the buffer every 15 s and once more on exit, while the log view reads it through the results proxy](../assets/diagrams/seq-run-log.svg)
 
 ### Wrapper side (`htrflow_batch.logship`)
 
