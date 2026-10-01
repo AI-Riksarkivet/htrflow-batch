@@ -376,7 +376,8 @@ fail=0
 # (verify on both S3 clients, urllib3's per-request warning silenced),
 # main.py +5 (the one warning at start).)
 # 4747 -> 4749 (audit 1001 R15): the run log key goes under S3_PREFIX.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 4749
+# 4749 -> 4766 (audit 1001 review I2): the last attempt's failure line says no retry follows.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 4766
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
@@ -1493,7 +1494,8 @@ check web       "$(count packages/web/src -name '*.py')" 4027
 # or 422 login read as too long or malformed), api.ts +3 and the login page
 # +1.
 # 6213 -> 6259 (audit 1001 R14): the run log tells a retried attempt from a failed or finished run.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 6259
+# 6259 -> 6263 (audit 1001 review I2): a transient failure on the last attempt reads as failed.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 6263
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
@@ -1686,5 +1688,6 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 6259
 # address and egress. _helpers.tpl +3: the refusal of web.internalResultsBase
 # and the results.sessionSecret requirement.
 # 2173 -> 2174 (audit 1001 R5): trusted hops follow network.web.ingressFrom too.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2174
+# 2174 -> 2176 (audit 1001 review): two hops need a ClusterIP Service too.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2176
 exit $fail
