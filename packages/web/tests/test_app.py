@@ -534,11 +534,11 @@ def test_a_finished_campaign_the_caller_may_not_read_settles():
     assert all(v["forbidden"] for v in body["volumes"])
 
 
-def test_two_readers_of_a_large_finished_campaign_both_settle(monkeypatch):
-    """The progress cache is per user, and its cap was sized for one reader:
-    with two, a campaign past half the cap thrashed, never settled, and
-    cost 100 GETs a read for good. Scaled down ten times here: a cap of
-    2000 answers, 1200 volumes, two readers."""
+def _two_readers(monkeypatch, reader, rounds=40, between=None):
+    """``{cookie: (GETs, counted)}`` of each reader's last detail read, two
+    readers taking turns, under a progress cache of 2000 answers (ten times
+    smaller than the real one, like the campaigns below). ``between(i)``
+    runs before round ``i``."""
     from htrflow_web import progress as progress_mod  # noqa: PLC0415
 
     monkeypatch.setattr(progress_mod, "MAX_ENTRIES", 2000)
@@ -549,7 +549,7 @@ def test_two_readers_of_a_large_finished_campaign_both_settle(monkeypatch):
         return httpx.Response(200, json={"pages_total": 2, "pages_done": 2})
 
     app = create_app(
-        FinishedReader(1200),
+        reader,
         progress=ProgressReader(httpx.Client(transport=httpx.MockTransport(handler))),
         sessions=FakeSessions({"a": "anna", "b": "bo"}),
     )
@@ -557,14 +557,41 @@ def test_two_readers_of_a_large_finished_campaign_both_settle(monkeypatch):
     for cookie in ("a", "b"):
         readers[cookie] = TestClient(app)
         readers[cookie].cookies.set("htr_session", cookie)
-    last = {}
-    for _ in range(40):
+    last, body = {}, {}
+    for i in range(rounds):
+        if between is not None:
+            between(i)
         for cookie, client in readers.items():
             asked.clear()
             body = client.get("/api/v1/jobs/htr-test/kyrk").json()
             last[cookie] = (len(asked), body["pagesCoverage"]["counted"])
+    return last, body
+
+
+def test_two_readers_of_a_large_finished_campaign_both_settle(monkeypatch):
+    """Each reader's totals hold however many volumes the campaign has and
+    however many people read it: 1200 volumes, two readers, a cache of 2000
+    answers."""
+    last, body = _two_readers(monkeypatch, FinishedReader(1200))
     assert last == {"a": (0, 1200), "b": (0, 1200)}
     assert body["pagesDone"] == 2400
+
+
+def test_a_volume_that_finishes_keeps_the_rest_of_the_tally(monkeypatch):
+    """A running campaign's finished volumes stay summed when one more
+    finishes: only the newcomer is read, late in the campaign included."""
+    reader = FinishedReader(1200)
+    reader.job["status"] = {"completedIndexes": "0-1198", "conditions": []}
+
+    def finish_the_last(i):
+        if i == 39:  # the last round: no time to read everything again
+            reader.job["status"] = {
+                "completedIndexes": "0-1199",
+                "conditions": [{"type": "Complete", "status": "True"}],
+            }
+
+    last, _ = _two_readers(monkeypatch, reader, between=finish_the_last)
+    assert last == {"a": (1, 1200), "b": (1, 1200)}  # the newcomer alone
 
 
 def test_job_detail_carries_the_pipeline_steps_and_yaml(client: TestClient):
