@@ -46,9 +46,20 @@ båda delarna finns, och tar då bort den andra linjen.
 
 ## Klart när
 
-- [ ] Basmodellerna laddas i en wrapper-image på den nyare linjen, utan
+- [x] Basmodellerna laddas i en wrapper-image på den nyare linjen, utan
       hand-redigerad tokenizer-config.
-- [ ] En volym ger samma text på båda linjerna, verifierat av en diff.
-- [ ] Den äldre linjen behövs inte längre: defaulten är flyttad och
+- [x] En volym ger samma text på båda linjerna, verifierat av en diff: tio
+      sidor genom region- och radsegmentering och den svenska basmodellen,
+      670 av 671 ALTO-rader identiska; den sista, en 20 pixlar hög remsa,
+      läses likadant på båda när den körs ensam (brus från batchen).
+- [x] Den äldre linjen behövs inte längre: defaulten är flyttad och
       `TRANSFORMERS_VERSION` är borta ur dockerfilen, Makefile, dagger-modulen
       och publish-workflowet.
+
+## Utfall
+
+Ingen modell behövde sparas om och ingen ändring i htrflow behövdes:
+felet `Cannot copy out of meta tensor` som linjerna infördes för går inte
+att återskapa på dagens image, varken för de svenska basmodellerna eller
+för den engelska uppströmsmodellen, och båda linjerna ger samma text och
+samma konfidens.
