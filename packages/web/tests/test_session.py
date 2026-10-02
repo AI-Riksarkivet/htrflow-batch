@@ -26,8 +26,12 @@ def test_a_sealed_session_opens_to_what_went_in():
 
 
 def test_the_secret_key_is_not_readable_in_the_cookie():
-    token = SessionCodec(KEY, hours=8).seal("anna", "AK", "SK")
-    assert b"SK" not in base64.urlsafe_b64decode(token + "==")
+    # A long marker, not a short one: the ciphertext is random bytes, and a
+    # two-byte secret turned up in it by chance (about 1 run in 700).
+    secret = "secret-key-that-must-not-reach-the-browser"
+    token = SessionCodec(KEY, hours=8).seal("anna", "AK", secret)
+    assert secret not in token
+    assert secret.encode() not in base64.urlsafe_b64decode(token + "==")
 
 
 def test_an_expired_session_is_no_session():
