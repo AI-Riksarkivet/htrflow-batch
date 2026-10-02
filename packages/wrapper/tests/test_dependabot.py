@@ -11,6 +11,7 @@ is not exactly that (docs/development/ci.md, "Dependency pins").
 
 from __future__ import annotations
 
+import re
 from fnmatch import fnmatch
 from pathlib import Path
 
@@ -92,16 +93,20 @@ def test_every_update_is_labelled_grouped_and_cooled_down(update: dict) -> None:
     assert update["groups"], "one pull request per ecosystem, not one per package"
 
 
-def test_uv_updates_move_the_lock_and_keep_huggingface_hub_on_its_major() -> None:
+def test_uv_updates_move_the_lock_on_the_huggingface_hub_major_of_the_image() -> None:
     """A bump must not raise a package's floor (the ranges are what the
-    packages support), and huggingface-hub must stay on the major the
-    default transformers line in the image can run."""
-    config = yaml.safe_load(
-        (Path(__file__).resolve().parents[3] / ".github" / "dependabot.yml").read_text()
-    )
-    (uv,) = [u for u in config["updates"] if u["package-ecosystem"] == "uv"]
+    packages support), and the lock the tests run on carries the
+    huggingface-hub major the image installs beside transformers."""
+    (uv,) = [u for u in UPDATES if u["package-ecosystem"] == "uv"]
     assert uv["versioning-strategy"] == "lockfile-only"
-    assert {
-        "dependency-name": "huggingface-hub",
-        "update-types": ["version-update:semver-major"],
-    } in uv["ignore"]
+    image = re.search(
+        r"^huggingface-hub==(\d+)\.",
+        (REPO / ".docker" / "transformers.txt").read_text(),
+        re.M,
+    )
+    lock = re.search(
+        r'^name = "huggingface-hub"\nversion = "(\d+)\.',
+        (REPO / "uv.lock").read_text(),
+        re.M,
+    )
+    assert image and lock and image.group(1) == lock.group(1)
