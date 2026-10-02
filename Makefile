@@ -325,11 +325,6 @@ WRAPPER_BUILD_ARGS = $(if $(HTRFLOW_SRC),--build-context htrflow-src=$(HTRFLOW_S
 # IMAGE_TAG is what the image will be called, so it is also what it reports
 # as its version (the status page's header, the OCI label).
 VERSION_BUILD_ARG = --build-arg HTRFLOW_BATCH_VERSION=$(IMAGE_TAG)
-# Which transformers line the wrapper image carries (see the dockerfile):
-# unset = the dockerfile's default; TRANSFORMERS_VERSION=5.9.0 builds the
-# image for models saved by transformers 5.
-WRAPPER_BUILD_ARGS += $(if $(TRANSFORMERS_VERSION),--build-arg TRANSFORMERS_VERSION=$(TRANSFORMERS_VERSION))
-
 build-wrapper:
 	docker build -f $(WRAPPER_DOCKERFILE) $(WRAPPER_BUILD_ARGS) $(VERSION_BUILD_ARG) -t $(WRAPPER_IMAGE) .
 
@@ -356,14 +351,13 @@ lock-htrflow-base:
 	cp "$$tmp/pyproject.toml" "$$tmp/uv.lock" $(HTRFLOW_BASE_LOCK_DIR)/ && \
 	git diff --stat -- $(HTRFLOW_BASE_LOCK_DIR)
 
-# The transformers lines of the wrapper image (.docker/transformers/<major>.in)
-# compiled into the pinned, hashed <major>.txt the dockerfile installs with
-# --no-deps. Rerun after editing an .in file and commit both.
+# The transformers the wrapper image runs (.docker/transformers.in) compiled
+# into the pinned, hashed transformers.txt the dockerfile installs with
+# --no-deps. Rerun after editing the .in file and commit both.
 transformers-requirements:
-	docker run --rm --user $$(id -u):$$(id -g) -e HOME=/tmp -v $(CURDIR)/.docker/transformers:/w -w /w $(DOCKER_CA) \
-	  $(UV_LOCK_IMAGE) sh -c 'for f in *.in; do \
-	    uv pip compile --quiet --no-deps --generate-hashes --universal --python-version 3.10 \
-	      --custom-compile-command "make transformers-requirements" -o "$${f%.in}.txt" "$$f" || exit 1; done'
+	docker run --rm --user $$(id -u):$$(id -g) -e HOME=/tmp -v $(CURDIR)/.docker:/w -w /w $(DOCKER_CA) \
+	  $(UV_LOCK_IMAGE) uv pip compile --quiet --no-deps --generate-hashes --universal --python-version 3.10 \
+	    --custom-compile-command "make transformers-requirements" -o transformers.txt transformers.in
 
 # The build backend the images build their own packages with
 # (.docker/build-constraints.in), compiled with its whole dependency closure
