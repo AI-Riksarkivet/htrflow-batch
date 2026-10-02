@@ -248,23 +248,16 @@ def test_the_base_stage_exports_the_htrflow_base_revision():
     assert "ENV HTRFLOW_BASE_REVISION=${HTRFLOW_BASE_REVISION}" in base[0]
 
 
-def test_the_transformers_line_is_one_build_arg_every_build_path_can_set() -> None:
-    """Two transformers lines exist because the models do not agree, and which
-    line an image carries is a property of that image -- so it is one build arg
-    with a default, installed once for both architectures, and every path that
-    builds the wrapper can pass it. A path that cannot is a line that can only
-    be built by hand-editing the dockerfile."""
+def test_transformers_is_one_hashed_install_from_its_requirements_file() -> None:
+    """One transformers for every pipeline (B102): the image installs it from
+    .docker/transformers.txt and pins it nowhere else, so no build path can
+    produce an image on another line."""
     text = WRAPPER_DOCKERFILE.read_text()
-    assert re.search(r"^ARG TRANSFORMERS_VERSION=\d", text, re.M), (
-        "the dockerfile must default the transformers line, not require the arg"
-    )
-    pins = re.findall(r"transformers==([^\"'\s]+)", text)
-    assert pins == ["${TRANSFORMERS_VERSION}"], (
-        "the only transformers pin in the image is the build arg: a second, "
-        f"literal one is a line nobody can change from outside — found {pins}"
-    )
-    # A transformers line whose dependencies do not fit the WRAPPER's own
-    # requirements must fail the build, not a warm-up pod. Deliberately not
+    assert "TRANSFORMERS_VERSION" not in text
+    assert re.findall(r"transformers==", text) == []
+    assert "source=.docker/transformers.txt" in text
+    # The transformers step's dependencies must fit the WRAPPER's own
+    # requirements at build time, not in a warm-up pod. Deliberately not
     # `uv pip check`: a base venv carries inconsistencies of its own that have
     # nothing to do with this image, and they must not block its builds -- the
     # dockerfile's comment may say so, but no step may run it.
@@ -272,14 +265,8 @@ def test_the_transformers_line_is_one_build_arg_every_build_path_can_set() -> No
     assert re.search(r'for dist in \("htrflow-batch-wrapper", "transformers"', text)
     assert "req.specifier.contains(have" in text
 
-    makefile = (REPO / "Makefile").read_text()
-    assert "--build-arg TRANSFORMERS_VERSION=$(TRANSFORMERS_VERSION)" in makefile
-
-    # publish-docker and build-wrapper hand it on: .dagger/publishcheck
-
-    publish = (REPO / ".github" / "workflows" / "publish.yml").read_text()
-    assert "transformers_version:" in publish  # the dispatch input
-    assert "--transformers-version" in publish  # every image is dagger-built
+    for path in ("Makefile", ".github/workflows/publish.yml", ".dagger/build.go"):
+        assert "TRANSFORMERS_VERSION" not in (REPO / path).read_text(), path
 
 
 def test_the_library_api_pin_runs_against_the_image_ci_builds() -> None:
@@ -397,45 +384,35 @@ def test_the_build_constraints_are_hatchling_pinned_and_hashed() -> None:
         assert system["requires"] == ["hatchling"], pyproject
 
 
-def test_every_transformers_line_is_a_hashed_requirements_file() -> None:
-    """The TRANSFORMERS_VERSION build arg selects .docker/transformers/<major>.txt,
-    compiled with hashes from the .in file beside it (`make
-    transformers-requirements`). Each pins transformers exactly and carries
-    the packages the line needs, and the dockerfile's default is one of them."""
-    lines = REPO / ".docker" / "transformers"
-    majors = {p.stem for p in lines.glob("*.in")}
-    assert majors == {"4", "5"}
-    for major in majors:
-        compiled = (lines / f"{major}.txt").read_text()
-        pins = re.findall(r"^([a-z0-9-]+)==(\S+)", compiled, re.M)
-        names = {name for name, _ in pins}
-        assert {
-            "transformers",
-            "huggingface-hub",
-            "protobuf",
-            "sentencepiece",
-            "tokenizers",
-        } <= names
-        assert dict(pins)["transformers"].startswith(f"{major}.")
-        # every pin carries its hashes, and the .txt is the .in compiled
-        for name, ver in pins:
-            assert re.search(
-                rf"^{re.escape(name)}=={re.escape(ver)}[^\n]*\\\n\s+--hash=sha256:",
-                compiled,
-                re.M,
-            ), name
-        wanted = re.findall(
-            r"^([a-z0-9-]+==\S+)", (lines / f"{major}.in").read_text(), re.M
-        )
-        assert sorted(wanted) == sorted(f"{n}=={v}" for n, v in pins)
-    assert (
-        "sentencepiece==0.2.2 ; platform_machine == 'aarch64'"
-        in (lines / "4.txt").read_text()
+def test_the_transformers_requirements_file_is_hashed_and_compiled() -> None:
+    """.docker/transformers.txt is .docker/transformers.in compiled with hashes
+    (`make transformers-requirements`): transformers 5 pinned exactly, with the
+    packages it needs to load every model the pipelines use."""
+    docker = REPO / ".docker"
+    compiled = (docker / "transformers.txt").read_text()
+    pins = re.findall(r"^([a-z0-9-]+)==(\S+)", compiled, re.M)
+    names = {name for name, _ in pins}
+    assert {
+        "transformers",
+        "huggingface-hub",
+        "protobuf",
+        "sentencepiece",
+        "tokenizers",
+    } <= names
+    assert dict(pins)["transformers"].startswith("5.")
+    # every pin carries its hashes, and the .txt is the .in compiled
+    for name, ver in pins:
+        assert re.search(
+            rf"^{re.escape(name)}=={re.escape(ver)}[^\n]*\\\n\s+--hash=sha256:",
+            compiled,
+            re.M,
+        ), name
+    wanted = re.findall(
+        r"^([a-z0-9-]+==\S+)", (docker / "transformers.in").read_text(), re.M
     )
-    default = re.search(
-        r"^ARG TRANSFORMERS_VERSION=(\S+)", WRAPPER_DOCKERFILE.read_text(), re.M
-    ).group(1)
-    assert f"transformers=={default} " in (lines / f"{default[0]}.txt").read_text()
+    assert sorted(wanted) == sorted(f"{n}=={v}" for n, v in pins)
+    assert "sentencepiece==0.2.2 ; platform_machine == 'aarch64'" in compiled
+    assert not (docker / "transformers").exists()
 
 
 def test_the_htrflow_base_is_built_from_pinned_inputs() -> None:

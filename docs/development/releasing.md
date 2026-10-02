@@ -54,8 +54,8 @@ architecture, in three stages:
 
 There is no separate base image to build, pull or pass in, so every build
 path runs this one recipe, and no step in it is architecture-specific. Both
-architectures install the transformers line from the `TRANSFORMERS_VERSION`
-build argument, whose default is the line upstream htrflow is tested on.
+architectures install the same transformers, from one hashed requirements
+file.
 
 **No compiler in the image.** The torch builds the image carries route a
 few operators through Triton kernels of their own, and the first such call
@@ -93,13 +93,12 @@ images and the uv binary by digest, htrflow by commit, and every Python
 package with hashes. The wrapper's own
 dependencies and the leaf overrides come from the workspace lock
 (`uv export --locked … --require-hashes`, so a stale `uv.lock` fails the
-build). The transformers line is a hashed requirements file per major,
-`.docker/transformers/<major>.txt`, compiled from the `.in` file beside it
-with `make transformers-requirements`: transformers, the `tokenizers` and
-`huggingface-hub` it needs, `sentencepiece` and `protobuf`, installed with `--no-deps`
-so nothing else in the base moves, and the build then checks that their
-own requirements are met. A `TRANSFORMERS_VERSION` those files do not pin
-fails the build. The htrflow base installs htrflow, torch and the rest of
+build). Transformers comes from a hashed requirements file,
+`.docker/transformers.txt`, compiled from the `.in` file beside it with
+`make transformers-requirements`: transformers, the `tokenizers` and
+`huggingface-hub` it needs, `sentencepiece` and `protobuf`, installed with
+`--no-deps` so nothing else in the base moves, and the build then checks
+that their own requirements are met. The htrflow base installs htrflow, torch and the rest of
 its dependencies with `uv sync --locked` from the lock committed in
 `.docker/htrflow-base/`: htrflow does not commit its own, and locking
 afresh on every build meant two builds of one commit could differ.
@@ -183,18 +182,13 @@ per-architecture tags such as `<version>-<arch>`.
 | campaigns | `riksarkivet/htrflow-campaigns` | `docker.io` |
 
 Override with `--image-repository` and `--registry`. `--base-revision` sets
-`HTRFLOW_BASE_REVISION` for the wrapper, and `--transformers-version` sets
-`TRANSFORMERS_VERSION` (empty keeps the dockerfile's pin). Naming the other
-transformers line publishes a tag of its own on that line, for models the
-default line cannot read ([Model
-handling](../how-it-works/wrapper.md#model-handling)).
+`HTRFLOW_BASE_REVISION` for the wrapper.
 
 ### The publish workflow
 
 `.github/workflows/publish.yml` is manual (`workflow_dispatch`) only, with
-one required input, the tag (`v<version>`, equal to the wrapper's
-`pyproject.toml` version), and one optional one, a transformers version,
-which reaches every wrapper build as the flag above. Every job runs in
+one input, the tag (`v<version>`, equal to the wrapper's `pyproject.toml`
+version). Every job runs in
 the `release` environment and reads the registry credentials
 (`DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`) from there; the dagger CLI is
 installed before the registry login, from its release asset checked against

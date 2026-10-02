@@ -322,11 +322,10 @@ through this cache, so a model change needs no image rebuild and no Job
 downloads while holding its GPU. The wrapper only sees `HF_HOME`, so changing
 where the cache comes from is a mount-point swap.
 
-**Two transformers lines.** The two current major lines of the transformers
-library do not read each other's saved models, and a mismatch can decode text
-subtly wrong rather than fail. So which line an image carries is a build
-argument ([Releasing](../development/releasing.md#publishing)), and each
-pipeline pins the image digest that matches its models.
+**One transformers line.** The image runs transformers 5. A model saved by
+transformers 5 cannot be read by 4.x, or decodes subtly wrong under it,
+while the models saved by 4.x read the same text under 5, so every pipeline
+runs on the same image and none has to pick a line.
 
 ## The model cache
 

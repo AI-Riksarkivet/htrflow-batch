@@ -32,7 +32,7 @@
 #     from the base lock (torch 2.13.0/torchvision 0.28.0 on both: from
 #     PyTorch's cu129 index on amd64, for Blackwell sm_120 kernels on CUDA
 #     12 drivers; from PyPI on arm64, CUDA 13), the wrapper's dependencies
-#     and the leaf overrides from the workspace lock, the transformers line
+#     and the leaf overrides from the workspace lock, transformers
 #     from a hashed requirements file, and the build backend of the packages
 #     built here (htrflow, the wrapper) from .docker/build-constraints.txt.
 #     Nothing is resolved at build time;
@@ -182,43 +182,34 @@ RUN --mount=type=bind,source=.docker/build-constraints.txt,target=/tmp/build-con
 # want of a compiler, on every architecture.
 ENV TORCH_DISABLE_NATIVE_JIT=1
 
-# The transformers line, both architectures, pinned here so the image says
-# which one it runs. Two lines exist because the models do not agree: a
-# model saved by transformers 5 (its tokenizer config carries keys 4.x cannot
-# read, and 4.x decodes its byte-level tokenizer wrongly) needs 5.x, while
-# a model saved by 4.x (the base handwritten models, whose positional
-# embedding buffer 5.x leaves on the meta device) needs 4.x until it is
-# re-saved. A pipeline pins the image digest it runs, so one campaigns repo
-# can carry pipelines on either line. Default: the 4.x line upstream htrflow
-# is tested on; `make build-wrapper TRANSFORMERS_VERSION=5.9.0` builds the
-# other.
+# The transformers the image runs, both architectures, pinned here so the
+# image says which one it is. It is the 5.x line: a TrOCR model saved by
+# transformers 5 carries tokenizer-config keys 4.x cannot read, and 4.x
+# decodes its byte-level tokenizer wrongly, while the models saved by 4.x
+# load and read the same text under it (B102: the base handwritten models
+# compared line by line on both majors). One line, so every pipeline runs on
+# the same image and a pipeline never has to pick one.
 #
-# Each line is a hashed requirements file, .docker/transformers/<major>.txt,
-# compiled from the .in file beside it: transformers, the tokenizers and
-# huggingface-hub that line needs, sentencepiece (arm64: TrOCR's slow tokenizer needs
-# it to convert, and 5.x dropped that conversion) and protobuf (transformers
-# only imports it on the error path of loading a slow tokenizer, and without
-# it that path reports "requires the protobuf library" INSTEAD of the real
-# error). They go in with --no-deps --require-hashes --no-build, so nothing
-# here is resolved or built from source at build time and nothing else in the
-# base moves; the check at
-# the end of this file proves their own requirements are met. A
-# TRANSFORMERS_VERSION the file does not pin fails the build.
-ARG TRANSFORMERS_VERSION=4.57.6
-RUN --mount=type=bind,source=.docker/transformers,target=/opt/transformers \
-    req="/opt/transformers/${TRANSFORMERS_VERSION%%.*}.txt" \
-    && { grep -q "^transformers==${TRANSFORMERS_VERSION} " "$req" \
-         || { echo "TRANSFORMERS_VERSION=${TRANSFORMERS_VERSION} is not the version" \
-                   ".docker/transformers/ pins for its line"; exit 1; }; } \
-    && uv pip install --python /app/.venv/bin/python --no-build --no-cache --no-deps --require-hashes \
-         -r "$req"
+# A hashed requirements file, .docker/transformers.txt, compiled from the
+# .in file beside it (`make transformers-requirements`): transformers, the
+# tokenizers and huggingface-hub it needs, sentencepiece (arm64: TrOCR's
+# slow tokenizer needs it to convert, and 5.x dropped that conversion) and
+# protobuf (transformers only imports it on the error path of loading a slow
+# tokenizer, and without it that path reports "requires the protobuf
+# library" INSTEAD of the real error). They go in with --no-deps
+# --require-hashes --no-build, so nothing here is resolved or built from
+# source at build time and nothing else in the base moves; the check at the
+# end of this file proves their own requirements are met.
+RUN --mount=type=bind,source=.docker/transformers.txt,target=/tmp/transformers.txt \
+    uv pip install --python /app/.venv/bin/python --no-build --no-cache --no-deps --require-hashes \
+         -r /tmp/transformers.txt
 
 # Packages of the base's venv with published fixes that htrflow's own lock
 # predates: pillow and Brotli. The `wrapper-image` group in uv.lock pins them
 # (pinned, hashed), and they go in last so they are the versions that survive.
 # Both are leaves (--no-deps). Not here: py7zr, which pagexml-tools caps below
-# 0.21, and transformers, which has a step and a build argument of its own
-# above; py7zr waits for htrflow.
+# 0.21, and transformers, which has a step of its own above; py7zr waits
+# for htrflow.
 RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
     --mount=type=bind,source=pyproject.toml,target=/opt/workspace/pyproject.toml \
     --mount=type=bind,source=packages/wrapper/pyproject.toml,target=/opt/workspace/packages/wrapper/pyproject.toml \
@@ -231,19 +222,18 @@ RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
          -r /tmp/image-requirements.txt \
     && rm /tmp/image-requirements.txt
 
-# What this image must guarantee, after the transformers line has had its say:
+# What this image must guarantee, after the transformers step has had its say:
 # the WRAPPER's own declared requirements are satisfied by what is installed,
-# and so are those of the packages the transformers line installed without
+# and so are those of the packages the transformers step installed without
 # their dependencies.
-# The newer transformers line requires a newer huggingface_hub than the wrapper
-# used to accept, and that mismatch belongs at build time, not in a warm-up pod
+# Transformers 5 requires a newer huggingface_hub than the wrapper used to
+# accept, and that mismatch belongs at build time, not in a warm-up pod
 # -- nothing in CI builds this image, so this is the only gate.
 #
 # Not `uv pip check`, which validates every distribution in the venv: one base
 # venv is already inconsistent for a reason that has nothing to do with this
 # image (its torch pin drags in an nvidia wheel built for another platform),
-# so the broad check blocks every build on that architecture, including the
-# default line. This one reads the wrapper's own metadata and nothing else.
+# so the broad check blocks every build on that architecture. This one reads the wrapper's own metadata and nothing else.
 RUN /app/.venv/bin/python <<'CHECK'
 import sys
 from importlib.metadata import PackageNotFoundError, requires, version
