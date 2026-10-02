@@ -200,12 +200,6 @@ func (m *HtrflowBatch) PublishDocker(
 	// itself.
 	// +optional
 	tagSuffix string,
-	// TRANSFORMERS_VERSION build arg for the wrapper image (see BuildWrapper);
-	// ignored for the other components. Empty — the default, and what a normal
-	// release passes — keeps the dockerfile's pin, so the published image does
-	// not change unless a run asks for the other line.
-	// +optional
-	transformersVersion string,
 ) (string, error) {
 	resolvedTag, err := m.resolveTag(ctx, source, tag, skipValidation, caBundle)
 	if err != nil {
@@ -236,7 +230,7 @@ func (m *HtrflowBatch) PublishDocker(
 	var container *dagger.Container
 	switch component {
 	case "wrapper":
-		container, err = m.BuildWrapper(ctx, source, baseRevision, "", resolvedTag, transformersVersion)
+		container, err = m.BuildWrapper(ctx, source, baseRevision, "", resolvedTag)
 	case "web":
 		// Tagged off the wrapper version: the repo releases its images as one
 		// set, not per workspace member -- which is why that tag, not the web

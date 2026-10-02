@@ -81,7 +81,7 @@ func (m *HtrflowBatch) ScanSarif(
 	var err error
 	switch image {
 	case "wrapper":
-		container, err = m.BuildWrapper(ctx, source, "", "", "", "")
+		container, err = m.BuildWrapper(ctx, source, "", "", "")
 	case "web":
 		container, err = m.BuildWeb(ctx, source, caBundle, "")
 	case "campaigns":
@@ -125,7 +125,7 @@ func (m *HtrflowBatch) Scan(
 	// +optional
 	caBundle *dagger.File,
 ) (string, error) {
-	container, err := m.BuildWrapper(ctx, source, "", "", "", "")
+	container, err := m.BuildWrapper(ctx, source, "", "", "")
 	if err != nil {
 		return "", fmt.Errorf("build failed before scanning: %w", err)
 	}

@@ -199,39 +199,3 @@ func TestOnlyAnUnknownManifestCountsAsAFreeTag(t *testing.T) {
 		t.Error("tagExists does not end in an error for an answer it cannot read")
 	}
 }
-
-func TestTheTransformersLineReachesTheWrapperBuild(t *testing.T) {
-	publish := function(t, "publish.go", "PublishDocker")
-	// transformersVersion is the public --transformers-version flag of both
-	// functions, not a local name
-	passed := false
-	for _, call := range calls(publish.Body) {
-		if name, root := method(call); name == "BuildWrapper" && root == "m" {
-			passed = ident(call.Args[len(call.Args)-1]) == "transformersVersion"
-		}
-	}
-	if !passed {
-		t.Error("PublishDocker does not hand transformersVersion to BuildWrapper")
-	}
-	build := function(t, "build.go", "BuildWrapper")
-	arg := false
-	ast.Inspect(build.Body, func(n ast.Node) bool {
-		lit, ok := n.(*ast.CompositeLit)
-		if !ok {
-			return true
-		}
-		fields := map[string]ast.Expr{}
-		for _, el := range lit.Elts {
-			if kv, ok := el.(*ast.KeyValueExpr); ok {
-				fields[ident(kv.Key)] = kv.Value
-			}
-		}
-		if str(fields["Name"]) == "TRANSFORMERS_VERSION" && ident(fields["Value"]) == "transformersVersion" {
-			arg = true
-		}
-		return true
-	})
-	if !arg {
-		t.Error("BuildWrapper does not pass transformersVersion as the TRANSFORMERS_VERSION build arg")
-	}
-}
