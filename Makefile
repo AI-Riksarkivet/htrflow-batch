@@ -329,7 +329,7 @@ build-wrapper:
 	docker build -f $(WRAPPER_DOCKERFILE) $(WRAPPER_BUILD_ARGS) $(VERSION_BUILD_ARG) -t $(WRAPPER_IMAGE) .
 
 # The htrflow base's lock (.docker/htrflow-base/): htrflow's pyproject.toml
-# at the commit the wrapper dockerfile pins, fetched from GitHub, plus this
+# at the repository and commit the wrapper dockerfile pins, fetched from GitHub, plus this
 # repository's overlay (torch per architecture), locked in a scratch
 # directory from the committed lock so only what the change forces moves;
 # UV_LOCK_ARGS=--upgrade moves everything. Run it after moving HTRFLOW_REF or
@@ -339,11 +339,12 @@ build-wrapper:
 # wheel tags.
 HTRFLOW_BASE_LOCK_DIR := .docker/htrflow-base
 UV_LOCK_IMAGE := ghcr.io/astral-sh/uv:0.12.6-debian-slim@sha256:9ac2caa67916b63d27595589abd0f0f10930974c885cd962ee30b71fbab42d9f
+HTRFLOW_REPO = $(shell sed -n 's/^ARG HTRFLOW_REPO=//p' $(WRAPPER_DOCKERFILE))
 HTRFLOW_REF = $(shell sed -n 's/^ARG HTRFLOW_REF=//p' $(WRAPPER_DOCKERFILE))
 lock-htrflow-base:
 	@tmp=$$(mktemp -d) && trap 'rm -rf "$$tmp"' EXIT && \
 	curl -fsSL -o "$$tmp/pyproject.toml" \
-	  https://raw.githubusercontent.com/AI-Riksarkivet/htrflow/$(HTRFLOW_REF)/pyproject.toml && \
+	  https://raw.githubusercontent.com/$(HTRFLOW_REPO)/$(HTRFLOW_REF)/pyproject.toml && \
 	cat $(HTRFLOW_BASE_LOCK_DIR)/overlay.toml >> "$$tmp/pyproject.toml" && \
 	cp $(HTRFLOW_BASE_LOCK_DIR)/uv.lock "$$tmp"/ && \
 	docker run --rm --user $$(id -u):$$(id -g) -e HOME=/tmp -v "$$tmp:/w" -w /w $(DOCKER_CA) \

@@ -6,6 +6,7 @@ from __future__ import annotations
 import gc
 import logging
 import re
+import tempfile
 import threading
 import time
 from contextlib import contextmanager
@@ -148,6 +149,81 @@ def _check_steps(config) -> None:
         _check_pins(index, step)
 
 
+#: What a QualityPrediction step's ``model_settings`` names: the Hub repo,
+#: its commit, and the two files in it (docs: reference/campaign-yaml.md).
+_QP_MODEL_SETTINGS = frozenset({"model", "revision", "model_file", "bin_config_file"})
+
+
+def _resolve_quality_models(config) -> bool:
+    """Rewrite each QualityPrediction step from the Hub reference a campaign
+    pipeline names to the local files htrflow's step takes, in place;
+    whether there was one.
+
+    The step (the quality-prediction fork's ``QualityPrediction``) takes
+    ``model=`` and ``bin_config=`` as file paths, and its model is a joblib
+    pickle -- loading it runs code -- so a pipeline names a pinned Hub commit
+    instead, like every other model here, and this is where it becomes a
+    path: ``hf_hub_download`` into the recipe's model cache. In the warm-up
+    that IS the download; in a batch pod (``HF_HUB_OFFLINE=1``) the same call
+    resolves from the read-only cache, and a file missing there is the same
+    transient miss as any other model's. A shape that is not a pinned Hub
+    reference is refused here too, for a pipeline that reached the pod past
+    ``validate`` and admission."""
+    found = False
+    for index, step in enumerate(_steps(config), 1):
+        if str(step.get("step", "")).lower() != "qualityprediction":
+            continue
+        found = True
+        settings = step.get("settings")
+        settings = settings if isinstance(settings, dict) else {}
+        ms = settings.get("model_settings")
+        where = f"step {index} (QualityPrediction)"
+        if (
+            not isinstance(ms, dict)
+            or set(ms) != _QP_MODEL_SETTINGS
+            or not all(isinstance(v, str) for v in ms.values())
+        ):
+            raise ValueError(
+                f"{where}: model_settings must name exactly "
+                f"{', '.join(sorted(_QP_MODEL_SETTINGS))} — the model is a pickle "
+                "loaded from a pinned Hub commit, never a path"
+            )
+        if not _is_commit(ms["revision"]):
+            raise ValueError(
+                f"{where}: model_settings.revision must be a 40-hex commit, "
+                f"got {ms['revision']!r}"
+            )
+        for key in ("model_file", "bin_config_file"):
+            if ms[key] in ("", ".", "..") or "/" in ms[key] or "\\" in ms[key]:
+                raise ValueError(
+                    f"{where}: model_settings.{key} must be a plain file name, "
+                    f"got {ms[key]!r}"
+                )
+        if "model" in settings or "bin_config" in settings:
+            raise ValueError(
+                f"{where}: model and bin_config are set by the wrapper from "
+                "model_settings; remove them"
+            )
+        from huggingface_hub import hf_hub_download
+        from huggingface_hub.errors import RemoteEntryNotFoundError
+
+        paths = {}
+        for key, arg in (("model_file", "model"), ("bin_config_file", "bin_config")):
+            try:
+                paths[arg] = hf_hub_download(
+                    ms["model"], ms[key], revision=ms["revision"]
+                )
+            except RemoteEntryNotFoundError as e:
+                # The repo and commit exist and the file is not in them: a
+                # typo in the pipeline, not the network.
+                raise ValueError(
+                    f"{where}: {ms[key]} is not in {ms['model']} at {ms['revision']}"
+                ) from e
+        rest = {k: v for k, v in settings.items() if k != "model_settings"}
+        step["settings"] = rest | paths
+    return found
+
+
 def build_pipeline(pipeline_path: str):
     """The pipeline htrflow builds from the YAML, as both callers need it: the
     driver, which then appends the Export steps, and warm-up, where the
@@ -168,7 +244,19 @@ def build_pipeline(pipeline_path: str):
     except (yaml.YAMLError, OSError) as e:
         raise ValueError(f"bad pipeline config: {e}") from e
     _check_steps(config)
+    if _resolve_quality_models(config):
+        # htrflow builds from a file, so the rewritten pipeline goes to one
+        # beside the outputs (the workdir, or the warm-up's TMPDIR) for the
+        # length of the construction.
+        with tempfile.TemporaryDirectory() as tmp:
+            resolved = Path(tmp) / "pipeline.yaml"
+            resolved.write_text(yaml.safe_dump(config, sort_keys=False))
+            return _construct(Pipeline, resolved)
+    return _construct(Pipeline, pipeline_path)
 
+
+def _construct(Pipeline, pipeline_path):
+    """``Pipeline.from_config``, torn down and translated when it fails."""
     built: list = []
     try:
         with _tracked_steps(built):
@@ -271,6 +359,9 @@ class _Stop:
     def get(self, *args, **kwargs):
         raise SystemExit
 
+    def put(self, *args, **kwargs):
+        raise SystemExit
+
     def __iter__(self):
         raise SystemExit
 
@@ -286,30 +377,61 @@ class _Unstoppable:
         return True
 
 
+def _worker_threads(step) -> list | None:
+    """The worker threads of htrflow's Inference ``step``, in either of the
+    two shapes of its ``BatchedQueue`` this wrapper knows, or None when the
+    step is neither:
+
+    * htrflow 0.2.6 as AI-Riksarkivet/htrflow has it: the queue runs a
+      thread of its own (``_queue._thread``) that polls ``_queue._in`` and
+      puts whole batches on ``_queue._out``, where the step's thread
+      (``_thread``) waits for them -- two threads;
+    * the quality-prediction fork's rewrite: the queue is a bare
+      ``_queue._queue`` and the step's thread collects its batches from it
+      itself, polling with a timeout -- one thread.
+    """
+    queue = getattr(step, "_queue", None)
+    thread = getattr(step, "_thread", None)
+    if queue is None or not isinstance(thread, threading.Thread):
+        return None
+    queue_thread = getattr(queue, "_thread", None)
+    if isinstance(queue_thread, threading.Thread):
+        if hasattr(queue, "_in") and hasattr(queue, "_out"):
+            return [thread, queue_thread]
+        return None
+    if queue_thread is None and hasattr(queue, "_queue"):
+        return [thread]
+    return None
+
+
 def _stop_threads(step) -> None:
-    """End a released step's two worker threads: the BatchedQueue's next
-    poll of ``_in`` (within its patience) and the step's thread, woken by a
-    batch that is the stop itself. Only htrflow's Inference holds a model,
-    and only it runs threads; one that does not have the attributes this
-    relies on -- an htrflow that renamed them -- is not quietly skipped
+    """End a released step's worker threads. In the two-thread shape: the
+    BatchedQueue's next poll of ``_in`` (within its patience) and the step's
+    thread, woken by a batch that is the stop itself. In the one-thread
+    shape: the step's next poll of ``_queue._queue`` (within its timeout).
+    Only htrflow's Inference holds a model, and only it runs threads; one in
+    neither shape -- an htrflow that renamed them -- is not quietly skipped
     (review M-5): it is logged at ERROR and counted as leaked."""
     if not hasattr(step, "model"):
         return
-    queue = getattr(step, "_queue", None)
-    threads = [getattr(step, "_thread", None), getattr(queue, "_thread", None)]
-    shaped = all(isinstance(t, threading.Thread) for t in threads)
-    if queue is None or not shaped or not hasattr(queue, "_in"):
+    threads = _worker_threads(step)
+    if threads is None:
         log.error(
-            "cannot stop the worker threads of htrflow's %s: it is not the "
-            "Inference shape this wrapper knows (_thread, _queue._thread, "
-            "_queue._in, _queue._out); counted as leaked",
+            "cannot stop the worker threads of htrflow's %s: it is not an "
+            "Inference shape this wrapper knows (_thread with _queue._thread, "
+            "_queue._in and _queue._out, or _thread with _queue._queue); "
+            "counted as leaked",
             step,
         )
         _ABANDONED.append(_Unstoppable())
         return
     _ABANDONED.extend(threads)
-    queue._in = _Stop()
-    queue._out.put(_Stop())
+    queue = step._queue
+    if len(threads) == 2:
+        queue._in = _Stop()
+        queue._out.put(_Stop())
+    else:
+        queue._queue = _Stop()
 
 
 def leaked_threads(grace: float = 1.0) -> int:
@@ -355,7 +477,8 @@ def _progress_mark(pipeline) -> tuple:
     """What moves while htrflow works on a page (review I-2), read without
     touching it: the steps Pipeline.run has recorded in htrflow's progress
     registry, and each Inference step's queue -- its worker takes the next
-    batch off ``_out`` only once the model has finished the last one."""
+    batch (off ``_out``, or off ``_queue`` in the one-thread shape) only once
+    the model has finished the last one."""
     try:
         from htrflow import progress  # ty: ignore[unresolved-import]
 
@@ -367,22 +490,25 @@ def _progress_mark(pipeline) -> tuple:
         queue = getattr(step, "_queue", None)
         if queue is None:
             continue
-        try:
-            queued.append((queue._in.qsize(), queue._out.qsize()))
-        except Exception:
-            pass
+        sizes = []
+        for name in ("_in", "_out", "_queue"):
+            try:
+                sizes.append(getattr(queue, name).qsize())
+            except Exception:
+                pass
+        queued.append(tuple(sizes))
     return recorded, tuple(queued)
 
 
 def _dead_step(pipeline):
     """The first step whose worker thread has died, if any.
 
-    An Inference step runs TWO daemon threads: its own ``_process`` and the
-    ``BatchedQueue``'s, which collects single puts into batches
-    (batched_queue.py). Either one dying hangs the run the same way -- with
-    the queue's gone, ``put`` returns a future nobody will ever batch -- so
-    both are watched. Every other kind of step has neither, and a step
-    without them is never dead.
+    An Inference step runs its own ``_process`` thread and, in htrflow's
+    two-thread shape, the ``BatchedQueue``'s, which collects single puts
+    into batches (batched_queue.py; ``_worker_threads``). Any one dying
+    hangs the run the same way -- a future nobody will ever complete -- so
+    every one there is is watched. Every other kind of step has none, and a
+    step without them is never dead.
     """
     for step in getattr(pipeline, "steps", ()):
         queue = getattr(step, "_queue", None)

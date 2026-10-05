@@ -215,16 +215,18 @@ class _SlowModel:
 
 
 def test_releasing_real_inference_steps_ends_their_threads(caplog):
-    """Review M-5: ``_stop_threads`` relies on htrflow's own names
-    (``_thread``, ``_queue._thread``, ``_queue._in``, ``_queue._out``); this
-    pins them against the real Inference and BatchedQueue, and that the stop
-    ends both threads without a word at ERROR."""
+    """Review M-5: ``_stop_threads`` relies on htrflow's own names (one of
+    the two shapes ``driver._worker_threads`` knows); this pins them against
+    the real Inference and BatchedQueue the image carries, and that the stop
+    ends every thread without a word at ERROR."""
     from htrflow.pipeline.steps import TextRecognition
 
     from htrflow_batch import driver
 
     steps = [TextRecognition(_SlowModel()), TextRecognition(_SlowModel())]
-    threads = [t for s in steps for t in (s._thread, s._queue._thread)]
+    shapes = [driver._worker_threads(s) for s in steps]
+    assert all(shapes), "an Inference shape the wrapper does not know"
+    threads = [t for found in shapes for t in found]
     with caplog.at_level("ERROR"):
         driver.release_steps(steps)
     assert caplog.text == ""
