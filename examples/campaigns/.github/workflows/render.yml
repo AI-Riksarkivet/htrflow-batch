@@ -48,7 +48,7 @@ env:
   # be moved to other code, and the Render job pushes to main. The Policy job
   # checks the chart out at this same commit, so the policies CI runs are the
   # ones that shipped with the converter that rendered.
-  CONVERTER_REF: 24845d16d4fd0c1d25785c31fbcb434280f81b4c   # v0.10.1
+  CONVERTER_REF: efa2ee014de7ba212f8788368967fc5b22abbdd7   # v0.11.0
   # The Kyverno CLI is a release asset checked against the SHA-256 committed
   # here, never piped from curl straight into tar. A bump changes the
   # version and both checksums together, copied from the release's own
