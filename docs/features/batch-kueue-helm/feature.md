@@ -75,6 +75,11 @@ tables below.
 | [B41](stories/B41-gpu-wrapper-image-in-ci.md) | GPU wrapper image (arm64) built in CI with SLSA provenance and a Trivy scan |
 | [B63](stories/B63-campaigns-as-indexed-jobs.md) | Kampanjer körs som Kubernetes Indexed Jobs — reconcilern och dess statusfiler tas bort |
 | [B101](stories/B101-private-models-warmup-token.md) | Privata modeller på Hugging Face hämtas av warm-up med en token |
+| [B102](stories/B102-base-models-resaved-transformers-5.md) | Basmodellerna sparas om under transformers 5 så att en enda image räcker |
+| [B107](stories/B107-results-behind-login.md) | Resultaten bakom en login — proxyn läser bucketen med varje användares egna nycklar |
+| [B108](stories/B108-deep-audit-round-1.md) | Djupaudit omgång 1 — härdning av resultat-proxyn och en fungerande installationsväg för chart 0.16.0 |
+| [B109](stories/B109-results-url-rename.md) | publicResultsBase heter resultsUrl — ett namn för adressen webbläsaren hämtar resultat från |
+| [B110](stories/B110-s3-verify-tls.md) | Valfri S3_VERIFY_TLS i S3-Secreten hoppar över certifikatkontrollen mot lagringen (tillfällig lösning) |
 | [B62](stories/B62-eupl-license.md) | htrflow-batch licensieras under EUPL-1.2, samma som htrflow |
 | [B72](stories/B72-split-by-bytes.md) | Kampanjsplitten producerar alltid något klustret accepterar |
 | [B73](stories/B73-wrapper-memory-flat.md) | Wrapperns minne växer inte med antalet sidor |
@@ -84,8 +89,6 @@ tables below.
 | [B77](stories/B77-pipeline-edit-caught-in-validate.md) | Ändrad pipeline stoppas i validate, inte som "field is immutable" |
 | [B85](stories/B85-spec-plan-decision-log-current.md) | Spec, plan, story B63 och decision-loggen beskriver det som byggdes |
 | [B88](stories/B88-dead-inference-thread.md) | En död inferens-tråd i htrflow stoppar inte volymen — sidan misslyckas, pipelinen byggs om, körningen fortsätter |
-| [B104](stories/B104-gpu-flavors-per-flavor-quota.md) | Chartet beskriver flera GPU-sorter, var och en med egen kvot för GPU, CPU och minne |
-| [B105](stories/B105-pipeline-named-pod-size.md) | En pipeline väljer en namngiven poddstorlek som operatören definierar i converter.yaml |
 
 ### Partly implemented — named items still open (see the PBI's commit note)
 
@@ -159,8 +162,9 @@ tables below.
 | [B83](stories/B83-resume-on-pipeline-change.md) | Resume räknar om sidor när pipeline_sha256 eller image_digest ändrats |
 | [B86](stories/B86-reject-unreasonable-values-name-the-line.md) | Convertern och wrappern avvisar orimliga värden och säger vilken rad |
 | [B87](stories/B87-prune-retired-warmup-jobs.md) | apply städar bort warm-up-Jobbet och ConfigMappen för en pipeline som inte längre finns |
-| [B102](stories/B102-base-models-resaved-transformers-5.md) | Basmodellerna sparas om under transformers 5 så att en enda image räcker |
 | [B103](stories/B103-warmup-log-on-status-page.md) | Warm-up-loggen går att läsa från status-sidan |
+| [B104](stories/B104-gpu-flavors-per-flavor-quota.md) | Chartet beskriver flera GPU-sorter, var och en med egen kvot för GPU, CPU och minne |
+| [B105](stories/B105-pipeline-named-pod-size.md) | En pipeline väljer en namngiven poddstorlek som operatören definierar i converter.yaml |
 | [B106](stories/B106-teams-repo-namespace-queue.md) | Flera team delar klustret — ett repo, en namespace, en LocalQueue och en egen ClusterQueue per team i en gemensam cohort |
 
 ### Not started — after production
