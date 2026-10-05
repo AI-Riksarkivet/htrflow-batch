@@ -6,6 +6,7 @@ from __future__ import annotations
 import gc
 import logging
 import re
+import tempfile
 import threading
 import time
 from contextlib import contextmanager
@@ -148,6 +149,81 @@ def _check_steps(config) -> None:
         _check_pins(index, step)
 
 
+#: What a QualityPrediction step's ``model_settings`` names: the Hub repo,
+#: its commit, and the two files in it (docs: reference/campaign-yaml.md).
+_QP_MODEL_SETTINGS = frozenset({"model", "revision", "model_file", "bin_config_file"})
+
+
+def _resolve_quality_models(config) -> bool:
+    """Rewrite each QualityPrediction step from the Hub reference a campaign
+    pipeline names to the local files htrflow's step takes, in place;
+    whether there was one.
+
+    The step (the quality-prediction fork's ``QualityPrediction``) takes
+    ``model=`` and ``bin_config=`` as file paths, and its model is a joblib
+    pickle -- loading it runs code -- so a pipeline names a pinned Hub commit
+    instead, like every other model here, and this is where it becomes a
+    path: ``hf_hub_download`` into the recipe's model cache. In the warm-up
+    that IS the download; in a batch pod (``HF_HUB_OFFLINE=1``) the same call
+    resolves from the read-only cache, and a file missing there is the same
+    transient miss as any other model's. A shape that is not a pinned Hub
+    reference is refused here too, for a pipeline that reached the pod past
+    ``validate`` and admission."""
+    found = False
+    for index, step in enumerate(_steps(config), 1):
+        if str(step.get("step", "")).lower() != "qualityprediction":
+            continue
+        found = True
+        settings = step.get("settings")
+        settings = settings if isinstance(settings, dict) else {}
+        ms = settings.get("model_settings")
+        where = f"step {index} (QualityPrediction)"
+        if (
+            not isinstance(ms, dict)
+            or set(ms) != _QP_MODEL_SETTINGS
+            or not all(isinstance(v, str) for v in ms.values())
+        ):
+            raise ValueError(
+                f"{where}: model_settings must name exactly "
+                f"{', '.join(sorted(_QP_MODEL_SETTINGS))} — the model is a pickle "
+                "loaded from a pinned Hub commit, never a path"
+            )
+        if not _is_commit(ms["revision"]):
+            raise ValueError(
+                f"{where}: model_settings.revision must be a 40-hex commit, "
+                f"got {ms['revision']!r}"
+            )
+        for key in ("model_file", "bin_config_file"):
+            if ms[key] in ("", ".", "..") or "/" in ms[key] or "\\" in ms[key]:
+                raise ValueError(
+                    f"{where}: model_settings.{key} must be a plain file name, "
+                    f"got {ms[key]!r}"
+                )
+        if "model" in settings or "bin_config" in settings:
+            raise ValueError(
+                f"{where}: model and bin_config are set by the wrapper from "
+                "model_settings; remove them"
+            )
+        from huggingface_hub import hf_hub_download
+        from huggingface_hub.errors import RemoteEntryNotFoundError
+
+        paths = {}
+        for key, arg in (("model_file", "model"), ("bin_config_file", "bin_config")):
+            try:
+                paths[arg] = hf_hub_download(
+                    ms["model"], ms[key], revision=ms["revision"]
+                )
+            except RemoteEntryNotFoundError as e:
+                # The repo and commit exist and the file is not in them: a
+                # typo in the pipeline, not the network.
+                raise ValueError(
+                    f"{where}: {ms[key]} is not in {ms['model']} at {ms['revision']}"
+                ) from e
+        rest = {k: v for k, v in settings.items() if k != "model_settings"}
+        step["settings"] = rest | paths
+    return found
+
+
 def build_pipeline(pipeline_path: str):
     """The pipeline htrflow builds from the YAML, as both callers need it: the
     driver, which then appends the Export steps, and warm-up, where the
@@ -168,7 +244,19 @@ def build_pipeline(pipeline_path: str):
     except (yaml.YAMLError, OSError) as e:
         raise ValueError(f"bad pipeline config: {e}") from e
     _check_steps(config)
+    if _resolve_quality_models(config):
+        # htrflow builds from a file, so the rewritten pipeline goes to one
+        # beside the outputs (the workdir, or the warm-up's TMPDIR) for the
+        # length of the construction.
+        with tempfile.TemporaryDirectory() as tmp:
+            resolved = Path(tmp) / "pipeline.yaml"
+            resolved.write_text(yaml.safe_dump(config, sort_keys=False))
+            return _construct(Pipeline, resolved)
+    return _construct(Pipeline, pipeline_path)
 
+
+def _construct(Pipeline, pipeline_path):
+    """``Pipeline.from_config``, torn down and translated when it fails."""
     built: list = []
     try:
         with _tracked_steps(built):
