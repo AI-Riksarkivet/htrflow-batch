@@ -377,7 +377,16 @@ fail=0
 # main.py +5 (the one warning at start).)
 # 4747 -> 4749 (audit 1001 R15): the run log key goes under S3_PREFIX.
 # 4749 -> 4766 (audit 1001 review I2): the last attempt's failure line says no retry follows.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 4766
+# 4766 -> 4892 (quality prediction in batch runs, B20): driver.py +85 for
+# _resolve_quality_models -- a QualityPrediction step's pinned Hub reference
+# checked and turned into the file paths the step takes, downloaded in the
+# warm-up and found in the read-only cache in a pod, and the pipeline built
+# from a rewritten copy (_construct split out of build_pipeline); +41 for
+# _worker_threads, the quality-prediction fork's one-thread BatchedQueue
+# beside upstream's two-thread one in the stop, the dead-step check and the
+# progress mark. Most of it is the docstrings saying why the model is never
+# a path and which shape is which.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 4892
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

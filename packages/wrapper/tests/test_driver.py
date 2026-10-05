@@ -839,6 +839,57 @@ class _HtrflowStep:
             self.model([item for item in batch])
 
 
+class _ForkQueue:
+    """The quality-prediction fork's BatchedQueue (batched_queue.py there):
+    no thread of its own, a bare ``_queue`` the caller polls with a
+    timeout, returning an empty batch when nothing came."""
+
+    def __init__(self):
+        import queue
+
+        self._queue = queue.Queue()
+
+    def get(self, timeout=0.01):
+        import queue
+
+        batch = []
+        while len(batch) < 1:
+            try:
+                batch.append(self._queue.get(timeout=timeout))
+            except queue.Empty:
+                break
+        return batch
+
+    def put(self, item):
+        self._queue.put(item)
+
+
+class _ForkStep:
+    """The fork's Inference (steps.py there): ONE daemon thread, collecting
+    its own batches from the queue and calling the model, for ever."""
+
+    def __init__(self, model=lambda images: images):
+        self.model = model
+        self._queue = _ForkQueue()
+        self._thread = threading.Thread(target=self._process, daemon=True)
+        self._thread.start()
+
+    def _process(self):
+        while 1:
+            batch = self._queue.get()
+            if batch:
+                self.model([item for item in batch])
+
+
+def _threads_of(step) -> list:
+    queue_thread = getattr(step._queue, "_thread", None)
+    return [step._thread] + ([queue_thread] if queue_thread else [])
+
+
+def _put(step, item) -> None:
+    (getattr(step._queue, "_in", None) or step._queue._queue).put(item)
+
+
 @pytest.fixture
 def abandoned(monkeypatch):
     """The driver with an empty abandoned list, and the interpreter's own
@@ -850,14 +901,16 @@ def abandoned(monkeypatch):
     return driver
 
 
-def test_releasing_a_pipeline_ends_its_worker_threads(abandoned, capfd):
+@pytest.mark.parametrize("step_type", [_HtrflowStep, _ForkStep])
+def test_releasing_a_pipeline_ends_its_worker_threads(step_type, abandoned, capfd):
     """Audit 0923 W-8: every rebuild after a dead worker thread left the old
     pipeline's other threads running for the life of the process -- each
     BatchedQueue polling ten times a second. Released, they end, and end
     quietly: SystemExit is the one exception a thread dies of without a
-    traceback in the run log."""
-    steps = [_HtrflowStep(), _HtrflowStep()]
-    threads = [t for s in steps for t in (s._thread, s._queue._thread)]
+    traceback in the run log. Both shapes of htrflow's queue: upstream's
+    two threads and the quality-prediction fork's one."""
+    steps = [step_type(), step_type()]
+    threads = [t for s in steps for t in _threads_of(s)]
 
     abandoned.release_pipeline(SimpleNamespace(steps=steps))
 
@@ -866,12 +919,13 @@ def test_releasing_a_pipeline_ends_its_worker_threads(abandoned, capfd):
     assert "Traceback" not in capfd.readouterr().err
 
 
-def test_a_worker_stuck_in_its_model_is_counted_as_leaked(abandoned):
+@pytest.mark.parametrize("step_type", [_HtrflowStep, _ForkStep])
+def test_a_worker_stuck_in_its_model_is_counted_as_leaked(step_type, abandoned):
     """What cannot be stopped is counted: a model call that never returns
     keeps its thread, and whatever that holds on the GPU, for good."""
     entered, stuck = threading.Event(), threading.Event()
-    step = _HtrflowStep(model=lambda images: (entered.set(), stuck.wait(30)))
-    step._queue._in.put("page")
+    step = step_type(model=lambda images: (entered.set(), stuck.wait(30)))
+    _put(step, "page")
     assert entered.wait(5)  # the step's thread is inside the model now
     try:
         abandoned.release_pipeline(SimpleNamespace(steps=[step]))
@@ -879,6 +933,23 @@ def test_a_worker_stuck_in_its_model_is_counted_as_leaked(abandoned):
     finally:
         stuck.set()
     assert abandoned.leaked_threads(grace=2.0) == 0
+
+
+def test_a_fork_step_whose_model_raises_is_a_dead_step(abandoned):
+    """The fork's Inference has no queue thread: its one thread calls the
+    model, and an exception there (the 2026-09-08 YOLO detection without a
+    polygon) ends it -- the run would then wait on a future for ever. That
+    one thread is what is watched."""
+
+    def boom(images):
+        raise ValueError("a detection without a polygon")
+
+    step = _ForkStep(model=boom)
+    pipeline = SimpleNamespace(steps=[SimpleNamespace(dest="out"), step])
+    assert abandoned._dead_step(pipeline) is None
+    _put(step, "page")
+    step._thread.join(5)
+    assert abandoned._dead_step(pipeline) is step
 
 
 def test_a_page_that_makes_no_progress_is_a_dead_pipeline(
@@ -908,30 +979,37 @@ def test_a_page_that_makes_no_progress_is_a_dead_pipeline(
         hang.set()
 
 
-def _steady_queue_pipeline(batches: int, gap: float):
+def _steady_queue_pipeline(batches: int, gap: float, fork: bool = False):
     """An Inference step's queue as the watchdog sees it: every batch the
-    model finishes, its worker takes the next one off ``_out``."""
+    model finishes, its worker takes the next one off ``_out`` (the fork's
+    one-thread shape: off ``_queue``)."""
     import queue
 
-    step = SimpleNamespace(
-        _queue=SimpleNamespace(_in=queue.Queue(), _out=queue.Queue())
-    )
+    if fork:
+        step = SimpleNamespace(_queue=SimpleNamespace(_queue=queue.Queue()))
+        work = step._queue._queue
+    else:
+        step = SimpleNamespace(
+            _queue=SimpleNamespace(_in=queue.Queue(), _out=queue.Queue())
+        )
+        work = step._queue._out
 
     class _Pipeline:
         steps = [step]
 
         def run(self, document):
             for i in range(batches):
-                step._queue._out.put(i)
+                work.put(i)
             for _ in range(batches):
                 time.sleep(gap)
-                step._queue._out.get()
+                work.get()
 
     return _Pipeline()
 
 
+@pytest.mark.parametrize("fork", [False, True])
 def test_a_slow_page_that_keeps_making_progress_completes(
-    tmp_path, monkeypatch, fake_htrflow, abandoned
+    fork, tmp_path, monkeypatch, fake_htrflow, abandoned
 ):
     """Review I-2: the budget was a total per page, and a broadsheet page of
     1 500 lines on TrOCR legitimately takes 300-1 000 s -- it was failed, and
@@ -944,7 +1022,7 @@ def test_a_slow_page_that_keeps_making_progress_completes(
     for fmt in ("alto", "page"):
         (out / fmt).mkdir(parents=True)
         (out / fmt / "0044.xml").write_text("<x/>")
-    pipeline = _steady_queue_pipeline(batches=10, gap=0.02)  # twice the window
+    pipeline = _steady_queue_pipeline(batches=10, gap=0.02, fork=fork)  # 2x window
 
     files = abandoned.process_page(pipeline, _image(tmp_path), out, seconds=0.1)
     assert set(files) == {"alto", "page"}
