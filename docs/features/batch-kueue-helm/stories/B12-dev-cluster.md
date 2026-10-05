@@ -59,17 +59,43 @@ rejects while a mistake still costs nothing.
 
 ## Done when
 
-- [ ] `argocd app get htrflow-batch-dev` shows *Synced / Healthy* from the
+- [x] `argocd app get htrflow-batch-dev` shows *Synced / Healthy* from the
       deployment repo; a manual change on the cluster is reverted within
       minutes.
 - [ ] `security.allowedImageRepos` set, PSA `restricted`, network
       policies on; no image runs that did not come from our registry.
-- [ ] A campaign completes; results open in the viewer from an office
+- [x] A campaign completes; results open in the viewer from an office
       laptop with no tunnel (the viewer's half is U05).
-- [ ] Everything DEV rejected is either fixed in the chart or recorded as
+- [x] Everything DEV rejected is either fixed in the chart or recorded as
       a staging/production prerequisite.
 - [ ] The DEV values file, the `AppProject` and the install steps are in
       the docs.
+
+## Status after the first DEV rollout
+
+The deployment repository is the cluster's existing GitOps repository: an
+Argo CD application per component, all tracking its main branch, with
+automated sync, self-heal and prune. The chart is kept in that repository and
+rendered at sync time. Campaigns are applied with `htrflow-campaigns apply`
+from a kubeconfig; the results sit behind the login (B107).
+
+Fixed in the chart because of DEV: the S3 certificate check can be skipped
+(B110), the results address has one name (B109), the results proxy and its
+hardening (B107, B108), and warm-ups may read a Hub token for private models
+(B101).
+
+Recorded as prerequisites, not yet met:
+
+- **Network policies are off on DEV** (`network.enabled: false`); turning
+  them on is the open half of the second criterion.
+- **Images come from Docker Hub, not the cluster's registry.** The cluster's
+  own admission policies (audit mode today) require images from the internal
+  registry and an `app.kubernetes.io/name` label on every pod; both fail for
+  campaign pods and would refuse them once enforced.
+- **The storage certificate does not match its host name**, so DEV runs with
+  `S3_VERIFY_TLS=false` until it is fixed.
+- **No `AppProject`:** the application uses the `default` project.
+- **The GPU quota is 2**, while other workloads hold most of the cluster's GPUs.
 
 ## Assumptions to confirm
 
