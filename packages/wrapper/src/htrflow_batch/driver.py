@@ -271,6 +271,9 @@ class _Stop:
     def get(self, *args, **kwargs):
         raise SystemExit
 
+    def put(self, *args, **kwargs):
+        raise SystemExit
+
     def __iter__(self):
         raise SystemExit
 
@@ -286,30 +289,61 @@ class _Unstoppable:
         return True
 
 
+def _worker_threads(step) -> list | None:
+    """The worker threads of htrflow's Inference ``step``, in either of the
+    two shapes of its ``BatchedQueue`` this wrapper knows, or None when the
+    step is neither:
+
+    * htrflow 0.2.6 as AI-Riksarkivet/htrflow has it: the queue runs a
+      thread of its own (``_queue._thread``) that polls ``_queue._in`` and
+      puts whole batches on ``_queue._out``, where the step's thread
+      (``_thread``) waits for them -- two threads;
+    * the quality-prediction fork's rewrite: the queue is a bare
+      ``_queue._queue`` and the step's thread collects its batches from it
+      itself, polling with a timeout -- one thread.
+    """
+    queue = getattr(step, "_queue", None)
+    thread = getattr(step, "_thread", None)
+    if queue is None or not isinstance(thread, threading.Thread):
+        return None
+    queue_thread = getattr(queue, "_thread", None)
+    if isinstance(queue_thread, threading.Thread):
+        if hasattr(queue, "_in") and hasattr(queue, "_out"):
+            return [thread, queue_thread]
+        return None
+    if queue_thread is None and hasattr(queue, "_queue"):
+        return [thread]
+    return None
+
+
 def _stop_threads(step) -> None:
-    """End a released step's two worker threads: the BatchedQueue's next
-    poll of ``_in`` (within its patience) and the step's thread, woken by a
-    batch that is the stop itself. Only htrflow's Inference holds a model,
-    and only it runs threads; one that does not have the attributes this
-    relies on -- an htrflow that renamed them -- is not quietly skipped
+    """End a released step's worker threads. In the two-thread shape: the
+    BatchedQueue's next poll of ``_in`` (within its patience) and the step's
+    thread, woken by a batch that is the stop itself. In the one-thread
+    shape: the step's next poll of ``_queue._queue`` (within its timeout).
+    Only htrflow's Inference holds a model, and only it runs threads; one in
+    neither shape -- an htrflow that renamed them -- is not quietly skipped
     (review M-5): it is logged at ERROR and counted as leaked."""
     if not hasattr(step, "model"):
         return
-    queue = getattr(step, "_queue", None)
-    threads = [getattr(step, "_thread", None), getattr(queue, "_thread", None)]
-    shaped = all(isinstance(t, threading.Thread) for t in threads)
-    if queue is None or not shaped or not hasattr(queue, "_in"):
+    threads = _worker_threads(step)
+    if threads is None:
         log.error(
-            "cannot stop the worker threads of htrflow's %s: it is not the "
-            "Inference shape this wrapper knows (_thread, _queue._thread, "
-            "_queue._in, _queue._out); counted as leaked",
+            "cannot stop the worker threads of htrflow's %s: it is not an "
+            "Inference shape this wrapper knows (_thread with _queue._thread, "
+            "_queue._in and _queue._out, or _thread with _queue._queue); "
+            "counted as leaked",
             step,
         )
         _ABANDONED.append(_Unstoppable())
         return
     _ABANDONED.extend(threads)
-    queue._in = _Stop()
-    queue._out.put(_Stop())
+    queue = step._queue
+    if len(threads) == 2:
+        queue._in = _Stop()
+        queue._out.put(_Stop())
+    else:
+        queue._queue = _Stop()
 
 
 def leaked_threads(grace: float = 1.0) -> int:
@@ -355,7 +389,8 @@ def _progress_mark(pipeline) -> tuple:
     """What moves while htrflow works on a page (review I-2), read without
     touching it: the steps Pipeline.run has recorded in htrflow's progress
     registry, and each Inference step's queue -- its worker takes the next
-    batch off ``_out`` only once the model has finished the last one."""
+    batch (off ``_out``, or off ``_queue`` in the one-thread shape) only once
+    the model has finished the last one."""
     try:
         from htrflow import progress  # ty: ignore[unresolved-import]
 
@@ -367,22 +402,25 @@ def _progress_mark(pipeline) -> tuple:
         queue = getattr(step, "_queue", None)
         if queue is None:
             continue
-        try:
-            queued.append((queue._in.qsize(), queue._out.qsize()))
-        except Exception:
-            pass
+        sizes = []
+        for name in ("_in", "_out", "_queue"):
+            try:
+                sizes.append(getattr(queue, name).qsize())
+            except Exception:
+                pass
+        queued.append(tuple(sizes))
     return recorded, tuple(queued)
 
 
 def _dead_step(pipeline):
     """The first step whose worker thread has died, if any.
 
-    An Inference step runs TWO daemon threads: its own ``_process`` and the
-    ``BatchedQueue``'s, which collects single puts into batches
-    (batched_queue.py). Either one dying hangs the run the same way -- with
-    the queue's gone, ``put`` returns a future nobody will ever batch -- so
-    both are watched. Every other kind of step has neither, and a step
-    without them is never dead.
+    An Inference step runs its own ``_process`` thread and, in htrflow's
+    two-thread shape, the ``BatchedQueue``'s, which collects single puts
+    into batches (batched_queue.py; ``_worker_threads``). Any one dying
+    hangs the run the same way -- a future nobody will ever complete -- so
+    every one there is is watched. Every other kind of step has none, and a
+    step without them is never dead.
     """
     for step in getattr(pipeline, "steps", ()):
         queue = getattr(step, "_queue", None)
