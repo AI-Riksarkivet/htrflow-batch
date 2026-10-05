@@ -286,6 +286,14 @@ value keys **as they were at that version** — `api.*`, `viewer.*`,
 here would make the upgrade notes wrong for anyone actually on that
 version.
 
+### 0.16.1 — 2026-10-05 (v0.10.1: transformers 5, Blackwell kernels in torchvision)
+
+Changed:
+- **`web.image`** defaults to the v0.10.1 web image. No value or template
+  changes. The release's wrapper image, which pipelines pin themselves, runs
+  transformers 5 only, and on amd64 takes torch and torchvision from PyPI
+  (CUDA 13): GPU nodes need a 580+ driver.
+
 ### 0.16.0 — 2026-10-01 (v0.9.0: results behind a login)
 
 **Breaking, on purpose** — see *From 0.15.0 to 0.16.0* above.

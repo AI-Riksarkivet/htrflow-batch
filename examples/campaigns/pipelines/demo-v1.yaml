@@ -3,7 +3,7 @@
 # it — mint demo-v2.yaml instead (see the append-only / immutability
 # sections of ../README.md and htrflow-batch's
 # docs/reference/campaign-yaml.md#immutability).
-image: docker.io/riksarkivet/htrflow-batch@sha256:3e611cfe962e9101e9eb9b98647b21fd3320b7d7f9ce0160e070b0dbcf1d51ed
+image: docker.io/riksarkivet/htrflow-batch@sha256:4eec56c577dd88ac1292e0987caf9cd1a2c80db1f98076b8eab217ce62a76786
 # Regions first, then the lines within them: ALTO and PAGE XML hold the text
 # of lines inside a region only, so a reader with one Segmentation step
 # before it would publish every page empty (validate refuses that shape).
