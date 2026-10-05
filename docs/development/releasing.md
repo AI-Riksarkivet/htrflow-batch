@@ -101,7 +101,12 @@ build). Transformers comes from a hashed requirements file,
 that their own requirements are met. The htrflow base installs htrflow, torch and the rest of
 its dependencies with `uv sync --locked` from the lock committed in
 `.docker/htrflow-base/`: htrflow does not commit its own, and locking
-afresh on every build meant two builds of one commit could differ.
+afresh on every build meant two builds of one commit could differ. torch and
+torchvision come from PyPI on both architectures, one release, CUDA 13. The
+two ship separate GPU kernels, so the build also reads the architectures
+compiled into torchvision's extension and fails when one that torch supports
+is missing (`.docker/check_cuda_archs.py`): such a pair imports cleanly and
+fails only on a page, on that card.
 
 The packages the images build from source — htrflow and the three workspace
 members — need a build backend, and a lock pins what gets installed, not
