@@ -365,6 +365,10 @@ group that does not exist at all. A pipeline may carry at most one
 `QualityPrediction` step. Its settings are
 part of the recipe like every other step's: changing them changes
 `recipe_sha256`, so a pinned pipeline is never rewritten in place.
+The warm-up downloads both files into the model cache with the other
+models, and the wrapper hands the step their cached paths when it builds
+the pipeline; a file the commit does not have fails the volume
+permanently.
 
 Two more rules are the **cluster's**, enforced by Kyverno at admission and
 by the Kyverno CLI in the campaigns repo's CI:
