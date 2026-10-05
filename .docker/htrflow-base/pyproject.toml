@@ -30,6 +30,7 @@ dependencies = [
     "huggingface-hub[cli] >=0.28.1",
     "ultralytics >=8.3.74",
     "pydantic>=2.10.6",
+    "quality-prediction[modeling]>=0.1.1"
 ]
 
 [project.urls]
@@ -139,4 +140,13 @@ environments = ["sys_platform == 'linux'"]
 constraint-dependencies = [
     "torch==2.13.0",
     "torchvision==0.28.0",
+]
+# quality-prediction[modeling] asks for xgboost, whose Linux wheel carries
+# CUDA and its own NCCL (several hundred MB). The QP step scores one page at
+# a time on the CPU, so the image installs xgboost-cpu instead -- the same
+# `xgboost` module without the GPU build -- from the workspace lock's
+# `wrapper-image` group. This removes xgboost from the base lock; a marker no
+# platform matches is uv's way to drop a transitive dependency.
+override-dependencies = [
+    "xgboost ; sys_platform == 'never'",
 ]
