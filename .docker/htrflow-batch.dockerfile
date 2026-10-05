@@ -29,9 +29,8 @@
 # Reproducibility (audit W8/S7, finding 3060): every input is pinned.
 #   * images and the uv binary by digest, htrflow by commit;
 #   * every Python package from a lockfile, with hashes: htrflow and torch
-#     from the base lock (torch 2.13.0/torchvision 0.28.0 on both: from
-#     PyTorch's cu129 index on amd64, for Blackwell sm_120 kernels on CUDA
-#     12 drivers; from PyPI on arm64, CUDA 13), the wrapper's dependencies
+#     from the base lock (torch 2.13.0/torchvision 0.28.0 from PyPI on both,
+#     CUDA 13, kernels through Blackwell sm_120), the wrapper's dependencies
 #     and the leaf overrides from the workspace lock, transformers
 #     from a hashed requirements file, and the build backend of the packages
 #     built here (htrflow, the wrapper) from .docker/build-constraints.txt.
@@ -271,6 +270,14 @@ if jit:
     sys.exit(f"torch registers JIT-compiled operator overrides: {sorted(jit)}")
 print("torch registers no JIT-compiled operator overrides")
 CHECK
+
+# torchvision ships CUDA kernels of its own, built separately from torch's.
+# A pair whose torchvision lacks an architecture its torch has imports and
+# passes every check above, then fails YOLO's NMS on that card with "no kernel
+# image is available" (the cu129 pair on Blackwell). Reading the kernels
+# compiled into torchvision's extension needs no GPU, so the build checks it.
+RUN --mount=type=bind,source=.docker/check_cuda_archs.py,target=/tmp/check_cuda_archs.py \
+    /app/.venv/bin/python /tmp/check_cuda_archs.py
 
 # The release this image is published under: the publish workflow passes its
 # run tag, `make build-*` passes IMAGE_TAG, and a build that passes nothing

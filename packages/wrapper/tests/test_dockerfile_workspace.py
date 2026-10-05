@@ -443,44 +443,26 @@ def test_the_htrflow_base_is_built_from_pinned_inputs() -> None:
     assert "PYTHONPATH" not in "\n".join(_logical_lines(text))
 
     # The committed pyproject.toml is htrflow's plus the overlay, and the
-    # overlay locks torch per architecture from the right index.
+    # overlay pins one torch/torchvision release, from PyPI, for both
+    # architectures: PyPI's builds of the two carry the same GPU
+    # architectures, which the cu129 index's did not (its torchvision stopped
+    # at sm_90, so YOLO's NMS failed on Blackwell). No second index.
     pyproject = (HTRFLOW_BASE / "pyproject.toml").read_text()
     overlay = (HTRFLOW_BASE / "overlay.toml").read_text()
     assert pyproject.endswith(overlay)
     assert tomllib.loads(pyproject)["project"]["name"] == "htrflow"
     uv = tomllib.loads(overlay)["tool"]["uv"]
-    [index] = uv["index"]
-    # A CUDA 12 build on amd64: kernels for the newest cards on the drivers
-    # the CUDA 12 line supports (PyPI's x86_64 wheels bundle CUDA 13).
-    assert index["explicit"] is True
-    assert re.fullmatch(r"https://download\.pytorch\.org/whl/cu12\d", index["url"])
-    assert uv["sources"]["torch"] == [
-        {"index": index["name"], "marker": "platform_machine == 'x86_64'"}
-    ]
-    pinned = dict(
-        (m[2], m[1])
-        for c in uv["constraint-dependencies"]
-        if (m := re.fullmatch(r"torch==(\S+); platform_machine == '(\w+)'", c))
-    )
-    assert set(pinned) == {"x86_64", "aarch64"}, "torch is pinned per architecture"
-    # One torch release on both: the same operators, the same torch._native
-    # layer for the CHECK heredoc to guard, the same advisories.
-    assert pinned["x86_64"] == pinned["aarch64"], pinned
-    # ... and the lock holds exactly those: x86_64's from the CUDA 12 index,
-    # aarch64's from PyPI, each for its own machine only.
+    assert "index" not in uv and "sources" not in uv, "torch comes from PyPI"
+    pins = dict(c.split("==") for c in uv["constraint-dependencies"] if ";" not in c)
+    assert set(pins) == {"torch", "torchvision"}
     lock = tomllib.loads((HTRFLOW_BASE / "uv.lock").read_text())
-    torches = [p for p in lock["package"] if p["name"] == "torch"]
-    assert len(torches) == 2
-    for machine, registry in (("x86_64", index["url"]), ("aarch64", PYPI)):
-        [torch] = [
-            t
-            for t in torches
-            if any(
-                f"platform_machine == '{machine}'" in m for m in t["resolution-markers"]
-            )
-        ]
-        assert torch["source"] == {"registry": registry}, machine
-        assert torch["version"].split("+")[0] == pinned[machine], machine
+    for name, version in pins.items():
+        [locked] = [p for p in lock["package"] if p["name"] == name]
+        assert locked["source"] == {"registry": PYPI}, name
+        assert locked["version"] == version, name
+    # ... and the image build proves the pair agrees on architectures.
+    text = WRAPPER_DOCKERFILE.read_text()
+    assert "/app/.venv/bin/python /tmp/check_cuda_archs.py" in text
 
     # Nothing builds a base anywhere else any more: a second recipe.
     assert not (REPO / ".github" / "actions" / "build-htrflow-base-arm64").exists()

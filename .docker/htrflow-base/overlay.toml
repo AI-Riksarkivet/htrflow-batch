@@ -6,27 +6,19 @@
 # build refuses a pyproject.toml whose first part is not the pinned
 # checkout's, so the lock cannot drift from the source it installs.
 #
-# torch per architecture, both locked with hashes (finding 3060), one
-# release on both. x86_64: the cu129 builds from PyTorch's index, which
-# carry Blackwell (sm_120) kernels and run on the drivers the CUDA 12 line
-# supports (PyPI's x86_64 wheels bundle CUDA 13, which needs a newer
-# driver); cu128, the index before, stops at 2.11, which still carries
-# GHSA-rrmf-rvhw-rf47. aarch64: PyPI's wheels, which bundle CUDA 13.
-# 2.13.0/0.28.0 is the release with no open advisory.
+# torch and torchvision from PyPI on both architectures, locked with hashes
+# (finding 3060), one release on both. PyPI's wheels bundle CUDA 13 and carry
+# kernels for sm_75 through sm_120, Blackwell included, for torch AND
+# torchvision. The cu129 builds from PyTorch's index, used here before, are
+# not one build: their torch carries sm_120, their torchvision stops at sm_90,
+# so every torchvision op (YOLO's NMS) failed on a Blackwell card with "no
+# kernel image is available". CUDA 13 needs a 580+ driver on every GPU node;
+# the image build checks that torchvision covers each architecture torch
+# does (.docker/check_cuda_archs.py). 2.13.0/0.28.0 is the release with no
+# open advisory.
 [tool.uv]
 environments = ["sys_platform == 'linux'"]
 constraint-dependencies = [
-    "torch==2.13.0; platform_machine == 'x86_64'",
-    "torchvision==0.28.0; platform_machine == 'x86_64'",
-    "torch==2.13.0; platform_machine == 'aarch64'",
-    "torchvision==0.28.0; platform_machine == 'aarch64'",
+    "torch==2.13.0",
+    "torchvision==0.28.0",
 ]
-
-[[tool.uv.index]]
-name = "pytorch-cu129"
-url = "https://download.pytorch.org/whl/cu129"
-explicit = true
-
-[tool.uv.sources]
-torch = [{ index = "pytorch-cu129", marker = "platform_machine == 'x86_64'" }]
-torchvision = [{ index = "pytorch-cu129", marker = "platform_machine == 'x86_64'" }]
