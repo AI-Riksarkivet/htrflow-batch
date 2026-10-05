@@ -940,6 +940,7 @@ def test_a_fork_step_whose_model_raises_is_a_dead_step(abandoned):
     model, and an exception there (the 2026-09-08 YOLO detection without a
     polygon) ends it -- the run would then wait on a future for ever. That
     one thread is what is watched."""
+
     def boom(images):
         raise ValueError("a detection without a polygon")
 

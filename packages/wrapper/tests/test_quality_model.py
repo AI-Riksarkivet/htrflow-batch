@@ -23,6 +23,7 @@ QP = {
     "model_file": "xgb_hpo_json_model_only_target_bow_f1.joblib",
     "bin_config_file": "sl26eval_region_line_bin_config.json",
 }
+SNAPSHOT = f"/data/hf/hub/{REPO}/snapshots/{SHA}"
 
 
 def _pipeline(tmp_path, qp_settings: dict) -> str:
@@ -88,12 +89,15 @@ def test_the_hub_reference_becomes_the_steps_file_paths(tmp_path, built, hub):
         "step": "QualityPrediction",
         "settings": {
             "feature_groups": ["text"],
-            "model": f"/data/hf/hub/{REPO}/snapshots/{SHA}/{QP['model_file']}",
-            "bin_config": f"/data/hf/hub/{REPO}/snapshots/{SHA}/{QP['bin_config_file']}",
+            "model": f"{SNAPSHOT}/{QP['model_file']}",
+            "bin_config": f"{SNAPSHOT}/{QP['bin_config_file']}",
         },
     }
     # The other steps go through untouched, and the file as written is not.
-    assert config["steps"][0] == {"step": "TextRecognition", "settings": {"model": "TrOCR"}}
+    assert config["steps"][0] == {
+        "step": "TextRecognition",
+        "settings": {"model": "TrOCR"},
+    }
     assert yaml.safe_load(open(path))["steps"][1]["settings"]["model_settings"] == QP
 
 
@@ -120,13 +124,22 @@ def test_a_pipeline_without_the_step_is_built_from_its_own_file(
 @pytest.mark.parametrize(
     "qp_settings, reason",
     [
-        ({"model": "/home/someone/model.joblib", "bin_config": "/x.json"}, "never a path"),
+        (
+            {"model": "/home/someone/model.joblib", "bin_config": "/x.json"},
+            "never a path",
+        ),
         ({"model_settings": QP | {"revision": "main"}}, "40-hex commit"),
         ({"model_settings": QP | {"model_file": "../model.joblib"}}, "plain file name"),
         ({"model_settings": QP | {"extra": "x"}}, "exactly"),
         ({"model_settings": QP, "model": "/elsewhere.joblib"}, "set by the wrapper"),
     ],
-    ids=["local-paths", "branch-not-commit", "path-in-file", "unknown-key", "path-beside"],
+    ids=[
+        "local-paths",
+        "branch-not-commit",
+        "path-in-file",
+        "unknown-key",
+        "path-beside",
+    ],
 )
 def test_a_step_that_is_not_a_pinned_hub_reference_is_refused(
     tmp_path, built, hub, qp_settings, reason
@@ -142,7 +155,12 @@ def test_a_file_the_commit_does_not_have_is_a_pipeline_mistake(
     tmp_path, built, monkeypatch
 ):
     def download(repo_id, filename, *, revision=None, **_):
-        raise RemoteEntryNotFoundError("404", response=httpx.Response(404, request=httpx.Request("GET", "https://huggingface.co")))
+        raise RemoteEntryNotFoundError(
+            "404",
+            response=httpx.Response(
+                404, request=httpx.Request("GET", "https://huggingface.co")
+            ),
+        )
 
     monkeypatch.setattr("huggingface_hub.hf_hub_download", download)
     with pytest.raises(ValueError, match="is not in"):
