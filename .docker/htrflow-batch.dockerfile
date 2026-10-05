@@ -15,7 +15,7 @@
 # build-wrapper`, the dagger functions, the workflows -- from the same
 # pinned inputs:
 #
-#   htrflow-src      AI-Riksarkivet/htrflow at HTRFLOW_REF, fetched by
+#   htrflow-src      htrflow (HTRFLOW_REPO) at HTRFLOW_REF, fetched by
 #                    BuildKit. A local checkout replaces it with
 #                    `--build-context htrflow-src=<dir>` (`make build-wrapper
 #                    HTRFLOW_SRC=<dir>`).
@@ -42,6 +42,12 @@
 # `make lock-htrflow-base` after moving HTRFLOW_REF or the overlay.
 #
 # Build args:
+#   HTRFLOW_REPO           the GitHub repository htrflow is built from. The
+#                          quality-prediction step is not in
+#                          AI-Riksarkivet/htrflow yet, so the base is built
+#                          from the fork that carries it (htrflow 0.2.6 plus
+#                          the QualityPrediction step, quality-prediction
+#                          from PyPI); it moves back when upstream merges it.
 #   HTRFLOW_REF            the htrflow commit the base is built from, moved by
 #                          hand; a new one needs `make lock-htrflow-base`
 #                          in the same change, or the build refuses it.
@@ -51,11 +57,13 @@
 #                          package version, "0.2.6"). Defaults to
 #                          HTRFLOW_REF; `make build-wrapper HTRFLOW_SRC=…`
 #                          passes the checkout's `git describe --dirty`.
-ARG HTRFLOW_REF=0ede4da5493cf01ac97024558a5e4f468d5f360f
+ARG HTRFLOW_REPO=Sneriko/htrflow_qp
+ARG HTRFLOW_REF=ca7b339820bf1311bbd4e2a757bc3536c083f251
 
 FROM scratch AS htrflow-src
+ARG HTRFLOW_REPO
 ARG HTRFLOW_REF
-ADD https://github.com/AI-Riksarkivet/htrflow.git#${HTRFLOW_REF} /
+ADD https://github.com/${HTRFLOW_REPO}.git#${HTRFLOW_REF} /
 
 # nvidia/cuda:12.1.0-base-ubuntu22.04 (multi-arch index digest), the base the
 # upstream htrflow image uses.
@@ -109,9 +117,10 @@ COPY --from=htrflow-builder /app/.venv /app/.venv
 # nothing but the venv (an empty entry would also put the working directory
 # on sys.path).
 ENV PATH="/app/.venv/bin:$PATH"
+ARG HTRFLOW_REPO
 ARG HTRFLOW_REF
 ARG HTRFLOW_BASE_REVISION=${HTRFLOW_REF}
-LABEL org.opencontainers.image.source.htrflow="https://github.com/AI-Riksarkivet/htrflow/tree/${HTRFLOW_REF}" \
+LABEL org.opencontainers.image.source.htrflow="https://github.com/${HTRFLOW_REPO}/tree/${HTRFLOW_REF}" \
       se.riksarkivet.htrflow.base.revision="${HTRFLOW_BASE_REVISION}"
 # Also as ENV: a label is invisible from inside the container, and the
 # wrapper stamps this into every ALTO (provenance.py).
@@ -206,7 +215,10 @@ RUN --mount=type=bind,source=.docker/transformers.txt,target=/tmp/transformers.t
 # Packages of the base's venv with published fixes that htrflow's own lock
 # predates: pillow and Brotli. The `wrapper-image` group in uv.lock pins them
 # (pinned, hashed), and they go in last so they are the versions that survive.
-# Both are leaves (--no-deps). Not here: py7zr, which pagexml-tools caps below
+# Both are leaves (--no-deps). The group also carries xgboost-cpu, the
+# `xgboost` module the quality-prediction step scores with, which the base
+# lock leaves out (its overlay drops the CUDA build); its numpy and scipy are
+# the base's own versions, so reinstalling them moves nothing. Not here: py7zr, which pagexml-tools caps below
 # 0.21, and transformers, which has a step of its own above; py7zr waits
 # for htrflow.
 RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
@@ -269,6 +281,22 @@ jit = set(registry._dsl_name_to_lib_graph) - {"native"}
 if jit:
     sys.exit(f"torch registers JIT-compiled operator overrides: {sorted(jit)}")
 print("torch registers no JIT-compiled operator overrides")
+
+# The quality-prediction step's predictor and the xgboost it unpickles models
+# with: the base lock leaves xgboost out and the step above puts the CPU build
+# in, so the import proves the two halves met. The CUDA build must not be
+# there as well (it is the one that brings its own NCCL).
+from importlib.metadata import distribution
+
+from quality_prediction.inference import XGBoostQualityPredictor  # noqa: F401
+import xgboost
+
+try:
+    distribution("xgboost")
+    sys.exit("the CUDA xgboost is installed; the image carries xgboost-cpu only")
+except PackageNotFoundError:
+    pass
+print(f"quality-prediction loads; xgboost-cpu {xgboost.__version__}")
 CHECK
 
 # torchvision ships CUDA kernels of its own, built separately from torch's.

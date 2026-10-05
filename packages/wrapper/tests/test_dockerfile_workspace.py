@@ -434,7 +434,12 @@ def test_the_htrflow_base_is_built_from_pinned_inputs() -> None:
         assert re.search(r"@sha256:[0-9a-f]{64}$", ref), ref
     ref = re.search(r"^ARG HTRFLOW_REF=([0-9a-f]{40})$", text, re.M)
     assert ref, "htrflow must be pinned by full commit"
-    assert "ADD https://github.com/AI-Riksarkivet/htrflow.git#${HTRFLOW_REF} /" in text
+    # The repository is a build arg of its own (the QP step lives in a fork
+    # until upstream merges it), named owner/name, and the source label
+    # follows it so the image says where its htrflow came from.
+    assert re.search(r"^ARG HTRFLOW_REPO=[\w.-]+/[\w.-]+$", text, re.M)
+    assert "ADD https://github.com/${HTRFLOW_REPO}.git#${HTRFLOW_REF} /" in text
+    assert "https://github.com/${HTRFLOW_REPO}/tree/${HTRFLOW_REF}" in text
     syncs = re.findall(r"^RUN uv sync.*$", text, re.M)
     assert syncs == ["RUN uv sync --locked --no-install-project --no-build"], syncs
     assert "cmp -s - /app/pyproject.toml" in text
@@ -460,6 +465,14 @@ def test_the_htrflow_base_is_built_from_pinned_inputs() -> None:
         [locked] = [p for p in lock["package"] if p["name"] == name]
         assert locked["source"] == {"registry": PYPI}, name
         assert locked["version"] == version, name
+    # quality-prediction's xgboost: the base lock drops the CUDA build, and
+    # the image installs xgboost-cpu from the workspace lock instead.
+    assert uv["override-dependencies"] == ["xgboost ; sys_platform == 'never'"]
+    assert not [p for p in lock["package"] if p["name"] == "xgboost"]
+    workspace = tomllib.loads((REPO / "pyproject.toml").read_text())
+    image_group = workspace["dependency-groups"]["wrapper-image"]
+    assert any(r.startswith("xgboost-cpu==") for r in image_group), image_group
+    assert "from quality_prediction.inference import XGBoostQualityPredictor" in text
     # ... and the image build proves the pair agrees on architectures.
     text = WRAPPER_DOCKERFILE.read_text()
     assert "/app/.venv/bin/python /tmp/check_cuda_archs.py" in text
