@@ -15,10 +15,12 @@ see [Dev cluster](../development/dev-cluster.md).
 - **A StorageClass for the model cache.** `ReadWriteOnce` (the default)
   pins every campaign pod to one node; with more than one GPU node, use a
   `ReadWriteMany` class (`modelCache.accessModes`).
-- **GPU nodes** with an NVIDIA GPU the wrapper image's CUDA build
-  supports, the NVIDIA device plugin (nodes advertise `nvidia.com/gpu`),
-  and a RuntimeClass for GPU pods (`nvidia`, or whatever the campaigns
-  repo's `runtime_class` names).
+- **GPU nodes** with an NVIDIA GPU of compute capability 7.5 or newer, a
+  driver for CUDA 13 (version 580 or later: the wrapper image's torch and
+  torchvision are CUDA 13 builds), the NVIDIA
+  device plugin (nodes advertise `nvidia.com/gpu`), and a RuntimeClass for
+  GPU pods (`nvidia`, or whatever the campaigns repo's `runtime_class`
+  names).
 - **An S3-compatible bucket** that the campaign pods and the results proxy
   reach. Browsers never do: they read results through the web front at the
   *results URL*, `https://<web front host>/results`, which is written into
