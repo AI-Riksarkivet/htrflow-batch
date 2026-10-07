@@ -124,7 +124,7 @@ volumes:
 </div>
 </div>
 
-**En fil per campaign, i git:** vilken pipeline, och vilka volymer. En referenskod räcker.
+**En fil per campaign:** vilken pipeline, och vilka volymer. En referenskod räcker.
 
 <!--
 Så beställer man en körning: en kort fil i ett git-repo, som granskas och
