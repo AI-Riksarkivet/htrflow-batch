@@ -58,7 +58,7 @@ behöver en, startar före B, som behöver fyra.
 <div class="cols wide-left">
 <div>
 
-![w:620](assets/part-1-status-page.png)
+![w:660](assets/intro-status-page.png)
 
 **Ett kort per campaign** — framsteg och fel, medan det körs.
 
