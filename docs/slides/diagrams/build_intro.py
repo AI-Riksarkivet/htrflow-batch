@@ -21,14 +21,14 @@ c = [48 + i * (cw + 72) for i in range(3)]
 mid = [x + cw / 2 for x in c]
 d.group(24, 16, 1552, 200, "htrflow — som förut", L("scroll-text"))
 r1 = 72
-d.card(c[0], r1, cw, "Pipeline", "receptet: hitta rader, läs dem", L("scroll-text"))
+d.card(c[0], r1, cw, "Pipeline", "hur en sida läses: rader, text", L("scroll-text"))
 d.card(c[1], r1, cw, "htrflow", "en mapp med sidor, en GPU", L("microchip"))
 d.card(c[2], r1, cw, "Transkription", "en textfil per sida", L("file-text"))
 d.arrow([(c[0] + cw, r1 + 48), (c[1] - GAP, r1 + 48)])
 d.arrow([(c[1] + cw, r1 + 48), (c[2] - GAP, r1 + 48)])
 d.group(24, 264, 1552, 200, "htrflow-batch — nytt", L("layers"))
 r2 = 320
-d.card(c[0], r2, cw, "Kampanj", "en lista med volymer, och receptet", L("file-text"), strong=True)
+d.card(c[0], r2, cw, "Campaign", "vilka volymer, vilken pipeline", L("file-text"), strong=True)
 d.card(c[1], r2, cw, "htrflow-batch", "varje volym, på många GPU:er", L("layers"))
 d.card(c[2], r2, cw, "Transkriptioner", "en uppsättning per volym", L("database"))
 d.arrow([(c[0] + cw, r2 + 48), (c[1] - GAP, r2 + 48)])
@@ -68,11 +68,11 @@ d.save(OUT + "intro-one-or-many.svg")
 
 # ---------------------------------------------------------------- Kubernetes runs it, Kueue decides when
 d = Diagram(1600, 540)
-d.group(24, 16, 440, 500, "Kampanjer som väntar", L("list-ordered"))
-waiting = [("Kampanj B", "behöver 4 GPU:er"), ("Kampanj C", "behöver 1 GPU"), ("Kampanj D", "behöver 2 GPU:er")]
+d.group(24, 16, 440, 500, "Campaigns som väntar", L("list-ordered"))
+waiting = [("Campaign B", "behöver 4 GPU:er"), ("Campaign C", "behöver 1 GPU"), ("Campaign D", "behöver 2 GPU:er")]
 ys = [84 + i * (CARD_H + 48) for i in range(3)]
 for (title, sub), y in zip(waiting, ys):
-    d.card(48, y, 392, title, sub, L("clock"), strong=(title == "Kampanj C"))
+    d.card(48, y, 392, title, sub, L("clock"), strong=(title == "Campaign C"))
 kx, ky, kw = 560, 228, 400
 d.card(kx, ky, kw, "Kueue", "kön: vem som startar härnäst", "kueue", logo=True, strong=True)
 trunk = 508
@@ -83,7 +83,7 @@ d.group(gx, 16, gw, 500, "Kubernetes — klustret", "kubernetes")
 sw, sh, sg = 150, 84, 16
 sx = [gx + 24 + i * (sw + sg) for i in range(3)]
 sy = [84, 84 + sh + sg]
-used = [("GPU 1", "Kampanj A"), ("GPU 2", "Kampanj A"), ("GPU 3", "Kampanj A"), ("GPU 4", "ledig: C startar"), ("GPU 5", "ledig"), ("GPU 6", "Kampanj A")]
+used = [("GPU 1", "Campaign A"), ("GPU 2", "Campaign A"), ("GPU 3", "Campaign A"), ("GPU 4", "ledig: C startar"), ("GPU 5", "ledig"), ("GPU 6", "Campaign A")]
 for k, (title, sub) in enumerate(used):
     row, col = divmod(k, 3)
     d.slot(sx[col], sy[row], sw, sh, title, sub, used=not sub.startswith("ledig"))
