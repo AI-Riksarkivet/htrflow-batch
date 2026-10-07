@@ -2,80 +2,80 @@
 marp: true
 theme: riksarkivet
 paginate: false
-lang: en
+lang: sv
 ---
 
-# The pipeline stays, the campaign is new
+# Pipelinen är kvar, kampanjen är ny
 
 ![w:1120](assets/intro-pipeline-campaign.svg)
 
-**Nothing changes in how a page is read.** The pipeline is the same htrflow recipe. What is new is the campaign: a short list of archival volumes, and which recipe to run on them.
+**Inget ändras i hur en sida läses.** Pipelinen är samma htrflow-recept som förut. Det nya är kampanjen: en kort lista över arkivvolymer, och vilket recept som ska köras på dem.
 
 <!--
-The top row is htrflow as everyone has used it: one recipe, one folder of
-pages on one machine. The bottom row is what htrflow-batch adds: instead of
-a folder you hand in a list of volumes by reference code, and the platform
-does the rest. A volume is an archival volume, a bound unit of pages, never
-a disk.
+Övre raden är htrflow som alla har använt det: ett recept, en mapp med sidor
+på en maskin. Nedre raden är det htrflow-batch lägger till: i stället för en
+mapp lämnar man in en lista med volymer, angivna med referenskod, och
+plattformen gör resten. En volym är en arkivvolym, en inbunden enhet av
+sidor, aldrig en disk.
 -->
 
 ---
 
-# One machine, or many
+# En maskin, eller många
 
 ![w:1060](assets/intro-one-or-many.svg)
 
-**The same recipe, the same text — on as many machines as there are GPUs.** Pages come from the archive's image server; every result lands in one shared place.
+**Samma recept, samma text — på så många maskiner som det finns GPU:er.** Sidorna hämtas från arkivets bildserver; varje resultat hamnar på ett gemensamt ställe.
 
 <!--
-Left: today each volume waits for the one before it, on one GPU, and if the
-machine fails you start over. Right: the volumes run side by side, one per
-machine; nothing lives on any one machine's disk, so a volume whose machine
-fails simply continues on another, from the page where it stopped.
+Vänster: i dag väntar varje volym på den före, på en GPU, och går maskinen
+sönder börjar man om. Höger: volymerna körs sida vid sida, en per maskin;
+inget ligger på någon enskild maskins disk, så en volym vars maskin går
+sönder fortsätter helt enkelt på en annan, från den sida där den stannade.
 -->
 
 ---
 
-# Kubernetes runs it, Kueue decides when
+# Kubernetes kör det, Kueue avgör när
 
 ![w:1120](assets/intro-kueue.svg)
 
-**Kubernetes** makes many machines behave as one computer: a volume lands wherever a GPU is free. **Kueue** is the queue in front: a campaign waits until the GPUs it needs are free, the urgent one goes first, and any campaign can be paused and resumed.
+**Kubernetes** får många maskiner att uppträda som en dator: en volym hamnar där en GPU är ledig. **Kueue** är kön framför: en kampanj väntar tills de GPU:er den behöver är lediga, den brådskande går först, och varje kampanj kan pausas och återupptas.
 
 <!--
-Kubernetes is the open-source system most clouds run on; the point for this
-room is only that nobody picks a machine by hand and that lost work is
-restarted. Kueue is the piece that stops everybody from grabbing every GPU
-at once: campaigns stand in a line, the queue counts free GPUs, and lets
-the next one through only when it fits whole. Here two GPUs are free, so
-C, which needs one, starts before B, which needs four.
+Kubernetes är det öppna system som de flesta moln kör på; poängen för det
+här rummet är bara att ingen väljer maskin för hand och att förlorat arbete
+startas om. Kueue är den del som hindrar alla från att ta alla GPU:er på en
+gång: kampanjerna står i kö, kön räknar lediga GPU:er och släpper fram nästa
+bara när den får plats i sin helhet. Här är två GPU:er lediga, så C, som
+behöver en, startar före B, som behöver fyra.
 -->
 
 ---
 
-# The status page, and the viewer
+# Statussidan, och viewern
 
 <div class="cols wide-left">
 <div>
 
 ![w:620](assets/part-1-status-page.png)
 
-**One card per campaign**, with every volume's progress counted live, and anything that went wrong named.
+**Ett kort per kampanj**, där varje volyms framsteg räknas medan den körs, och allt som gick fel står med namn.
 
 </div>
 <div>
 
 ![w:420](assets/intro-viewer.svg)
 
-**Each page, each line, its text** — open while the volume is still running.
+**Varje sida, varje rad, dess text** — öppen medan volymen fortfarande körs.
 
 </div>
 </div>
 
 <!--
-The status page is the one thing a reader looks at: running campaigns first,
-then anything that needs attention, then the finished ones. A volume's name
-opens it in the viewer, Riksarkivet's own Universal Viewer: the page image
-with every transcribed line outlined, and the text beside it, page by page,
-as soon as the first pages are done.
+Statussidan är det enda en läsare behöver titta på: pågående kampanjer
+först, sedan det som behöver uppmärksamhet, sedan de färdiga. En volyms namn
+öppnar den i viewern, Riksarkivets egen Universal Viewer: sidbilden med varje
+transkriberad rad markerad och texten bredvid, sida för sida, så snart de
+första sidorna är klara.
 -->
