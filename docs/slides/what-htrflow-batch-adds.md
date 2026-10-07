@@ -69,7 +69,7 @@ Resten handlar om mappen och GPU:n, inte om stegen.
 
 ![w:1120](assets/intro-pipeline-campaign.svg)
 
-**Pipelinen är htrflows, oförändrad. Campaign är det nya:** vilka volymer, vilken pipeline.
+**Pipelinen är htrflows, oförändrad.**
 
 <!--
 Övre raden är htrflow som alla har använt det: en pipeline, en mapp med
