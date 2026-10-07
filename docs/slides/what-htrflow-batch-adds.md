@@ -137,9 +137,7 @@ bara veta vilka volymer det gäller.
 
 # Grov arkitektur
 
-![w:1060](assets/intro-architecture.svg)
-
-**Du öppnar bara en pull request.** Resten sköter plattformen.
+![w:1120](assets/intro-architecture.svg)
 
 <!--
 Läs det från vänster till höger som en campaigns liv: skriven i git,
