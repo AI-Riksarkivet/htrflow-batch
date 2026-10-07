@@ -122,3 +122,51 @@ d.front.append(f'<text x="{px + pw / 2}" y="{py + ph - 14}" text-anchor="middle"
 d.front.append(f'<text x="{tx + tw / 2}" y="{ty + ph - 14}" text-anchor="middle" font-size="18" font-weight="600" fill="{MUTED}">dess text</text>')
 d.save(OUT + "intro-viewer.svg")
 print("intro diagrams written")
+
+# ---------------------------------------------------------------- grov arkitektur (the first deck's architecture, in Swedish)
+d = Diagram(1600, 690)
+GH = 176
+d.group(24, 16, 1160, GH, "I git", L("git-branch"))
+cw = (1160 - 48 - 2 * 56) / 3
+xs = [48 + i * (cw + 56) for i in range(3)]
+d.card(xs[0], 72, cw, "Du", "öppnar en pull request", L("user"))
+d.card(xs[1], 72, cw, "Campaign-repot", "campaigns · pipelines", L("git-pull-request"))
+d.card(xs[2], 72, cw, "Converter", "granskar, renderar i CI", L("file-check"))
+d.group(1216, 16, 360, GH, "Leverans", L("send"))
+d.card(1240, 72, 312, "Apply", "Argo CD eller drift", "argo", logo=True)
+for i in range(2):
+    d.arrow([(xs[i] + cw, 120), (xs[i + 1] - GAP, 120)])
+d.arrow([(xs[2] + cw, 120), (1240 - GAP, 120)])
+d.group(24, 256, 1552, GH, "I klustret", "k8s-node")
+cw2 = (1552 - 48 - 4 * 40) / 5
+c = [48 + i * (cw2 + 40) for i in range(5)]
+mid = [x + cw2 / 2 for x in c]
+y2 = 312
+d.card(c[0], y2, cw2, "Kyverno", "granskar objekt", "kyverno", logo=True)
+d.card(c[1], y2, cw2, "Kueue", "väntar på GPU", "kueue", logo=True)
+d.card(c[2], y2, cw2, "Pods", "en per volym", "k8s-pod", logo=True, strong=True)
+d.card(c[3], y2, cw2, "Warm-up", "fyller cachen", L("hard-drive-download"))
+d.card(c[4], y2, cw2, "Webbfront", "status · viewer", L("layout-dashboard"))
+d.arrow([(1396, 168), (1396, 224), (mid[0] + 60, 224), (mid[0] + 60, y2 - GAP)], label="objekt", at=(760, 224))
+d.arrow([(c[0] + cw2, y2 + 48), (c[1] - GAP, y2 + 48)])
+d.arrow([(c[1] + cw2, y2 + 48), (c[2] - GAP, y2 + 48)])
+d.arrow([(c[3], y2 + 48), (c[2] + cw2 + GAP, y2 + 48)])
+g3, y3 = 496, 552
+lane_r, lane_h, lane = 448, 476, 464
+cx, cw3 = c[1] - 8, cw2 + 8
+d.group(c[0] - 24, g3, cx + cw3 + 16 - (c[0] - 24), GH, "Lagring", L("database"))
+d.card(c[0], y3, cw2, "S3-bucket", "ALTO · kvalitet", L("database"))
+d.card(cx, y3, cw3, "Bildcache", "valfri, privat", L("database"))
+d.group(c[2] - 16, g3, 1576 - c[2] + 16, GH, "Utanför", L("globe"), outside=True)
+d.card(c[2], y3, cw2, "IIIF-servrar", "sidbilderna", L("images"), outside=True)
+d.card(c[3], y3, cw2, "Modellhub", "Hugging Face", L("cloud-download"), outside=True)
+d.card(c[4], y3, cw2, "Webbläsare", "vem som helst", L("globe"), outside=True)
+d.arrow([(mid[2] - 80, y2 + CARD_H), (mid[2] - 80, lane_r), (mid[0] + 60, lane_r), (mid[0] + 60, y3 - GAP)],
+        label="resultat", at=(mid[0] + 220, lane_r))
+d.arrow([(mid[1], y3), (mid[1], lane_h), (mid[2] + 10, lane_h), (mid[2] + 10, y2 + CARD_H + GAP)],
+        label="träff", at=(mid[1] + 170, lane_h))
+d.arrow([(mid[2] + 90, y3), (mid[2] + 90, y2 + CARD_H + GAP)], label="miss", at=(mid[2] + 90, lane))
+d.arrow([(mid[3], y3), (mid[3], y2 + CARD_H + GAP)], label="modeller", at=(mid[3], lane))
+d.arrow([(mid[4], y3), (mid[4], y2 + CARD_H + GAP)], label="läser", at=(mid[4], lane))
+d.save(OUT + "intro-architecture.svg")
+print("architecture written")
