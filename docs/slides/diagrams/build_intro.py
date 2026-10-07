@@ -50,14 +50,14 @@ for i, (ref, when) in enumerate(zip(vols, ["först", "sedan", "sedan"])):
     d.arrow([(284, top), (284, y - GAP)], dot=(i == 0))
 # right: many machines, volumes at the same time
 d.group(592, 16, 984, 608, "Många maskiner — htrflow-batch", "k8s-node")
-d.card(844, 72, 480, "Arkivets bildserver", "sidorna, över webben", L("images"), outside=True)
+d.card(844, 72, 480, "IIIF / S3", "sidorna, över webben", L("images"), outside=True)
 cw = (984 - 48 - 2 * 40) / 3
 c = [616 + i * (cw + 40) for i in range(3)]
 mid = [x + cw / 2 for x in c]
 ry = 296
 for i, ref in enumerate(vols):
     d.card(c[i], ry, cw, f"Maskin {i + 1}", ref, "k8s-node", logo=True, strong=True)
-d.card(844, 496, 480, "Gemensam lagring", "alla resultat, från alla maskiner", L("database"))
+d.card(844, 496, 480, "Gemensam lagring (S3)", "alla resultat, från alla maskiner", L("database"))
 lane1, lane2 = 232, 440
 for i in range(3):
     d.arrow([(1084, 72 + CARD_H), (1084, lane1), (mid[i], lane1), (mid[i], ry - GAP)], dot=(i == 0))
