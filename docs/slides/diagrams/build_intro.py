@@ -27,9 +27,11 @@ d.card(c[2], r1, cw, "Transkription", "en textfil per sida", L("file-text"))
 d.arrow([(c[0] + cw, r1 + 48), (c[1] - GAP, r1 + 48)])
 d.arrow([(c[1] + cw, r1 + 48), (c[2] - GAP, r1 + 48)])
 d.group(24, 264, 1552, 200, "htrflow-batch — nytt", L("layers"))
-r2 = 320
+r2 = 344
 d.card(c[0], r2, cw, "Campaign", "vilka volymer, vilken pipeline", L("file-text"), strong=True)
-d.card(c[1], r2, cw, "htrflow-batch", "varje volym, på många GPU:er", L("layers"))
+# htrflow-batch wraps htrflow: the same program, once per volume
+d.group(c[1] - 16, 292, cw + 32, 164, "htrflow-batch", L("layers"), inner=True)
+d.card(c[1], r2, cw, "htrflow", "en per volym, på många GPU:er", L("microchip"))
 d.card(c[2], r2, cw, "Transkriptioner", "en uppsättning per volym", L("database"))
 d.arrow([(c[0] + cw, r2 + 48), (c[1] - GAP, r2 + 48)])
 d.arrow([(c[1] + cw, r2 + 48), (c[2] - GAP, r2 + 48)])
