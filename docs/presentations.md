@@ -6,7 +6,7 @@ full screen) or downloads as a PDF.
 
 | Deck | What it covers | Open |
 |---|---|---|
-| **What htrflow-batch adds** (in Swedish) | A short deck for a non-technical audience, meant to sit inside a larger talk: how htrflow works, one machine or many, the pipeline and the campaign, the campaign file, a rough architecture, what Kubernetes and Kueue each do, the status page, the run log and the viewer | [slides](slides/what-htrflow-batch-adds.html) · [PDF](slides/what-htrflow-batch-adds.pdf) |
+| **What htrflow-batch adds** (in Swedish) | A short deck for a non-technical audience, meant to sit inside a larger talk: how htrflow works, one machine or many, the pipeline and the campaign, the campaign file, a rough architecture, what Kubernetes and Kueue each do, the status page, the run log, the viewer, and the open-source repository | [slides](slides/what-htrflow-batch-adds.html) · [PDF](slides/what-htrflow-batch-adds.pdf) |
 | **Distributed htrflow** | From one machine to many nodes, a rough architecture, a pod per archival volume, a Job per campaign, the window and the queue, priority, the bucket, git as the interface, the status page and the viewer | [slides](slides/distributed-htrflow.html) · [PDF](slides/distributed-htrflow.pdf) |
 | **A possible future: DRA and KAI** | What the platform could do if GPUs were described, not counted: claiming a card by what it is, splitting and sharing cards, team queues that lend and take back, a window that is a range, and how Kueue and KAI Scheduler would fit | [slides](slides/a-possible-future-dra-and-kai.html) · [PDF](slides/a-possible-future-dra-and-kai.pdf) |
 

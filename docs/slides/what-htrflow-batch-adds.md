@@ -206,3 +206,17 @@ En volyms namn på statussidan öppnar den i viewern, Riksarkivets egen
 Universal Viewer: sidbilden med varje transkriberad rad markerad och texten
 bredvid, sida för sida, så snart de första sidorna är klara.
 -->
+
+---
+
+# Öppen källkod
+
+![w:900](assets/intro-github.png)
+
+**htrflow-batch är öppen källkod** — github.com/AI-Riksarkivet/htrflow-batch
+
+<!--
+Allt det här ligger öppet på GitHub: koden, Helm-charten, dokumentationen
+och de här bilderna. Licensen är EUPL, EU:s egen öppna licens, så andra
+arkiv och institutioner kan köra samma plattform och bidra tillbaka.
+-->
