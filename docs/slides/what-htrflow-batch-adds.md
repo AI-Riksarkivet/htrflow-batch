@@ -5,27 +5,12 @@ paginate: false
 lang: sv
 ---
 
-# En maskin, eller många
-
-![w:1060](assets/intro-one-or-many.svg)
-
-**Samma pipeline, samma text — på många maskiner i stället för en.**
-
-<!--
-Vänster: i dag väntar varje volym på den före, på en GPU, och går maskinen
-sönder börjar man om. Höger: volymerna körs sida vid sida, en per maskin;
-inget ligger på någon enskild maskins disk, så en volym vars maskin går
-sönder fortsätter helt enkelt på en annan, från den sida där den stannade.
--->
-
----
-
-# Börja med hur htrflow fungerar
+# Så fungerar htrflow
 
 <div class="cols">
 <div>
 
-<p class="filename">pipeline.yaml — en htrflow-pipeline, oförändrad</p>
+<p class="filename">pipeline.yaml — receptet</p>
 
 ```yaml
 steps:
@@ -49,18 +34,34 @@ steps:
 </div>
 <div>
 
-```
-htrflow pipeline pipeline.yaml images/
-```
+![w:520](assets/intro-htrflow.svg)
 
-En mapp med sidbilder in, en mapp med ALTO och PAGE ut, på en GPU.
+**En volym och ett recept in, en transkription ut** — på en GPU.
 
 </div>
 </div>
 
 <!--
-Det som ska landa först: ingen behöver lära sig ett nytt pipeline-format.
-Resten handlar om mappen och GPU:n, inte om stegen.
+Det som ska landa först: htrflow är programvaran, pipelinen är receptet den
+följer — hitta regioner, hitta rader, läs dem — och volymen är sidbilderna.
+Ut kommer en textfil per sida, ALTO och PAGE. Ingen behöver lära sig ett
+nytt pipeline-format; resten av bilderna handlar om var det körs och hur
+många volymer åt gången.
+-->
+
+---
+
+# En maskin, eller många
+
+![w:1060](assets/intro-one-or-many.svg)
+
+**Samma pipeline, samma text — på många maskiner i stället för en.**
+
+<!--
+Vänster: i dag väntar varje volym på den före, på en GPU, och går maskinen
+sönder börjar man om. Höger: volymerna körs sida vid sida, en per maskin;
+inget ligger på någon enskild maskins disk, så en volym vars maskin går
+sönder fortsätter helt enkelt på en annan, från den sida där den stannade.
 -->
 
 ---

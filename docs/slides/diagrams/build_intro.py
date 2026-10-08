@@ -170,3 +170,15 @@ d.arrow([(mid[3], y3), (mid[3], y2 + CARD_H + GAP)], label="modeller", at=(mid[3
 d.arrow([(mid[4], y3), (mid[4], y2 + CARD_H + GAP)], label="läser", at=(mid[4], lane))
 d.save(OUT + "intro-architecture.svg")
 print("architecture written")
+
+# ---------------------------------------------------------------- htrflow: volym + pipeline in, transkription ut
+d = Diagram(824, 424)
+d.tall(24, 24, 200, "Volym", "sidbilderna", L("images"))
+d.tall(24, 224, 200, "Pipeline", "receptet", L("scroll-text"))
+d.tall(300, 124, 200, "htrflow", "programvaran", L("microchip"), strong=True)
+d.tall(576, 124, 224, "Transkription", "ALTO · PAGE", L("file-text"))
+d.arrow([(224, 112), (262, 112), (262, 212), (300 - GAP, 212)])
+d.arrow([(224, 312), (262, 312), (262, 212), (300 - GAP, 212)], head=False)
+d.arrow([(500, 212), (576 - GAP, 212)])
+d.save(OUT + "intro-htrflow.svg")
+print("htrflow written")
