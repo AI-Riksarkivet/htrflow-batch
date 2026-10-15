@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { describe, expect, test } from "vitest";
-import type { RunManifest } from "$lib/run.js";
+import type { RunManifest } from "#lib/run.js";
 import RunSummaryCard from "./RunSummaryCard.svelte";
 
 function manifest(n: number, failedIds: string[] = []): RunManifest {

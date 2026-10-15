@@ -6,7 +6,7 @@
 // committed; a pytest fails when it goes stale, and this fails when the
 // schema no longer reads what the wrapper writes.
 import { describe, expect, test } from "vitest";
-import { pageStats, runManifestSchema, summarizeRun } from "$lib/run.js";
+import { pageStats, runManifestSchema, summarizeRun } from "#lib/run.js";
 import contract from "./wrapper-contract.json";
 import { dropped } from "./dropped.js";
 

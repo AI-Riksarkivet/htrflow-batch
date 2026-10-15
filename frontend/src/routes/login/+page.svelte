@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { LOGIN_UNREACHABLE, login, safeNext } from "$lib/session.js";
+  import { LOGIN_UNREACHABLE, login, safeNext } from "#lib/session.js";
 
   let username = $state("");
   let password = $state("");
