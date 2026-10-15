@@ -386,7 +386,17 @@ fail=0
 # beside upstream's two-thread one in the stop, the dead-step check and the
 # progress mark. Most of it is the docstrings saying why the model is never
 # a path and which shape is which.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 4892
+# 4892 -> 4988 (malformed XML kept under failed/): stream.py +37 --
+# MalformedOutput carrying the page's files, the quarantine hook and its
+# best-effort _keep, and the files of a page refused inside `process`
+# discarded like any page's (they stayed in the workdir until the pod
+# ended). store.py +37: quarantine_page, quarantined_pages,
+# delete_quarantined and the QUARANTINE prefix. main.py +18: the stamp's
+# refusal carries the PAGE XML too, the hook passed to consume, and resume
+# dropping a redone page's copy. provenance.py +4. Most of it is the
+# docstrings saying why the copy is text, why nothing reads it back and why
+# keeping it can never change how the page came out.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 4988
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
