@@ -139,7 +139,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # certificates, and nothing else. The OS packages a slim base brings along and
 # Trivy keeps flagging (perl, util-linux, ncurses, sqlite, …) are not in it.
 # Nothing execs into this container: the chart probes /healthz over HTTP.
-FROM gcr.io/distroless/python3-debian13:nonroot@sha256:8ee214843129f43e2ebf5e0ca9f2e4e6d8292143d1b8a6787f169b5898578884
+FROM gcr.io/distroless/python3-debian13:nonroot@sha256:83aa8d4f74a4d7f7cf2d472054139bef71a927b76c680c0f2e1021d6b1d6d732
 LABEL org.opencontainers.image.licenses="EUPL-1.2"
 COPY --from=venv /app/.venv /app/.venv
 # UV's page and what it needs, then the SPA: / is the campaign browser and
