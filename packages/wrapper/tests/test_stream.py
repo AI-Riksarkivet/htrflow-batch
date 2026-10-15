@@ -8,7 +8,7 @@ import pytest
 from htrflow_batch import stream as stream_mod
 from htrflow_batch.fetch import FetchResult
 from htrflow_batch.iiif import PageRef
-from htrflow_batch.stream import PageStream, UploadOutage, consume
+from htrflow_batch.stream import MalformedOutput, PageStream, UploadOutage, consume
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 12  # JPEG SOI + APP0 marker
 
@@ -583,6 +583,100 @@ def test_page_validation_errors_do_not_count_as_outage(tmp_path):
     )
     assert len(stats.results) == 7
     assert all(r.status == "failed" for r in stats.results.values())
+
+
+def _outputs(workdir: Path, stem: str) -> dict:
+    files = {}
+    for fmt in ("alto", "page"):
+        out = workdir / "outputs" / fmt / f"{stem}.xml"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text("<x>")
+        files[fmt] = out
+    return files
+
+
+def test_a_page_refused_at_upload_is_quarantined_then_discarded(tmp_path):
+    """The bad file is what a malformed-XML failure is debugged from: it goes
+    to ``quarantine`` before the rolling delete takes it, and the page is
+    failed as before."""
+    work = tmp_path / "work"
+    kept = []
+
+    def upload(name, files):
+        raise MalformedOutput(f"page {name}: alto XML is not well-formed", files)
+
+    stats = consume(
+        _items([_fr(tmp_path, 1)]),
+        lambda path: _outputs(work, path.stem),
+        upload,
+        quarantine=lambda name, files: kept.append(
+            (name, {fmt: p.read_text() for fmt, p in files.items()})
+        ),
+    )
+    assert kept == [("0001", {"alto": "<x>", "page": "<x>"})]
+    assert stats.results["0001"].status == "failed"
+    assert [p for p in work.rglob("*") if p.is_file()] == []
+
+
+def test_a_page_refused_by_process_is_quarantined_and_its_files_discarded(
+    tmp_path,
+):
+    """The ALTO stamp refuses inside ``process``, which then returns no
+    files: the exception's own files are kept aside AND deleted, or the
+    memory-backed workdir would hold them for the rest of the volume (X2)."""
+    work = tmp_path / "work"
+    kept = []
+
+    def process(path):
+        files = _outputs(work, path.stem)
+        raise MalformedOutput(f"{path.stem}.xml is not well-formed XML", files)
+
+    stats = consume(
+        _items([_fr(tmp_path, 1), _fr(tmp_path, 2)]),
+        process,
+        lambda name, files: None,
+        quarantine=lambda name, files: kept.append((name, sorted(files))),
+    )
+    assert kept == [("0001", ["alto", "page"]), ("0002", ["alto", "page"])]
+    assert {r.status for r in stats.results.values()} == {"failed"}
+    assert [p for p in work.rglob("*") if p.is_file()] == []
+
+
+def test_a_quarantine_that_fails_leaves_the_page_failed(tmp_path, caplog):
+    """Best-effort: keeping the copy must never turn a page failure into a
+    deferral or an upload outage, and says in the log that it could not."""
+
+    def upload(name, files):
+        raise MalformedOutput("bad", files)
+
+    def quarantine(name, files):
+        raise RuntimeError("store down")
+
+    stats = consume(
+        _items([_fr(tmp_path, i) for i in range(1, 8)]),
+        lambda path: _outputs(tmp_path / "work", path.stem),
+        upload,
+        max_upload_failures=2,
+        quarantine=quarantine,
+    )
+    assert {r.status for r in stats.results.values()} == {"failed"}
+    assert "could not keep" in caplog.text and "store down" in caplog.text
+
+
+def test_only_malformed_output_is_quarantined(tmp_path):
+    """A missing format or any other page error has nothing to look at."""
+    kept = []
+
+    def upload(name, files):
+        raise ValueError("page 0001: missing page output")
+
+    consume(
+        _items([_fr(tmp_path, 1)]),
+        lambda path: _outputs(tmp_path / "work", path.stem),
+        upload,
+        quarantine=lambda name, files: kept.append(name),
+    )
+    assert kept == []
 
 
 def test_workdir_holds_only_the_page_in_flight(tmp_path):
