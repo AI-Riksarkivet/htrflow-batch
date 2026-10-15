@@ -47,6 +47,7 @@ class StreamStats(BaseModel):
 
 ProcessFn = Callable[[Path], "dict[str, Path]"]
 UploadFn = Callable[[str, "dict[str, Path]"], None]
+QuarantineFn = Callable[[str, "dict[str, Path]"], None]
 
 #: Consecutive store failures after which the run is abandoned (W6). Each
 #: page already failed every retry of store.py's client, so five in a row is
@@ -76,6 +77,17 @@ def _deferred(stats: "StreamStats", name: str, error: str | None) -> None:
     stats.results[name] = PageOutcome(status="deferred", error=error)
 
 
+def _keep(quarantine: QuarantineFn | None, name: str, files: "dict[str, Path]") -> None:
+    """Best-effort: a copy kept for debugging must never change how the page
+    came out, so a store that fails here is only logged."""
+    if quarantine is None or not files:
+        return
+    try:
+        quarantine(name, files)
+    except Exception as e:
+        log.warning("page %s: could not keep its malformed output: %s", name, e)
+
+
 def discard(path: Path) -> None:
     """Rolling cleanup of the memory-backed workdir (X2): a page's image AND
     its ALTO/PAGE output go as soon as its outcome is recorded, so tmpfs holds
@@ -96,6 +108,19 @@ class Unrecoverable(RuntimeError):
     pages through a pipeline that cannot be rebuilt publishes a manifest full
     of failures and a green index. Raised by the caller's ``process``; the run
     ends transient and the retry gets a fresh pod."""
+
+
+class MalformedOutput(ValueError):
+    """A page's own output is not well-formed XML: the ALTO stamp
+    (provenance.stamp_alto) or the upload (store.upload_page) refuses it,
+    and the page fails. ``files`` are the page's output files as they came
+    out, which ``consume`` hands to its ``quarantine`` before the rolling
+    delete takes them: the error names a line and column, and only the file
+    shows what is there."""
+
+    def __init__(self, message: str, files: "dict[str, Path] | None" = None):
+        super().__init__(message)
+        self.files = dict(files or {})
 
 
 class UploadOutage(RuntimeError):
@@ -227,11 +252,14 @@ def consume(
     max_upload_failures: int = MAX_UPLOAD_FAILURES,
     stats: StreamStats | None = None,
     on_page: Callable[[str], None] | None = None,
+    quarantine: QuarantineFn | None = None,
 ) -> StreamStats:
     """``stats`` may be passed in already carrying the pages a resume
     skipped, so a reader of it mid-run sees the whole volume rather than only
     what this process has done; ``on_page`` is called with each page's name
-    once its outcome is recorded (progress.py), and must not raise."""
+    once its outcome is recorded (progress.py), and must not raise.
+    ``quarantine`` gets the files of a page refused as ``MalformedOutput``,
+    before they are deleted (store.quarantine_page)."""
     stats = stats if stats is not None else StreamStats()
     upload_failures = 0
     pages = iter(items)
@@ -252,6 +280,13 @@ def consume(
                 files = process(item.path)
             except Unrecoverable:
                 raise  # not this page's failure: every later page would share it
+            except MalformedOutput as e:
+                # process returned nothing, so the files come with the error:
+                # kept aside, then deleted in the finally like any page's
+                files = e.files
+                _keep(quarantine, name, files)
+                _failed(stats, name, describe(e))
+                continue
             except Exception as e:  # drain-what-you-can; verify gate decides later
                 _failed(stats, name, describe(e))
                 continue
@@ -260,6 +295,8 @@ def consume(
             except ValueError as e:
                 # the page's own outputs are bad (missing format, malformed
                 # XML — store.upload_page): a page failure, not an outage
+                if isinstance(e, MalformedOutput):
+                    _keep(quarantine, name, e.files)
                 _failed(stats, name, describe(e))
                 continue
             except Exception as e:

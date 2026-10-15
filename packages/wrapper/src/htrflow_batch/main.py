@@ -32,7 +32,14 @@ from .imagecache import ImageCache
 from .logship import LogCapture
 from .progress import Progress
 from .store import ResultStore
-from .stream import PageOutcome, PageStream, StreamStats, Unrecoverable, consume
+from .stream import (
+    MalformedOutput,
+    PageOutcome,
+    PageStream,
+    StreamStats,
+    Unrecoverable,
+    consume,
+)
 from .synthetic import build_manifest
 
 log = logging.getLogger("htrflow_batch")
@@ -189,11 +196,15 @@ def _default_factory(cfg: Config):
                     f"pipelines, last: {e}"
                 ) from e
             raise
-        provenance.stamp_alto(
-            files["alto"],
-            image=cfg.image_digest,
-            base_revision=cfg.htrflow_base_revision,
-        )
+        try:
+            provenance.stamp_alto(
+                files["alto"],
+                image=cfg.image_digest,
+                base_revision=cfg.htrflow_base_revision,
+            )
+        except MalformedOutput as e:
+            # the stamp sees the ALTO only; the page's PAGE XML goes with it
+            raise MalformedOutput(str(e), files) from e
         return files
 
     return process
@@ -479,6 +490,12 @@ def _resume(
         store.delete(["manifest.json"])
         store.delete(["iiif.json"])
         store.delete_pages(stale)
+    # failed/ holds what the LAST attempt at a page produced, so a page about
+    # to be redone loses its copy. No manifest points into failed/, so unlike
+    # the stale pairs above this needs no marker deleted first.
+    kept = store.quarantined_pages() & {p.name for p in todo}
+    if kept:
+        store.delete_quarantined(kept)
     log.info(
         "[%s] resume: %d done, %d to process", cfg.volume_ref, len(done), len(todo)
     )
@@ -543,6 +560,7 @@ def _stream(
             lambda name, files: store.upload_page(name, files, sources[name]),
             stats=stats,
             on_page=tracker.after_page,
+            quarantine=store.quarantine_page,
         )
     finally:
         stream.close()  # never blocks; cancels what is still queued

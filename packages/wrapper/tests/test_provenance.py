@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from htrflow_batch import provenance
+from htrflow_batch.stream import MalformedOutput
 
 NS = "http://www.loc.gov/standards/alto/ns-v4#"
 ALTO = f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -105,8 +106,10 @@ def test_stamp_keeps_the_declaration_and_the_default_namespace(tmp_path):
 def test_stamp_rejects_an_alto_that_is_not_xml(tmp_path):
     path = tmp_path / "0001.xml"
     path.write_text("<alto><Description>", encoding="utf-8")
-    with pytest.raises(ValueError, match=r"0001\.xml is not well-formed XML"):
+    with pytest.raises(MalformedOutput, match=r"0001\.xml is not well-formed XML") as e:
         provenance.stamp_alto(path, image=IMAGE, base_revision="x")
+    assert isinstance(e.value, ValueError)
+    assert e.value.files == {"alto": path}
     assert path.read_text(encoding="utf-8") == "<alto><Description>"
 
 
