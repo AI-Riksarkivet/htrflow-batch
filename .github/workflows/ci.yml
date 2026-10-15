@@ -112,9 +112,39 @@ jobs:
   # as two steps a failure in the first (the UV4 clone, say) meant the other
   # image was never even built — the amd64 wrapper build silently stopped
   # being exercised.
+  # What a push to main changed, for the two scans below: each rebuilds its
+  # image from scratch, so a push that touches nothing the image is built
+  # from skips it (scripts/image-inputs-changed.sh says which paths count).
+  # A manual run, and a push whose previous commit is unknown (a new branch,
+  # history rewritten), scan both.
+  changes:
+    name: Image inputs changed
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    outputs:
+      wrapper: ${{ steps.diff.outputs.wrapper }}
+      web: ${{ steps.diff.outputs.web }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = push ] && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            git diff --name-only "$BEFORE" "$GITHUB_SHA" | scripts/image-inputs-changed.sh
+          else
+            printf 'wrapper=true\nweb=true\n'
+          fi | tee -a "$GITHUB_OUTPUT"
+
   scan-web:
     name: Vulnerability scan (web)
-    if: github.event_name != 'pull_request'
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -150,7 +180,8 @@ jobs:
   # job that builds the wrapper on amd64, and it runs the driver test on it.
   scan-wrapper:
     name: Vulnerability scan (wrapper, amd64)
-    if: github.event_name != 'pull_request'
+    needs: changes
+    if: needs.changes.outputs.wrapper == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
