@@ -99,7 +99,7 @@ tokenizers==0.22.2 \
     --hash=sha256:e10bf9113d209be7cd046d40fbabbaf3278ff6d18eb4da4c500443185dc1896c \
     --hash=sha256:f01a9c019878532f98927d2bacb79bbb404b43d3437455522a00a30718cdedb5
     # via -r transformers.in
-transformers==5.9.0 \
-    --hash=sha256:1d19509bcff7028ebc6b277d71caa712e8353778463d38764237d14b42b52788 \
-    --hash=sha256:25997cb8fa6053533171634b6162d7df54346530ec2aa9b42bb834e63668c842
+transformers==5.10.4 \
+    --hash=sha256:8c5b99b141b53619435a76629b0284f04d27ff46d788b463fc0ecb23b8ff130e \
+    --hash=sha256:de37741509e64ccb88f7f5708beaf5b1914df447f5fe659f9c0fd95950413168
     # via -r transformers.in
