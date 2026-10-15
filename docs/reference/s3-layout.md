@@ -18,6 +18,10 @@ beside its results as `progress.json`.
   alto/<page>.xml            # per-page ALTO, uploaded second — "page done" (wrapper);
                              # both carry x-amz-meta-source-digest, the digest of
                              # the source image they were made from (resume reads it)
+  failed/page/<page>.xml     # a page failed as malformed XML: its files as they
+  failed/alto/<page>.xml     # came out, as text/plain, for debugging (wrapper);
+                             # in no manifest, never read back, deleted before
+                             # the next attempt at that page
   iiif.json                  # IIIF v3 viewer manifest with ALTO links (wrapper);
                              # rewritten every 10 pages WHILE the run goes, so the
                              # volume opens in the viewer before it is finished;

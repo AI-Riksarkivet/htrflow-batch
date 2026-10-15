@@ -17,6 +17,8 @@ from functools import lru_cache
 from importlib import metadata
 from pathlib import Path
 
+from .stream import MalformedOutput
+
 ALTO_NS = "http://www.loc.gov/standards/alto/ns-v4#"
 ET.register_namespace("", ALTO_NS)
 ET.register_namespace("xsi", "http://www.w3.org/2001/XMLSchema-instance")
@@ -60,7 +62,9 @@ def stamp_alto(path: Path, *, image: str, base_revision: str) -> None:
     try:
         tree = ET.parse(path)
     except ET.ParseError as e:
-        raise ValueError(f"{path.name} is not well-formed XML ({e}).") from e
+        raise MalformedOutput(
+            f"{path.name} is not well-formed XML ({e}).", {"alto": path}
+        ) from e
     description = tree.getroot().find(f"{{{ALTO_NS}}}Description")
     if description is None:
         raise ValueError(

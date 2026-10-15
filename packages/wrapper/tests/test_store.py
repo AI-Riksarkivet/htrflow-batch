@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from htrflow_batch.store import ResultStore
+from htrflow_batch.stream import MalformedOutput
 
 
 def _mk(tmp_path: Path, name: str, text: str) -> Path:
@@ -134,6 +135,68 @@ def test_upload_page_rejects_malformed_page_xml(cfg, s3, tmp_path):
     page = _mk(tmp_path, "page/0001.xml", "<PcGts><Page></PcGts>")
     with pytest.raises(ValueError, match="page XML is not well-formed"):
         store.upload_page("0001", {"alto": alto, "page": page})
+
+
+def test_a_malformed_page_is_refused_with_its_files(cfg, s3, tmp_path):
+    """The refusal carries the page's files, so the page loop can keep a
+    copy aside for debugging before the workdir loses them."""
+    store = ResultStore(cfg)
+    files = {
+        "alto": _mk(
+            tmp_path, "alto/0001.xml", '<alto><String CONTENT="a & b"/></alto>'
+        ),
+        "page": _mk(tmp_path, "page/0001.xml", "<PcGts/>"),
+    }
+    with pytest.raises(MalformedOutput) as excinfo:
+        store.upload_page("0001", files)
+    assert isinstance(excinfo.value, ValueError)
+    assert excinfo.value.files == files
+
+
+def test_quarantine_keeps_a_refused_pages_files_beside_its_results(cfg, s3, tmp_path):
+    """Under failed/, as text: never where a reader of results looks (alto/,
+    page/, iiif.json), and readable in a browser through the results proxy,
+    which would show a parse error for a malformed file served as XML."""
+    store = ResultStore(cfg)
+    bad = '<alto><String CONTENT="a & b"/></alto>'
+    store.quarantine_page(
+        "0001",
+        {
+            "alto": _mk(tmp_path, "alto/0001.xml", bad),
+            "page": _mk(tmp_path, "page/0001.xml", "<PcGts/>"),
+        },
+    )
+    prefix = "demo-v1/SE-RA-1234/failed"
+    alto = s3.get_object(Bucket=cfg.s3_bucket, Key=f"{prefix}/alto/0001.xml")
+    page = s3.get_object(Bucket=cfg.s3_bucket, Key=f"{prefix}/page/0001.xml")
+    assert alto["Body"].read() == bad.encode()
+    assert page["Body"].read() == b"<PcGts/>"
+    assert alto["ContentType"] == "text/plain; charset=utf-8"
+    assert store.done_pages() == set()
+    assert store.quarantined_pages() == {"0001"}
+
+
+def test_quarantine_keeps_what_the_page_has(cfg, s3, tmp_path):
+    """A page refused with one file (the ALTO stamp) keeps that one."""
+    store = ResultStore(cfg)
+    store.quarantine_page("0002", {"alto": _mk(tmp_path, "a/0002.xml", "<alto>")})
+    assert store.quarantined_pages() == {"0002"}
+    keys = [o["Key"] for o in s3.list_objects_v2(Bucket=cfg.s3_bucket)["Contents"]]
+    assert keys == ["demo-v1/SE-RA-1234/failed/alto/0002.xml"]
+
+
+def test_delete_quarantined_drops_both_formats(cfg, s3, tmp_path):
+    store = ResultStore(cfg)
+    for name in ("0001", "0002"):
+        store.quarantine_page(
+            name,
+            {
+                "alto": _mk(tmp_path, f"alto/{name}.xml", "<alto>"),
+                "page": _mk(tmp_path, f"page/{name}.xml", "<PcGts/>"),
+            },
+        )
+    store.delete_quarantined({"0001"})
+    assert store.quarantined_pages() == {"0002"}
 
 
 def test_main_client_has_bounded_timeouts_and_retries(cfg, s3):
