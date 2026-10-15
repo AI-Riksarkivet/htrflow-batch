@@ -7,7 +7,7 @@
 # tokenizers because the base's may be older than this transformers accepts;
 # protobuf and sentencepiece because transformers needs them to load and
 # convert slow tokenizers.
-transformers==5.9.0
+transformers==5.10.4
 huggingface-hub==1.32.0
 protobuf==7.36.1
 tokenizers==0.22.2
