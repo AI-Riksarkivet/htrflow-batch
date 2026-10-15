@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type { PageStat } from "$lib/run.js";
+import type { PageStat } from "#lib/run.js";
 import PagesTable from "./PagesTable.svelte";
 
 function page(overrides: Partial<PageStat> = {}): PageStat {

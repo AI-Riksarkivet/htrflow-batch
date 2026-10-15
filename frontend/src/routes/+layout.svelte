@@ -1,6 +1,6 @@
 <script lang="ts">
   import "../app.css";
-  import { theme } from "$lib/theme.svelte.js";
+  import { theme } from "#lib/theme.svelte.js";
 
   let { children } = $props();
 

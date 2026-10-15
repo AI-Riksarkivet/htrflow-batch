@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import { gate } from "$lib/poll.js";
+  import { gate } from "#lib/poll.js";
 
   // Every card on screen reads its own detail, folded ones included (for
   // the page count in the header), and a page of fifty campaigns asked for
@@ -24,19 +24,19 @@
     type CampaignQuality,
     type JobSummary,
     type VolumeView,
-  } from "$lib/api.js";
-  import { FOLDED_MS, RELOAD_MS } from "$lib/config.js";
-  import { inTrouble } from "$lib/order.js";
-  import { watchOnScreen } from "$lib/onscreen.js";
-  import { startPolling } from "$lib/poll.js";
-  import { modelLabel, modelUrl, pipelineModels } from "$lib/pipeline.js";
-  import { formatQuality, hasQualityStep } from "$lib/quality.js";
+  } from "#lib/api.js";
+  import { FOLDED_MS, RELOAD_MS } from "#lib/config.js";
+  import { inTrouble } from "#lib/order.js";
+  import { watchOnScreen } from "#lib/onscreen.js";
+  import { startPolling } from "#lib/poll.js";
+  import { modelLabel, modelUrl, pipelineModels } from "#lib/pipeline.js";
+  import { formatQuality, hasQualityStep } from "#lib/quality.js";
   import {
     describeApiError,
     describeLastError,
     describeProgress,
     describeReason,
-  } from "$lib/reasons.js";
+  } from "#lib/reasons.js";
   import { untrack } from "svelte";
 
   // `showNamespace`: the list spans namespaces, so the name alone may not
@@ -63,7 +63,7 @@
   const startsFolded = remembered();
   let collapsed = $state(startsFolded);
 
-  // Whether it is on screen now ($lib/onscreen): a folded card reads only
+  // Whether it is on screen now (#lib/onscreen): a folded card reads only
   // then. A page of finished campaigns used to make one request per card
   // the moment it opened, each reading the campaign's volume list, its pods
   // and up to a hundred progress files, for cards nobody had scrolled to
@@ -71,7 +71,7 @@
   let onScreen = $state(false);
   let visible = false;
   // Set when the reader opens the card: the read that follows is theirs,
-  // and goes ahead of the folded cards' background reads ($lib/poll gate).
+  // and goes ahead of the folded cards' background reads (#lib/poll gate).
   let asked = false;
 
   function toggle(): void {
@@ -175,7 +175,7 @@
   );
   let pipelineYaml = $state("");
   // What the last read failed with, and when the next is: the sentence is
-  // made of both, so it names the real next try ($lib/reasons).
+  // made of both, so it names the real next try (#lib/reasons).
   let detailFailure = $state<unknown>(null);
   let retryAt = $state<Date | undefined>(undefined);
   const detailError = $derived(
@@ -374,7 +374,7 @@
   );
 
   // The card's left accent: worst-first, read straight off the Job phase now
-  // that the API computes it server-side. `inTrouble` is $lib/order's --
+  // that the API computes it server-side. `inTrouble` is #lib/order's --
   // the same question the campaign list sorts by, so the accent and the
   // order can never disagree about what is wrong (2026-09-16 review). A
   // partially failed campaign is in trouble too; it only says so in its
@@ -511,7 +511,7 @@
     } catch (e) {
       if (signal?.aborted || e instanceof NotLoggedIn) return true;
       // One sentence, never the transport detail or a ZodError: what the
-      // reader can do about it is the point ($lib/reasons).
+      // reader can do about it is the point (#lib/reasons).
       detailFailure = e;
       return false;
     }
@@ -530,7 +530,7 @@
   // PROGRESS_FETCH_CAP), and a page of old campaigns polling for ever was
   // load that grew with the history and bought nothing (the 2026-09-17
   // audit, 3079). "Once" means once it has landed with whole page sums: a
-  // read that failed is still retried, on $lib/poll's backoff, and one
+  // read that failed is still retried, on #lib/poll's backoff, and one
   // whose sums the API has not filled in yet is read again. Folded, only
   // while on screen.
   const settled = $derived(
@@ -577,7 +577,7 @@
       .join(" · ") || undefined,
   );
 
-  /** $lib/onscreen as an action: told on and off screen, until destroyed. */
+  /** #lib/onscreen as an action: told on and off screen, until destroyed. */
   function watch(node: HTMLElement, told: (on: boolean) => void) {
     return { destroy: watchOnScreen(node, told) };
   }
@@ -609,7 +609,7 @@
     // untrack: load() reads `volumes` to size its refresh and then writes it,
     // and an effect that reads its own output re-runs forever. The list
     // keys each card by namespace/name, so a card never changes campaign
-    // under its own feet. $lib/poll is what keeps a page of cards from each
+    // under its own feet. #lib/poll is what keeps a page of cards from each
     // queueing up requests against a slow API, and from polling at all
     // while nobody is looking.
     const stop = untrack(() =>
@@ -703,7 +703,7 @@
     const published =
       v.state === "done" || (v.progress?.viewerPublished ?? false);
     const manifest = published ? v.iiifUrl : v.sourceUrl;
-    // Every URL this card turns into an href has been through $lib/api's
+    // Every URL this card turns into an href has been through #lib/api's
     // httpUrlSchema, the one gate: a detail whose API-built URL is not an
     // absolute http(s) one is refused whole, and a `sourceUrl` -- a line of
     // a volumes.txt people edit -- that is not one arrives as null. Encoded,
@@ -1141,7 +1141,7 @@
              not all of it. Outside the totals: a campaign of one volume has
              no totals rows, and its lowest pages are worth as much. Plain
              figures, no colour and no cut-off: what counts as poor depends
-             on the material ($lib/quality).
+             on the material (#lib/quality).
 
              There whenever the card has a quality column, over the
              placeholder rows too, with a dash until a page has a score: a

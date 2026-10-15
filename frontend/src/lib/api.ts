@@ -141,7 +141,7 @@ export const jobCountsSchema = z.object({
  * Why a volume or warm-up failed, as the API parsed it out of the wrapper's
  * termination message. `stage`/`permanent` are null when that message was
  * not the wrapper's JSON object (an older wrapper, a kubelet log tail), in
- * which case `error` is the raw text. Rendering is $lib/reasons — never
+ * which case `error` is the raw text. Rendering is #lib/reasons — never
  * these fields straight into the DOM.
  */
 export const volumeReasonSchema = z.object({
@@ -242,7 +242,7 @@ export const campaignQualitySchema = z.object({
  * all). `null` when there is nothing to read yet: a volume with no pod, a
  * bucket that did not answer, a run that predates the file. `stage` is the
  * wrapper's own (`setup`/`resume`/`load`/`stream`/`verify`/`publish`/`done`);
- * rendering is $lib/reasons, like every other field a person reads.
+ * rendering is #lib/reasons, like every other field a person reads.
  */
 export const volumeProgressSchema = z.object({
   done: z.number(),
@@ -260,7 +260,7 @@ export const volumeProgressSchema = z.object({
   // WARNING: the wrapper's own benign ones, a pipeline rebuild, "manifest
   // covers n/m pages", must not read as something wrong on a healthy run),
   // so a run with an exception in its log says so on the campaign page
-  // instead of only in a log someone has to open. Rendering is $lib/reasons,
+  // instead of only in a log someone has to open. Rendering is #lib/reasons,
   // like `reason`.
   lastError: z
     .object({ page: z.string().nullable(), error: z.string() })

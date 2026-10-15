@@ -1,9 +1,9 @@
 <script lang="ts">
-  import CampaignCard from "$lib/components/CampaignCard.svelte";
-  import LogoutButton from "$lib/components/LogoutButton.svelte";
-  import ThemeToggle from "$lib/components/ThemeToggle.svelte";
+  import CampaignCard from "#lib/components/CampaignCard.svelte";
+  import LogoutButton from "#lib/components/LogoutButton.svelte";
+  import ThemeToggle from "#lib/components/ThemeToggle.svelte";
   // fetchJobs reads GET /api/v1/jobs (the read API); RELOAD_MS is the poll
-  // cadence, both documented in $lib/config / $lib/api.
+  // cadence, both documented in #lib/config / #lib/api.
   import {
     fetchJobs,
     fetchVersion,
@@ -12,11 +12,11 @@
     REAPED_PAGE,
     reapedHidden,
     type JobSummary,
-  } from "$lib/api.js";
-  import { RELOAD_MS, REPO_URL } from "$lib/config.js";
-  import { byAttention, keepOrder, outOfOrder } from "$lib/order.js";
-  import { startPolling } from "$lib/poll.js";
-  import { describeApiError, describeUnreadable } from "$lib/reasons.js";
+  } from "#lib/api.js";
+  import { RELOAD_MS, REPO_URL } from "#lib/config.js";
+  import { byAttention, keepOrder, outOfOrder } from "#lib/order.js";
+  import { startPolling } from "#lib/poll.js";
+  import { describeApiError, describeUnreadable } from "#lib/reasons.js";
   import { untrack } from "svelte";
   import { flip } from "svelte/animate";
 
@@ -54,7 +54,7 @@
   // finished, stays where it was. Moving it on its own would be a jump
   // under someone reading; leaving it for good would bury what the order is
   // for. The dock says so and offers the sort; the reader decides when.
-  // (One that falls into trouble moves at once: $lib/order.)
+  // (One that falls into trouble moves at once: #lib/order.)
   const drifted = $derived(jobs !== null && outOfOrder(jobs));
 
   // The glide is an animation the page runs itself (the Web Animations
@@ -100,7 +100,7 @@
 
   // One request in flight at a time, nothing polled while the tab is in the
   // background, and a run of failures backing off — all of it in
-  // $lib/poll, so the list, each card and the run log cannot disagree.
+  // #lib/poll, so the list, each card and the run log cannot disagree.
   // Set once a 401 has sent the browser to /login: nothing more is asked.
   let leaving = false;
 
@@ -110,7 +110,7 @@
       if (signal.aborted) return true;
       reapedTotal = result.reapedTotal;
       // The API sorts by creation date; the page sorts by what wants a
-      // person (see $lib/order) -- once. A poll keeps the order the reader
+      // person (see #lib/order) -- once. A poll keeps the order the reader
       // has and only adds to it, so no card moves under them; the list is
       // sorted afresh when they come back to it from another tab, when
       // there is nobody reading it to move anything under.
@@ -128,7 +128,7 @@
       // One sentence for the reader: what is wrong, that the list on
       // screen is the older one, and that it retries on its own. The
       // transport detail (a fetch error string, a ZodError) never reaches
-      // the banner — see $lib/reasons.
+      // the banner — see #lib/reasons.
       failure = e;
       return false;
     }

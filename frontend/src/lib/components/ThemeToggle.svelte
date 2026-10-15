@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { effectiveTheme, toggleTheme } from "$lib/theme.svelte.js";
+  import { effectiveTheme, toggleTheme } from "#lib/theme.svelte.js";
 
   const dark = $derived(effectiveTheme() === "dark");
 </script>
