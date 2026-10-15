@@ -130,7 +130,14 @@ The cluster constants these targets use come from `.env`
   build its image first, and both builds are expensive (the wrapper's CUDA
   base; the web image's viewer clone and npm and bun builds). A pull request
   that changes a dockerfile gets its scan when it lands on `main`, before
-  any image is published from it. A further job, on every trigger, builds the
+  any image is published from it. On a push, a `changes` job first reads
+  which paths the push changed, and each scan runs only when one of them is
+  something its image is built from (`scripts/image-inputs-changed.sh`:
+  `.docker/`, `.dagger/`, `.github/`, the lock and every `pyproject.toml`
+  for both, plus `packages/wrapper/` for the wrapper and `packages/web/`
+  and `frontend/` for the web image). A push that touches only the docs,
+  the chart or the converter builds neither. A manual run scans both, and
+  the weekly `security.yml` scans the published images whatever changed. A further job, on every trigger, builds the
   htrflow base and the wrapper on a native runner of the second architecture,
   runs the level-0 pin test on it and (on `main`) `make scan-image`, and
   pushes nothing.
