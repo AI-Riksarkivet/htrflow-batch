@@ -18,7 +18,7 @@ from htrflow_batch.main import (
     main,
 )
 from htrflow_batch.store import ResultStore
-from htrflow_batch.stream import PageOutcome, StreamStats
+from htrflow_batch.stream import MalformedOutput, PageOutcome, StreamStats
 
 ALTO_OK = '<alto><Layout><Page WIDTH="2500" HEIGHT="3538"/></Layout></alto>'
 PAGE_OK = '<PcGts><Page imageWidth="2500" imageHeight="3538"/></PcGts>'
@@ -604,6 +604,64 @@ def test_malformed_alto_fails_the_page_at_upload(env, cfg, s3):
         ].read()
     )
     assert body["results"]["0002"]["status"] == "failed"
+    # ...but kept aside, as it came out, for whoever debugs it
+    failed = s3.get_object(
+        Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/failed/alto/0002.xml"
+    )
+    assert failed["Body"].read() == b"<alto><Layout></alto>"
+    assert "demo-v1/SE-RA-1234/failed/page/0002.xml" in keys
+    assert not any("/failed/" in k and "0002" not in k for k in keys)
+
+
+def test_a_rerun_drops_the_kept_copy_of_a_page_it_redoes(env, cfg, s3):
+    """failed/ shows what the LAST attempt at a page produced: a page that
+    now comes out right loses its old copy, one that fails again gets a new
+    one. Done pages are not redone, so nothing else is touched."""
+    for name in ("0001", "0002"):
+        for fmt in ("alto", "page"):
+            s3.put_object(
+                Bucket=cfg.s3_bucket,
+                Key=f"demo-v1/SE-RA-1234/failed/{fmt}/{name}.xml",
+                Body=b"<old>",
+            )
+
+    def factory(c):
+        def process(path):
+            if path.stem == "0002":
+                return _write_outputs(c, path.stem, alto="<alto><new>")
+            return _write_outputs(c, path.stem)
+
+        return process
+
+    assert main(env, process_page_factory=factory) == EXIT_OK
+    keys = _keys(s3, cfg)
+    assert not any(k.endswith("failed/alto/0001.xml") for k in keys)
+    assert not any(k.endswith("failed/page/0001.xml") for k in keys)
+    again = s3.get_object(
+        Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/failed/alto/0002.xml"
+    )
+    assert again["Body"].read() == b"<alto><new>"
+
+
+def test_default_factory_refuses_an_alto_it_cannot_stamp_with_both_files(
+    cfg, monkeypatch
+):
+    """The stamp is where a malformed ALTO is first caught in a real run:
+    the refusal carries the page's PAGE XML too, for the copy kept aside."""
+    from htrflow_batch import driver
+
+    monkeypatch.setattr(driver, "load_pipeline", lambda path, out_dir: "pipeline")
+    monkeypatch.setattr(
+        driver,
+        "process_page",
+        lambda pipeline, image_path, out_dir, seconds: _write_outputs(
+            cfg, image_path.stem, alto='<alto><String CONTENT="&"/></alto>'
+        ),
+    )
+    with pytest.raises(MalformedOutput, match="0001.xml is not well-formed") as e:
+        main_mod._default_factory(cfg)(Path("/img/0001.jpg"))
+    assert sorted(e.value.files) == ["alto", "page"]
+    assert e.value.files["page"].read_text() == PAGE_OK
 
 
 def test_a_failed_page_completes_the_volume(env, cfg, s3):
