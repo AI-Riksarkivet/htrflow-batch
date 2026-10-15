@@ -106,7 +106,7 @@ services:
     entrypoint: ["/bin/sh", "/scripts/compose_login_init.sh"]  # the image's is `rc`
 
   wrapper:
-    image: ${HTR_WRAPPER_IMAGE:-riksarkivet/htrflow-batch@sha256:2a556545a3623a5036416a86b8eb02b6e093ccc92f3e347b788360ff80bd119d}  # v0.11.0
+    image: ${HTR_WRAPPER_IMAGE:-riksarkivet/htrflow-batch@sha256:17804e4e274f6188d8d877af1a875fb6a641e27d73fe04caa38f35ecf12de5a8}  # v0.12.0
     # RustFS's network namespace: `localhost:<port>` is RustFS here, as it
     # is to the browser (see the note at the top).
     network_mode: "service:rustfs"
@@ -150,7 +150,7 @@ services:
     # only this directory as the compose project, so a build context of `..`
     # could not resolve anyway. The pinned release, or HTR_WEB_IMAGE — which
     # is what `make compose-smoke` sets.
-    image: ${HTR_WEB_IMAGE:-riksarkivet/htrflow-web@sha256:c5bb06c6461de3393b9a7419a635a325f9295ddffad7387e791b0e52fc70e087}  # v0.11.0
+    image: ${HTR_WEB_IMAGE:-riksarkivet/htrflow-web@sha256:b7f204e22d300e920ca7b7b01b0d196a34c7b9acd21886b776a2588ee3df7657}  # v0.12.0
     # Site only: a compose stack has no apiserver, so the read API would have
     # nothing to read and the console script would exit on a missing
     # kubeconfig. In this mode /, /log and /uv.html are served and /api/v1/…
@@ -171,7 +171,7 @@ services:
   # cookie with the session key login-init wrote. No host port: only the
   # web front reaches it.
   results:
-    image: ${HTR_WEB_IMAGE:-riksarkivet/htrflow-web@sha256:c5bb06c6461de3393b9a7419a635a325f9295ddffad7387e791b0e52fc70e087}  # v0.11.0
+    image: ${HTR_WEB_IMAGE:-riksarkivet/htrflow-web@sha256:b7f204e22d300e920ca7b7b01b0d196a34c7b9acd21886b776a2588ee3df7657}  # v0.12.0
     # The image's ENTRYPOINT is htrflow-web: replace it, not its arguments.
     entrypoint: ["/app/.venv/bin/htrflow-results"]
     depends_on:

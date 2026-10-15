@@ -286,6 +286,15 @@ value keys **as they were at that version** — `api.*`, `viewer.*`,
 here would make the upgrade notes wrong for anyone actually on that
 version.
 
+### 0.18.0 — 2026-10-15 (v0.12.0: malformed pages kept, dependency fixes, SvelteKit 3)
+
+Changed:
+- **`web.image`** defaults to the v0.12.0 web image, built on SvelteKit 3.
+  No value or template changes. The release's wrapper image, which
+  pipelines pin themselves, keeps a page it refuses as malformed XML under
+  `<volume>/failed/{alto,page}/` instead of dropping it, and a resume deletes
+  that copy before it redoes the page.
+
 ### 0.17.0 — 2026-10-05 (v0.11.0: quality prediction in batch runs)
 
 Changed:
