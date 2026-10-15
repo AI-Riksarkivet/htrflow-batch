@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -15,7 +16,10 @@ from botocore.config import Config as BotoConfig
 
 from .config import Config
 from .quality import parse_alto_quality
+from .stream import MalformedOutput
 from .viewer import parse_alto_dims
+
+log = logging.getLogger("htrflow_batch")
 
 #: Per-page outputs, in upload order. ALTO is what the viewer manifest and
 #: every reader key on, so it lands LAST: a crash between the two PUTs can
@@ -31,6 +35,12 @@ SOURCE_META = "source-digest"
 #: page, so a sequential pass over a few thousand pages would be the slowest
 #: part of a retry.
 HEAD_CONCURRENCY = 16
+
+#: Where a page refused as malformed XML keeps its files, as they came out
+#: (``failed/<format>/<page>.xml``): beside the results, under the same
+#: login, but never under ``alto/`` or ``page/``, so nothing that reads
+#: results -- resume, verify, the viewer manifest -- ever sees one.
+QUARANTINE = "failed"
 
 #: The most keys one DeleteObjects call takes (the S3 API's own limit).
 DELETE_BATCH = 1000
@@ -187,8 +197,8 @@ class ResultStore:
             try:
                 roots[fmt] = ET.fromstring(data)
             except ET.ParseError as e:
-                raise ValueError(
-                    f"page {name}: {fmt} XML is not well-formed: {e}"
+                raise MalformedOutput(
+                    f"page {name}: {fmt} XML is not well-formed: {e}", files
                 ) from e
             bodies[fmt] = data
         metadata = {SOURCE_META: source} if source else None
@@ -212,6 +222,33 @@ class ResultStore:
             self.dimless_pages.add(name)
         if (score := parse_alto_quality(roots["alto"])) is not None:
             self.page_quality[name] = score
+
+    def quarantine_page(self, name: str, files: dict[str, Path]) -> None:
+        """Keep a refused page's files under ``failed/`` for debugging, the
+        page itself staying failed. As text: a malformed file served as XML
+        shows the browser's parse error instead of the file."""
+        for fmt, path in sorted(files.items()):
+            key = self._key(f"{QUARANTINE}/{fmt}/{name}.xml")
+            self._put(key, path.read_bytes(), "text/plain; charset=utf-8")
+            log.warning("page %s: kept its %s output at %s", name, fmt, key)
+
+    def quarantined_pages(self) -> set[str]:
+        """The pages with any file under ``failed/``."""
+        return set().union(
+            *(self._list_stems(f"{QUARANTINE}/{fmt}") for fmt in PAGE_FORMATS)
+        )
+
+    def delete_quarantined(self, names) -> None:
+        """Drop pages' kept files before they are processed again: ``failed/``
+        holds what the LAST attempt at a page produced, so a page that now
+        comes out right leaves nothing behind there."""
+        self.delete(
+            [
+                f"{QUARANTINE}/{fmt}/{name}.xml"
+                for name in sorted(names)
+                for fmt in PAGE_FORMATS
+            ]
+        )
 
     def page_sources(self, names) -> dict[str, str | None]:
         """The source digest each page's ALTO -- the output that makes a page
