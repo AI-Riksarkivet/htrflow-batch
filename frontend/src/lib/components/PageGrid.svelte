@@ -3,7 +3,7 @@
   // to the slowest page. Cells are buttons with a roving tabindex so the
   // grid is one tab stop and arrow keys walk the pages; hover/focus prints
   // the page id and seconds in the readout line (and the native title).
-  import { scale, type PageStat } from "$lib/run.js";
+  import { scale, type PageStat } from "#lib/run.js";
 
   let { pages, max }: { pages: PageStat[]; max: number | null } = $props();
 

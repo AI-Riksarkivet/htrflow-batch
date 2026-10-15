@@ -79,7 +79,7 @@ export const LIVE_MS = envInt(env.VITE_LIVE_MS, 15_000);
 
 /**
  * Consecutive failed live polls before the viewer gives up. Attempts, not
- * minutes: $lib/poll doubles the wait after each failure up to MAX_POLL_MS,
+ * minutes: #lib/poll doubles the wait after each failure up to MAX_POLL_MS,
  * so twenty of them span a little over an hour rather than five minutes.
  */
 export const LIVE_MAX_FAILURES = 20;

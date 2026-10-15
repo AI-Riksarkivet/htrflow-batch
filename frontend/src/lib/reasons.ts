@@ -304,7 +304,7 @@ export const RESULTS_SERVICE_DOWN = "the results service did not answer";
  * One sentence for a read-API call that did not come back usable.
  * `showingLast` says whether the caller still has an older answer on screen,
  * which is the difference between "nothing is here" and "this is stale".
- * `retryAt` is when the poll asks next, from $lib/poll's `onWait`: it backs
+ * `retryAt` is when the poll asks next, from #lib/poll's `onWait`: it backs
  * off after a miss, so "every 60 seconds" was wrong from the first one. The
  * sentence names the time, which stays true while it is on screen.
  */

@@ -1,21 +1,21 @@
 <script lang="ts">
-  import { browser } from "$app/environment";
+  import { browser } from "$app/env";
   import { untrack } from "svelte";
-  import RunSummaryCard from "$lib/components/RunSummaryCard.svelte";
-  import LogoutButton from "$lib/components/LogoutButton.svelte";
-  import ThemeToggle from "$lib/components/ThemeToggle.svelte";
+  import RunSummaryCard from "#lib/components/RunSummaryCard.svelte";
+  import LogoutButton from "#lib/components/LogoutButton.svelte";
+  import ThemeToggle from "#lib/components/ThemeToggle.svelte";
   // LIVE_MS matches the wrapper's log-ship period (polling faster buys
   // nothing); LIVE_MAX_FAILURES stops a log that never appears from
-  // spinning forever. Both documented in $lib/config.
-  import { LIVE_MAX_FAILURES, LIVE_MS } from "$lib/config.js";
-  import { startPolling } from "$lib/poll.js";
-  import { isResultUrl, shortDate } from "$lib/api.js";
-  import { FORBIDDEN_FILE, goToLogin } from "$lib/session.js";
+  // spinning forever. Both documented in #lib/config.
+  import { LIVE_MAX_FAILURES, LIVE_MS } from "#lib/config.js";
+  import { startPolling } from "#lib/poll.js";
+  import { isResultUrl, shortDate } from "#lib/api.js";
+  import { FORBIDDEN_FILE, goToLogin } from "#lib/session.js";
   import {
     isTerminalManifest,
     runManifestSchema,
     type RunManifest,
-  } from "$lib/run.js";
+  } from "#lib/run.js";
   import {
     logOutcome,
     LOG_TAIL_BYTES,
@@ -24,7 +24,7 @@
     tailOf,
     type LogGroup,
     type RunOutcome,
-  } from "$lib/runlog.js";
+  } from "#lib/runlog.js";
 
   // The route is opened as /log?log=<url>&manifest=<url> on a prerendered,
   // client-only SPA (see +layout.ts) — there is no SvelteKit load function
@@ -110,7 +110,7 @@
       // polling rather than freezing on the first 404, but not forever.
       //
       // LIVE_MAX_FAILURES counts ATTEMPTS, not minutes, and since the audit
-      // $lib/poll doubles the wait after each one up to MAX_POLL_MS. So the
+      // #lib/poll doubles the wait after each one up to MAX_POLL_MS. So the
       // twenty attempts are no longer twenty live periods (5 min) but a
       // little over an hour — which is the point: a log that has not landed
       // is worth waiting longer for, at a cost that falls away rather than
@@ -153,7 +153,7 @@
   }
 
   // One reader for the page. A live volume polls on the wrapper's log-ship
-  // cadence through $lib/poll — one request in flight at a time, nothing
+  // cadence through #lib/poll — one request in flight at a time, nothing
   // fetched while the tab is in the background, and a run of failures
   // doubling the wait (2026-09-14 audit); a finished one is read once.
   //

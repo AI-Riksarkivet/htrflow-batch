@@ -3,12 +3,12 @@
   // Reached from PagesTable's "view" link (and, once bookmarked, opened
   // directly): a prerendered, client-only page like /log, so the query
   // string is read from window.location, not a SvelteKit load function.
-  import { browser } from "$app/environment";
-  import LogoutButton from "$lib/components/LogoutButton.svelte";
-  import ThemeToggle from "$lib/components/ThemeToggle.svelte";
-  import { isResultUrl } from "$lib/api.js";
-  import { FORBIDDEN_FILE, goToLogin } from "$lib/session.js";
-  import { type AltoPage, parseAlto, prettyXml } from "$lib/alto.js";
+  import { browser } from "$app/env";
+  import LogoutButton from "#lib/components/LogoutButton.svelte";
+  import ThemeToggle from "#lib/components/ThemeToggle.svelte";
+  import { isResultUrl } from "#lib/api.js";
+  import { FORBIDDEN_FILE, goToLogin } from "#lib/session.js";
+  import { type AltoPage, parseAlto, prettyXml } from "#lib/alto.js";
 
   function queryParam(name: string): string | null {
     if (!browser) return null;

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { logout } from "$lib/session.js";
+  import { logout } from "#lib/session.js";
 
   async function out() {
     await logout().catch(() => {});

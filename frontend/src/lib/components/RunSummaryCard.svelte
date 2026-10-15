@@ -7,7 +7,7 @@
     pageStats,
     summarizeRun,
     type RunManifest,
-  } from "$lib/run.js";
+  } from "#lib/run.js";
   import PageGrid from "./PageGrid.svelte";
   import PagesTable from "./PagesTable.svelte";
 

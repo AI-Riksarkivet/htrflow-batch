@@ -1,8 +1,8 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { clockTime } from "$lib/api.js";
-import { RELOAD_MS } from "$lib/config.js";
-import { cssOf, cssRules } from "$lib/fixtures/css.js";
+import { clockTime } from "#lib/api.js";
+import { RELOAD_MS } from "#lib/config.js";
+import { cssOf, cssRules } from "#lib/fixtures/css.js";
 import CampaignsPage from "./+page.svelte";
 import pageSource from "./+page.svelte?raw";
 
@@ -289,7 +289,7 @@ describe("/ campaign page", () => {
 
   // The list page is left open for hours, with a card per campaign each
   // polling for its own volume table (2026-09-14 audit). What a poll does
-  // with a hidden tab or a slow answer is $lib/poll's own test; this is that
+  // with a hidden tab or a slow answer is #lib/poll's own test; this is that
   // the page and its cards poll through it.
   test("nothing is polled while the tab is in the background", async () => {
     const fetchMock = vi.fn(routedFetch([job]));
@@ -318,7 +318,7 @@ describe("/ campaign page", () => {
 
 // The API answers newest-declared first, which says nothing about which
 // campaign wants a person. The page reads: what is moving, what went wrong,
-// what is over (newest first), what has not begun ($lib/order).
+// what is over (newest first), what has not begun (#lib/order).
 describe("/ campaign list order", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => {
