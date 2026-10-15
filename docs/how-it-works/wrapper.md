@@ -132,6 +132,12 @@ Every stage name can appear in the termination message.
    - **An upload the store could not take is deferred too**, and any half of
      its pair already stored is deleted. A page whose own output is bad (a
      missing format, malformed XML) is failed.
+   - **Malformed XML is kept aside.** A page whose ALTO or PAGE XML does
+     not parse is failed, and its files are stored as they came out under
+     `failed/` beside the volume's results, as plain text. The error names
+     only a line and a column; the file shows what is there. Nothing that
+     reads results looks in `failed/`, and a later attempt at the page
+     deletes its copy first ([S3 layout](../reference/s3-layout.md#key-layout)).
    - **Five consecutive S3 upload failures abort the run** (`UploadOutage`,
      exit 1).
 5. **verify**: every page must be uploaded to both `page/` and `alto/`,
