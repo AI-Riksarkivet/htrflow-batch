@@ -6,15 +6,15 @@ import {
   within,
 } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { clockTime, type JobSummary } from "$lib/api.js";
-import { FOLDED_MS, RELOAD_MS } from "$lib/config.js";
-import { describeReason } from "$lib/reasons.js";
+import { clockTime, type JobSummary } from "#lib/api.js";
+import { FOLDED_MS, RELOAD_MS } from "#lib/config.js";
+import { describeReason } from "#lib/reasons.js";
 import CampaignCard from "./CampaignCard.svelte";
 import cardSource from "./CampaignCard.svelte?raw";
-import { cssOf as cssOfRule, cssRules, squash } from "$lib/fixtures/css.js";
+import { cssOf as cssOfRule, cssRules, squash } from "#lib/fixtures/css.js";
 
 // The card's own <style>, as the Svelte compiler parses it (see
-// $lib/fixtures/css).
+// #lib/fixtures/css).
 const cardRules = cssRules(cardSource);
 
 const PHONE = "(max-width: 520px)";
@@ -421,7 +421,7 @@ describe("CampaignCard", () => {
 
   test("through the schema, a sourceUrl that is not an http(s) URL is no link and the card still draws", async () => {
     // volumes.txt is a file humans edit in a git repo. The schema reads the
-    // field on its own ($lib/api): one the page cannot use is no link, and
+    // field on its own (#lib/api): one the page cannot use is no link, and
     // the rest of the card -- this volume included -- still draws. Refusing
     // the whole detail over it left the card an error for ever (2026-09-23
     // audit). The schema is the only gate; the card trusts what it parsed.
@@ -1302,7 +1302,7 @@ describe("CampaignCard", () => {
 
   // Predicted page quality (htrflow's QualityPrediction step): a column of
   // its own, the campaign's mean on the pages row, and the lowest pages as
-  // links into the viewer. No colour and no threshold ($lib/quality).
+  // links into the viewer. No colour and no threshold (#lib/quality).
   const progressDone = {
     done: 3,
     total: 3,
@@ -1642,7 +1642,7 @@ describe("CampaignCard", () => {
       await vi.advanceTimersByTimeAsync(0);
       // The sentence is written out, not computed by calling the renderer
       // this card calls: an expectation built from the code under test
-      // passes whatever that code says (2026-09-14 audit). $lib/reasons has
+      // passes whatever that code says (2026-09-14 audit). #lib/reasons has
       // its own tests for how the sentence is built.
       const sentence =
         "The warm-up failed: unknown model class 'Yolo9'. Fix the pipeline " +

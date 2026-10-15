@@ -1,8 +1,8 @@
 <script lang="ts">
   // The full per-page table, rendered a slice at a time: a 480-row table is
   // nobody's first question, but it stays available for a hunt.
-  import type { PageStat } from "$lib/run.js";
-  import { formatQuality, sortByQuality } from "$lib/quality.js";
+  import type { PageStat } from "#lib/run.js";
+  import { formatQuality, sortByQuality } from "#lib/quality.js";
 
   let { pages, pageSize = 100 }: { pages: PageStat[]; pageSize?: number } =
     $props();

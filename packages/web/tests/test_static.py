@@ -41,7 +41,7 @@ UV_HTML = """<html><head>
 </body></html>"""
 
 
-#: What the SvelteKit build's pages carry (kit.csp, frontend/svelte.config.js):
+#: What the SvelteKit build's pages carry (sveltekit({csp}), frontend/vite.config.ts):
 #: the page's own policy, as a <meta http-equiv> tag in its head.
 SPA_META = (
     '<meta http-equiv="content-security-policy" '

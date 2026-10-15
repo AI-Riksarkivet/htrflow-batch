@@ -1,8 +1,8 @@
 import { fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { LIVE_MAX_FAILURES, LIVE_MS } from "$lib/config.js";
-import { MAX_POLL_MS } from "$lib/poll.js";
-import { LOG_TAIL_BYTES } from "$lib/runlog.js";
+import { LIVE_MAX_FAILURES, LIVE_MS } from "#lib/config.js";
+import { MAX_POLL_MS } from "#lib/poll.js";
+import { LOG_TAIL_BYTES } from "#lib/runlog.js";
 import LogPage from "./+page.svelte";
 
 function fetch404(): typeof fetch {
@@ -279,7 +279,7 @@ describe("/log with a very large log", () => {
 
 // A volume's log is mostly httpx's one line per request; they are folded
 // into one closed disclosure per run of them, so the lines a reader came
-// for are not buried (grouping itself is $lib/runlog's).
+// for are not buried (grouping itself is #lib/runlog's).
 describe("/log folds the HTTP request lines", () => {
   beforeEach(() => {
     vi.useFakeTimers();

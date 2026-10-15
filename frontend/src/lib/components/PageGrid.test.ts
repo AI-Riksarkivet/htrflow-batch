@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/svelte";
 import { describe, expect, test } from "vitest";
-import type { PageStat } from "$lib/run.js";
+import type { PageStat } from "#lib/run.js";
 import PageGrid from "./PageGrid.svelte";
 
 const pages: PageStat[] = ["0001", "0002", "0003", "0004"].map((id, i) => ({

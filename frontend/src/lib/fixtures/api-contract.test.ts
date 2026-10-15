@@ -16,8 +16,8 @@ import {
   REAPED_MAX,
   REAPED_PAGE,
   versionSchema,
-} from "$lib/api.js";
-import { describeApiError, RESULTS_SERVICE_DOWN } from "$lib/reasons.js";
+} from "#lib/api.js";
+import { describeApiError, RESULTS_SERVICE_DOWN } from "#lib/reasons.js";
 import contract from "./api-contract.json";
 import { dropped } from "./dropped.js";
 
