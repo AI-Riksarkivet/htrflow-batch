@@ -275,3 +275,10 @@ def test_published_go_pins_are_a_subset_of_pinned():
     assert len(paths) == 3
     owned = {p for ps in release.PINNED.values() for p in ps}
     assert set(paths) <= owned
+
+
+def test_the_version_command_prints_the_wrappers_version(capsys):
+    """publish.yml's plan job reads the release's version through this, so
+    the workflow and `state` read it from the same file the same way."""
+    release.main(["version"])
+    assert capsys.readouterr().out == release.version(ROOT) + "\n"

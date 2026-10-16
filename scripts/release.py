@@ -5,6 +5,7 @@
 Standard library only: CI runs this with the runner's plain `python3`.
 
     python scripts/release.py state
+    python scripts/release.py version
     python scripts/release.py bump <version> --chart <chart-version>
     python scripts/release.py pin <version> --wrapper sha256:... --web sha256:...
         --campaigns sha256:... --converter-ref <sha>
@@ -219,6 +220,7 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("state", help="print released, publish or tag")
+    sub.add_parser("version", help="print the version the release is for")
     b = sub.add_parser("bump", help="set the version everywhere")
     b.add_argument("version")
     b.add_argument("--chart", required=True, help="the chart's new version")
@@ -230,6 +232,8 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.command == "state":
         print(state(ROOT, _tags(ROOT)))
+    elif args.command == "version":
+        print(version(ROOT))
     elif args.command == "pin":
         digests = {name: getattr(args, name) for name in _REPOS}
         for path in pin(ROOT, args.version, digests, args.converter_ref):
