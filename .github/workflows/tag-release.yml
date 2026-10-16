@@ -9,7 +9,8 @@ name: Tag the release
 # dispatch.) The weekly scheduled run of "Published images" never tags.
 #
 # A re-run is safe: a tag already on this commit is kept and release.yml is
-# dispatched again; a tag on any other commit stops the run.
+# dispatched again; a tag on any other commit means that release is done
+# (published.yml also passes on routine pushes later) and nothing happens.
 on:
   workflow_run:
     workflows: ["Published images"]
@@ -17,6 +18,12 @@ on:
     branches: [main]
 
 permissions: {}
+
+# Its own group, not publish.yml's `release`: sharing that one could drop a
+# pending run of either.
+concurrency:
+  group: release-tag
+  cancel-in-progress: false
 
 jobs:
   tag:
@@ -39,33 +46,49 @@ jobs:
           fetch-depth: 0 # `state` reads the tags; main is needed for the ancestry check
           persist-credentials: false # the push below gets the token for itself
 
-      - name: Tag and start the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GIT_COMMITTER_NAME: github-actions[bot]
-          GIT_COMMITTER_EMAIL: 41898283+github-actions[bot]@users.noreply.github.com
+      # Runs the workspace's own script, so the token is not in this step's
+      # environment; it only decides, and hands the decision on as outputs.
+      - name: Decide
+        id: decide
         run: |
           set -euo pipefail
-          export GIT_AUTHOR_NAME="$GIT_COMMITTER_NAME" GIT_AUTHOR_EMAIL="$GIT_COMMITTER_EMAIL"
           version="$(python3 scripts/release.py version)"
-          TAG="v${version}"
-          existing="$(git rev-parse -q --verify "refs/tags/${TAG}^{commit}" || true)"
+          tag="v${version}"
+          existing="$(git rev-parse -q --verify "refs/tags/${tag}^{commit}" || true)"
+          action=none
           if [[ -n "$existing" ]]; then
-            if [[ "$existing" != "$HEAD_SHA" ]]; then
-              echo "::error::${TAG} already names ${existing}, not ${HEAD_SHA}; tags are never moved"
-              exit 1
+            if [[ "$existing" == "$HEAD_SHA" ]]; then
+              echo "${tag} is already on ${HEAD_SHA}; starting its release again"
+              action=release
+            else
+              echo "${tag} already released at ${existing}"
             fi
-            echo "${TAG} is already on ${HEAD_SHA}; starting its release again"
           else
             state="$(python3 scripts/release.py state)"
             if [[ "$state" != "tag" ]]; then
               echo "state at ${HEAD_SHA} is ${state}: nothing to tag"
-              exit 0
-            fi
-            if ! git merge-base --is-ancestor "$HEAD_SHA" origin/main; then
+            elif ! git merge-base --is-ancestor "$HEAD_SHA" origin/main; then
               echo "::error::${HEAD_SHA} is not on main"
               exit 1
+            else
+              action=tag
             fi
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "action=${action}" >> "$GITHUB_OUTPUT"
+
+      # Only git and gh run here, with the token.
+      - name: Tag and start the release
+        if: steps.decide.outputs.action != 'none'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.decide.outputs.tag }}
+          ACTION: ${{ steps.decide.outputs.action }}
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898283+github-actions[bot]@users.noreply.github.com
+        run: |
+          set -euo pipefail
+          if [[ "$ACTION" == tag ]]; then
             git tag -a "$TAG" -m "$TAG" "$HEAD_SHA"
             # The token goes to this one push as a header, the way checkout
             # would have stored it, and no hook runs with it.

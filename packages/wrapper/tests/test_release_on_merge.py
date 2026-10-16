@@ -223,7 +223,9 @@ def test_the_pin_job_token_is_absent_while_workspace_code_runs():
 
 TAG_RELEASE = yaml.safe_load((WORKFLOWS / "tag-release.yml").read_text())
 TAG_JOB = TAG_RELEASE["jobs"]["tag"]
-TAG_SCRIPT = "\n".join(step.get("run", "") for step in TAG_JOB["steps"])
+TAG_STEPS = TAG_JOB["steps"]
+DECIDE = next(s for s in TAG_STEPS if s.get("id") == "decide")
+ACT = next(s for s in TAG_STEPS if s.get("name") == "Tag and start the release")
 
 
 def test_tagging_follows_a_passing_published_run_never_a_scheduled_one():
@@ -245,28 +247,45 @@ def test_tagging_follows_a_passing_published_run_never_a_scheduled_one():
     assert "schedule" not in TAG_JOB["if"]
 
 
+def test_tagging_runs_in_its_own_group_that_queues():
+    assert TAG_RELEASE["concurrency"] == {
+        "group": "release-tag",
+        "cancel-in-progress": False,
+    }
+
+
 def test_tagging_happens_only_when_state_says_tag():
-    assert "python3 scripts/release.py state" in TAG_SCRIPT
-    assert TAG_SCRIPT.index("release.py state") < TAG_SCRIPT.index("git tag")
-    assert '!= "tag"' in TAG_SCRIPT and "exit 0" in TAG_SCRIPT
-    assert "git merge-base --is-ancestor" in TAG_SCRIPT
-    assert 'gh workflow run release.yml --ref "$TAG"' in TAG_SCRIPT
+    run = DECIDE["run"]
+    assert "python3 scripts/release.py state" in run
+    assert '!= "tag"' in run
+    assert "git merge-base --is-ancestor" in run
+    # only the decide step creates the `tag` action, after the state check
+    assert run.index("release.py state") < run.index("action=tag")
+    assert ACT["if"] == "steps.decide.outputs.action != 'none'"
+    assert 'gh workflow run release.yml --ref "$TAG"' in ACT["run"]
+
+
+def test_a_tag_on_another_commit_means_released_and_is_not_an_error():
+    run = DECIDE["run"]
+    other = run.split('if [[ "$existing" == "$HEAD_SHA" ]]')[1].split("else")[1]
+    assert "already released at" in other.split("fi")[0]
+    assert "exit" not in other.split("fi")[0]
+    assert "--force" not in run + ACT["run"]
+
+
+def test_the_workspace_script_runs_without_the_token():
+    assert "GH_TOKEN" not in yaml.safe_dump(DECIDE)
+    assert "GH_TOKEN" not in yaml.safe_dump(TAG_JOB["env"])
+    assert "release.py" not in ACT["run"]
+    assert "${{" not in DECIDE["run"] + ACT["run"]
 
 
 def test_the_tag_goes_on_the_checked_commit_not_main_head():
-    checkout = TAG_JOB["steps"][0]
+    checkout = TAG_STEPS[0]
     assert checkout["uses"].startswith("actions/checkout@")
     assert checkout["with"]["ref"] == "${{ env.HEAD_SHA }}"
     assert checkout["with"]["fetch-depth"] == 0  # state reads the tags
     assert checkout["with"]["persist-credentials"] is False
     assert TAG_JOB["env"]["HEAD_SHA"] == "${{ github.event.workflow_run.head_sha }}"
-    for line in TAG_SCRIPT.splitlines():
-        if "git" in line and " tag " in line:
-            assert '"$HEAD_SHA"' in line, line
-    assert "git tag" in TAG_SCRIPT
-    assert "${{" not in TAG_SCRIPT
-
-
-def test_an_existing_tag_is_kept_on_its_own_commit_only():
-    assert "refs/tags/${TAG}^{commit}" in TAG_SCRIPT
-    assert "--force" not in TAG_SCRIPT and " -f " not in TAG_SCRIPT
+    tag_lines = [ln for ln in ACT["run"].splitlines() if "git tag" in ln]
+    assert tag_lines and all('"$HEAD_SHA"' in ln for ln in tag_lines)
