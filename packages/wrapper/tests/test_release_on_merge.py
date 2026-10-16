@@ -239,7 +239,7 @@ def test_tagging_follows_a_passing_published_run_never_a_scheduled_one():
     assert TAG_JOB["permissions"] == {"contents": "write", "actions": "write"}
     assert TAG_JOB["if"] == (
         "github.event.workflow_run.conclusion == 'success' && "
-        "contains(fromJSON('[\"push\",\"workflow_dispatch\"]'), "
+        'contains(fromJSON(\'["push","workflow_dispatch"]\'), '
         "github.event.workflow_run.event)"
     )
     assert "schedule" not in TAG_JOB["if"]
