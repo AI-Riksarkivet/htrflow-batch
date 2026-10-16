@@ -196,11 +196,13 @@ def pin(
         ],
         cwd=root,
         check=True,
+        stdout=sys.stderr,  # stdout is the list of changed paths, nothing else
     )
     run(
         ["uv", "run", "--no-sync", "python", "scripts/config_reference.py"],
         cwd=root,
         check=True,
+        stdout=sys.stderr,
     )
     return [*pending, *(root / g for g in GENERATED)]
 

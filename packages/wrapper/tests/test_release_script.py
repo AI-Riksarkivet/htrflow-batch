@@ -282,3 +282,18 @@ def test_the_version_command_prints_the_wrappers_version(capsys):
     the workflow and `state` read it from the same file the same way."""
     release.main(["version"])
     assert capsys.readouterr().out == release.version(ROOT) + "\n"
+
+
+def test_pin_prints_only_the_paths_it_changed(repo_copy):
+    """publish.yml stages exactly what `pin` printed, so the programs it runs
+    write to stderr, never into that list."""
+    kwargs = []
+    release.pin(
+        repo_copy,
+        "99.0.0",
+        DIGESTS,
+        SHA,
+        run=lambda *a, **kw: kwargs.append(kw) or subprocess.CompletedProcess(a, 0),
+    )
+    assert len(kwargs) == 2
+    assert all(kw.get("stdout") is sys.stderr for kw in kwargs)
