@@ -138,7 +138,8 @@ The flow, end to end:
    the same list the published-image checks read, so the two cannot drift.
    It must be runnable locally as well, for recovery.
 4. The workflow opens the pin PR, dispatches its required checks and
-   enables auto-merge. The merged pin commit's push to `main` runs
+   enables auto-merge. A merge made under `GITHUB_TOKEN` starts no workflow
+   on `main`, so the workflow waits for the merge and then dispatches
    `published.yml` (scan, signature and entrypoint checks against the
    new pins), as today.
 5. When `published.yml` has passed on the pin commit, the tag `v<version>`
