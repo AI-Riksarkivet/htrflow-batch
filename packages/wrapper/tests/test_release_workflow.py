@@ -159,7 +159,21 @@ def test_a_dispatch_on_a_tag_releases_like_a_tag_push() -> None:
     assert steps[_uses(steps, "actions/attest-build-provenance@")]["if"] == ON_A_TAG
     assert steps[_runs(steps, "dist/provenance.intoto.jsonl")]["if"] == ON_A_TAG
     # the tag it works on is the ref's own when no input names one
-    assert JOBS["charts"]["env"]["TAG"] == "${{ inputs.tag || github.ref_name }}"
+    assert JOBS["charts"]["env"]["TAG"] == (
+        "${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.tag }}"
+    )
+
+
+def test_a_dispatch_on_a_tag_cannot_sign_another_tag() -> None:
+    """The ref names the release on a tag; the input is only the backfill's.
+    Dispatched on tag A with tag=B would otherwise sign B's charts as A."""
+    check = JOBS["charts"]["steps"][0]
+    assert check["env"] == {
+        "REF": "${{ github.ref }}",
+        "INPUT_TAG": "${{ inputs.tag }}",
+    }
+    assert '"$INPUT_TAG" != "$TAG"' in check["run"]
+    assert check["run"].index("INPUT_TAG") < check["run"].index("=~")
 
 
 def test_a_dispatch_from_main_only_backfills() -> None:

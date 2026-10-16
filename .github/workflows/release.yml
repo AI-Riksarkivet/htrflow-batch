@@ -44,12 +44,21 @@ jobs:
       id-token: write # keyless cosign signatures and the provenance attestation
       attestations: write # store the provenance with the repository
     env:
-      TAG: ${{ inputs.tag || github.ref_name }}
+      # On a tag the ref names the release, whatever the input says; only the
+      # backfill from main takes its tag from the input.
+      TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.tag }}
       # The helm the dagger module lints and renders with (.dagger/main.go helmImage).
       HELM_IMAGE: alpine/helm:3.19.0@sha256:aef9b56f64e866207d9591d0abd8f6d767b36aadd12edf68f8a719716d9d29c9
     steps:
       - name: Check the tag
+        env:
+          REF: ${{ github.ref }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
+          if [[ "$REF" == refs/tags/v* && -n "$INPUT_TAG" && "$INPUT_TAG" != "$TAG" ]]; then
+            echo "::error::dispatched on ${TAG} with the tag input ${INPUT_TAG}"
+            exit 1
+          fi
           if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::not a release tag: $TAG"
             exit 1
