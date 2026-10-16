@@ -3,6 +3,7 @@ edits (`bump`). Every test works on a copy of the files it touches."""
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -21,7 +22,7 @@ CHART = "charts/htrflow-batch/Chart.yaml"
 EXAMPLE = "examples/campaigns/argocd/apply.yaml"
 FILES = [WRAPPER, WEB, CONVERTER, CHART, EXAMPLE, release.HOOK]
 
-# Task 3 provides the real fixture; three valid digests are all `pin` needs.
+# Three valid digests; the fixture lives here, Task 3's `pin()` consumes it.
 DIGESTS = {
     name: "sha256:" + c * 64 for name, c in zip(("wrapper", "web", "converter"), "123")
 }
@@ -60,19 +61,30 @@ def test_state_is_tag_once_the_hook_pins_this_versions_digest(repo_copy):
     assert release.state(repo_copy, set()) == "tag"
 
 
-def test_state_is_publish_when_the_hook_pins_an_older_release(repo_copy):
-    # The checked-in hook pins the current release by digest; after a bump of
-    # the version alone, with one hook line hand-edited back, it is not "tag".
-    hook = repo_copy / release.HOOK
-    version = release.version(repo_copy)
-    lines = hook.read_text().splitlines(keepends=True)
-    assert sum(f"# v{version}" in line for line in lines) == 3
+def pinned_hook(root: Path, version: str) -> list[str]:
+    """Write the hook as `pin` leaves it: three digest lines, `# v<version>`."""
+    hook = root / release.HOOK
+    text = re.sub(
+        rf"^(\s*image: {re.escape(release.CONVERTER_IMAGE)})\S*.*$",
+        rf"\1@sha256:{'e' * 64}  # v{version}",
+        hook.read_text(),
+        flags=re.M,
+    )
+    hook.write_text(text)
+    return text.splitlines(keepends=True)
+
+
+def test_state_is_tag_for_a_hook_pinned_by_digest_at_this_version(repo_copy):
+    pinned_hook(repo_copy, release.version(repo_copy))
     assert release.state(repo_copy, set()) == "tag"
-    for i, line in enumerate(lines):
-        if f"# v{version}" in line:
-            lines[i] = line.replace(f"# v{version}", "# v0.0.1")
-            break
-    hook.write_text("".join(lines))
+
+
+def test_state_is_publish_when_the_hook_pins_an_older_release(repo_copy):
+    version = release.version(repo_copy)
+    lines = pinned_hook(repo_copy, version)
+    i = next(i for i, line in enumerate(lines) if f"# v{version}" in line)
+    lines[i] = lines[i].replace(f"# v{version}", "# v0.0.1")
+    (repo_copy / release.HOOK).write_text("".join(lines))
     assert release.state(repo_copy, set()) == "publish"
 
 
@@ -92,9 +104,29 @@ def test_bump_sets_every_version_and_the_hook_tag(repo_copy):
 
 def test_bump_keeps_everything_else_byte_for_byte(repo_copy):
     before = (repo_copy / CHART).read_text()
+    app = release.version(repo_copy)
+    chart = re.search(r"^version: (\S+)$", before, re.M)[1]
     bump(repo_copy, "99.0.0", "99.1.0")
     after = (repo_copy / CHART).read_text()
-    assert before.replace("0.12.0", "99.0.0").replace("0.18.0", "99.1.0") == after
+    assert (
+        before.replace(f'appVersion: "{app}"', 'appVersion: "99.0.0"').replace(
+            f"\nversion: {chart}\n", "\nversion: 99.1.0\n"
+        )
+        == after
+    )
+
+
+def test_bump_writes_nothing_when_a_file_does_not_match(repo_copy):
+    hook = repo_copy / release.HOOK
+    hook.write_text(
+        hook.read_text().replace(
+            "image: docker.io/riksarkivet/htrflow-campaigns", "image: x", 1
+        )
+    )
+    before = {rel: (repo_copy / rel).read_text() for rel in FILES}
+    with pytest.raises(SystemExit):
+        bump(repo_copy, "99.0.0", "99.1.0")
+    assert {rel: (repo_copy / rel).read_text() for rel in FILES} == before
 
 
 def test_bump_refuses_a_version_that_is_not_newer(repo_copy):

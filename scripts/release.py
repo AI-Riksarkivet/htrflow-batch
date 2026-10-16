@@ -68,39 +68,43 @@ def state(root: Path, tags: set[str]) -> Literal["released", "publish", "tag"]:
     return "tag" if len(images) == 3 and len(pinned) == 3 else "publish"
 
 
-def _sub_lines(path: Path, pattern: str, repl: str, count: int) -> None:
-    """Replace `count` lines matching `pattern` (multiline), keeping the rest."""
-    text, n = re.subn(pattern, repl, path.read_text(), flags=re.M)
+def _sub_lines(
+    pending: dict[Path, str], path: Path, pattern: str, repl: str, count: int
+) -> None:
+    """Replace `count` lines matching `pattern` in the pending text of `path`.
+
+    Nothing is written here: bump writes once every count has held.
+    """
+    text, n = re.subn(pattern, repl, pending.get(path, path.read_text()), flags=re.M)
     if n != count:
         sys.exit(
             f"release: expected {count} match(es) of {pattern!r} in {path}, found {n}"
         )
-    path.write_text(text)
+    pending[path] = text
 
 
 def bump(root: Path, new: str, chart_version: str, run=subprocess.run) -> list[Path]:
     if _key(new) <= _key(version(root)):
         sys.exit(f"release: {new} is not greater than the current {version(root)}")
     _key(chart_version)
-    changed = []
+    pending: dict[Path, str] = {}
     for rel in PYPROJECTS:
-        _sub_lines(root / rel, r'^(version = )"[^"]*"$', rf'\1"{new}"', 1)
-        changed.append(root / rel)
+        _sub_lines(pending, root / rel, r'^(version = )"[^"]*"$', rf'\1"{new}"', 1)
     chart = root / CHART
-    _sub_lines(chart, r'^(appVersion: )"[^"]*"$', rf'\1"{new}"', 1)
-    _sub_lines(chart, r"^(version: )\S+$", rf"\g<1>{chart_version}", 1)
-    changed.append(chart)
+    _sub_lines(pending, chart, r'^(appVersion: )"[^"]*"$', rf'\1"{new}"', 1)
+    _sub_lines(pending, chart, r"^(version: )\S+$", rf"\g<1>{chart_version}", 1)
     for rel in (HOOK, EXAMPLE_HOOK):
         _sub_lines(
+            pending,
             root / rel,
             rf"^(\s*image: {re.escape(CONVERTER_IMAGE)})\S*.*$",
             rf"\1:v{new}",
             3,
         )
-        changed.append(root / rel)
+    for path, text in pending.items():
+        path.write_text(text)
     run(["uv", "lock"], cwd=root, check=True)
-    changed.append(root / "uv.lock")
-    return changed
+    return [*pending, root / "uv.lock"]
 
 
 def _tags(root: Path) -> set[str]:
