@@ -137,7 +137,7 @@ The cluster constants these targets use come from `.env`
   `.docker/`, `.dagger/`, `.github/`, the lock and every `pyproject.toml`
   for both, plus `packages/wrapper/` for the wrapper and `packages/web/`
   and `frontend/` for the web image). A push that touches only the docs,
-  the chart or the converter builds neither. A manual run scans both, and
+  the chart or the converter builds neither. A manual run scans both, unless it sets the `pull_request_checks` input, which makes it run exactly what a pull request runs (no image builds or scans); and
   the weekly `security.yml` scans the published images whatever changed. A further job, on every trigger, builds the
   htrflow base and the wrapper on a native runner of the second architecture,
   runs the level-0 pin test on it and (on `main`) `make scan-image`, and

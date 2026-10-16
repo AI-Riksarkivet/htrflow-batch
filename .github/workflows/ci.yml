@@ -4,6 +4,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      pull_request_checks:
+        description: Run only what a pull request runs (no image builds or scans)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -115,11 +120,12 @@ jobs:
   # What a push to main changed, for the two scans below: each rebuilds its
   # image from scratch, so a push that touches nothing the image is built
   # from skips it (scripts/image-inputs-changed.sh says which paths count).
-  # A manual run, and a push whose previous commit is unknown (a new branch,
+  # A manual run (unless it asks for the pull-request checks, which skips this
+  # job like a pull request), and a push whose previous commit is unknown (a new branch,
   # history rewritten), scan both.
   changes:
     name: Image inputs changed
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && inputs.pull_request_checks != true
     runs-on: ubuntu-24.04
     outputs:
       wrapper: ${{ steps.diff.outputs.wrapper }}
@@ -246,7 +252,7 @@ jobs:
       # only, so an advisory published today fails main, not an unrelated
       # pull request.
       - name: Vulnerability scan (wrapper, arm64; CRITICAL blocks)
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && inputs.pull_request_checks != true
         run: make scan-image SCAN_IMAGE=htrflow-batch:ci-arm64
 
       - name: What was built
