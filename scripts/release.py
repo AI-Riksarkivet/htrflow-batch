@@ -6,6 +6,8 @@ Standard library only: CI runs this with the runner's plain `python3`.
 
     python scripts/release.py state
     python scripts/release.py bump <version> --chart <chart-version>
+    python scripts/release.py pin <version> --wrapper sha256:... --web sha256:...
+        --campaigns sha256:... --converter-ref <sha>
 
 States, from the files on main and the `v*` tags:
 
@@ -35,6 +37,33 @@ PYPROJECTS = (
 )
 CHART = "charts/htrflow-batch/Chart.yaml"
 CONVERTER_IMAGE = "docker.io/riksarkivet/htrflow-campaigns"
+
+COMPOSE = ".docker/docker-compose.yml"
+# The hand-pinned files of each image; `.dagger/published.go` names the same
+# ones for the checks.
+PINNED: dict[str, tuple[str, ...]] = {
+    "web": ("charts/htrflow-batch/values.yaml", COMPOSE),
+    "wrapper": (
+        "packages/converter/src/htrflow_converter/template/pipelines/demo-v1.yaml",
+        COMPOSE,
+    ),
+    "campaigns": (HOOK,),
+}
+CONVERTER_REF_FILES = (
+    "packages/converter/src/htrflow_converter/ci/github/.github/workflows/render.yml",
+    "packages/converter/src/htrflow_converter/ci/azure/azure-pipelines.yml",
+)
+# Regenerated from the pinned files by `pin`, never edited by hand.
+GENERATED: tuple[str, ...] = ("examples/campaigns/", "docs/reference/configuration.md")
+# The image repository of each pin, and the files whose pins carry `# v<version>`.
+_REPOS = {
+    "wrapper": "riksarkivet/htrflow-batch",
+    "web": "riksarkivet/htrflow-web",
+    "campaigns": "riksarkivet/htrflow-campaigns",
+}
+_COMMENTED = (COMPOSE, HOOK)
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+_SHA = re.compile(r"[0-9a-f]{40}")
 
 _HOOK_IMAGE = re.compile(
     rf"^(?P<head>\s*image: ){re.escape(CONVERTER_IMAGE)}(?P<ref>\S*)(?P<tail>.*)$"
@@ -107,6 +136,74 @@ def bump(root: Path, new: str, chart_version: str, run=subprocess.run) -> list[P
     return [*pending, root / "uv.lock"]
 
 
+def pin(
+    root: Path,
+    version: str,
+    digests: dict[str, str],
+    converter_ref: str,
+    run=subprocess.run,
+) -> list[Path]:
+    """Pin the published images and the converter ref, then regenerate."""
+    _key(version)
+    if set(digests) != set(_REPOS):
+        sys.exit(f"release: digests must be exactly {sorted(_REPOS)}")
+    for name, digest in digests.items():
+        if not _DIGEST.fullmatch(digest):
+            sys.exit(f"release: {name} digest {digest!r} is not sha256:<64 hex>")
+    if not _SHA.fullmatch(converter_ref):
+        sys.exit(f"release: converter ref {converter_ref!r} is not a 40-hex SHA")
+    pending: dict[Path, str] = {}
+    for image, files in PINNED.items():
+        repo = re.escape(_REPOS[image])
+        for rel in files:
+            tail = f"  # v{version}" if rel in _COMMENTED else ""
+            count = 3 if rel == HOOK else 2 if (image, rel) == ("web", COMPOSE) else 1
+            _sub_lines(
+                pending,
+                root / rel,
+                rf"^(.*?{repo})(?:@sha256:[0-9a-f]{{64}}|:v\d[^\s}}]*)"
+                r"(\}?)(?:  # v\S+)?$",
+                rf"\g<1>@{digests[image]}\g<2>{tail}",
+                count,
+            )
+    _sub_lines(
+        pending,
+        root / PINNED["web"][0],
+        r"^(\s*# default is the published v)\d\S*( web image.*)$",
+        rf"\g<1>{version}\g<2>",
+        1,
+    )
+    for rel in CONVERTER_REF_FILES:
+        _sub_lines(
+            pending,
+            root / rel,
+            r"^(\s*CONVERTER_REF: )\S+.*$",
+            rf"\g<1>{converter_ref}   # v{version}",
+            1,
+        )
+    for path, text in pending.items():
+        path.write_text(text)
+    run(
+        [
+            "uv",
+            "run",
+            "--no-sync",
+            "htrflow-campaigns",
+            "init",
+            "--force",
+            "examples/campaigns",
+        ],
+        cwd=root,
+        check=True,
+    )
+    run(
+        ["uv", "run", "--no-sync", "python", "scripts/config_reference.py"],
+        cwd=root,
+        check=True,
+    )
+    return [*pending, *(root / g for g in GENERATED)]
+
+
 def _tags(root: Path) -> set[str]:
     out = subprocess.run(
         ["git", "tag", "--list", "v*"],
@@ -125,9 +222,18 @@ def main(argv: list[str] | None = None) -> None:
     b = sub.add_parser("bump", help="set the version everywhere")
     b.add_argument("version")
     b.add_argument("--chart", required=True, help="the chart's new version")
+    p = sub.add_parser("pin", help="pin the published images and the converter ref")
+    p.add_argument("version")
+    for name in _REPOS:
+        p.add_argument(f"--{name}", required=True, help="sha256:<digest>")
+    p.add_argument("--converter-ref", required=True, help="40-hex commit SHA")
     args = parser.parse_args(argv)
     if args.command == "state":
         print(state(ROOT, _tags(ROOT)))
+    elif args.command == "pin":
+        digests = {name: getattr(args, name) for name in _REPOS}
+        for path in pin(ROOT, args.version, digests, args.converter_ref):
+            print(path.relative_to(ROOT))
     else:
         for path in bump(ROOT, args.version, args.chart):
             print(path.relative_to(ROOT))
