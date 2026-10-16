@@ -13,6 +13,9 @@ name: Release
 # SLSA build provenance of the packages (provenance.intoto.jsonl). The
 # release is only created once all of them exist.
 #
+# A dispatch on a tag (tag-release.yml starts one: a tag pushed with
+# GITHUB_TOKEN starts no workflow) is a tag push: same release, same provenance.
+#
 # Backfill: a release made before its assets were, run by hand from main with
 # the tag as input, gets the packages, checksums and signatures attached. Not
 # the provenance: a run from main would record main's commit as the source,
@@ -23,17 +26,18 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: An existing release (v<version>) to attach the signed chart packages to
-        required: true
+        description: Backfill, from main only -- an existing release (v<version>) to attach the signed chart packages to. Leave empty on a tag.
+        required: false
         type: string
 
 permissions: {}
 
 jobs:
   charts:
-    # Only from main or a tag push: the signing identity is this workflow at
-    # that ref, and that is what the verification recipe anchors to.
-    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    # Only from main or a tag (pushed, or dispatched on it by tag-release.yml):
+    # the signing identity is this workflow at that ref, and that is what the
+    # verification recipe anchors to.
+    if: github.event_name == 'push' || startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read # check out the tag
@@ -79,12 +83,12 @@ jobs:
           done
       - name: Build provenance attestation
         id: provenance
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || startsWith(github.ref, 'refs/tags/v')
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-checksums: dist/SHA256SUMS
       - name: Provenance as a release asset
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || startsWith(github.ref, 'refs/tags/v')
         env:
           BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
         run: cp "$BUNDLE" dist/provenance.intoto.jsonl
@@ -97,7 +101,7 @@ jobs:
 
   release:
     needs: charts
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the release; nothing else
@@ -153,7 +157,7 @@ jobs:
 
   backfill:
     needs: charts
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write # upload assets to the existing release; nothing else

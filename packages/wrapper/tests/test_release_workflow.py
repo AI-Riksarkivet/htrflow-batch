@@ -25,6 +25,11 @@ JOBS = WORKFLOW["jobs"]
 TRIGGERS = WORKFLOW[True]
 
 
+#: A tag push, or a dispatch on a tag (tag-release.yml starts one): both run
+#: as this workflow at refs/tags/v*, which is the identity the recipe anchors to.
+ON_A_TAG = "github.event_name == 'push' || startsWith(github.ref, 'refs/tags/v')"
+
+
 def _uses(steps: list[dict], prefix: str) -> int:
     found = [i for i, s in enumerate(steps) if s.get("uses", "").startswith(prefix)]
     assert len(found) == 1, prefix
@@ -100,11 +105,13 @@ def test_a_backfill_attaches_no_provenance_and_replaces_nothing() -> None:
         _uses(steps, "actions/attest-build-provenance@"),
         _runs(steps, "dist/provenance.intoto.jsonl"),
     ):
-        assert steps[i]["if"] == "github.event_name == 'push'"
+        assert steps[i]["if"] == ON_A_TAG
     upload = JOBS["backfill"]["steps"][-1]["run"]
     assert "--clobber" not in upload
-    assert JOBS["backfill"]["if"] == "github.event_name == 'workflow_dispatch'"
-    assert JOBS["release"]["if"] == "github.event_name == 'push'"
+    assert JOBS["backfill"]["if"] == (
+        "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'"
+    )
+    assert JOBS["release"]["if"] == ON_A_TAG
 
 
 def test_signing_runs_only_as_an_identity_the_recipe_accepts() -> None:
@@ -112,9 +119,7 @@ def test_signing_runs_only_as_an_identity_the_recipe_accepts() -> None:
     from any other branch must not get a signature at all."""
     assert TRIGGERS["push"] == {"tags": ["v*"]}
     assert set(TRIGGERS["workflow_dispatch"]["inputs"]) == {"tag"}
-    assert JOBS["charts"]["if"] == (
-        "github.event_name == 'push' || github.ref == 'refs/heads/main'"
-    )
+    assert JOBS["charts"]["if"] == (f"{ON_A_TAG} || github.ref == 'refs/heads/main'")
     check, checkout = JOBS["charts"]["steps"][:2]
     assert "^v[0-9]+\\.[0-9]+\\.[0-9]+$" in check["run"]
     assert checkout["with"]["ref"] == "refs/tags/${{ env.TAG }}"
@@ -142,3 +147,22 @@ def test_every_placeholder_in_the_notes_is_filled() -> None:
     filled = JOBS["release"]["steps"][_runs(JOBS["release"]["steps"], "sed -e")]["run"]
     for name in set(re.findall(r"@([A-Z_]+)@", notes)):
         assert f"s|@{name}@|" in filled, name
+
+
+def test_a_dispatch_on_a_tag_releases_like_a_tag_push() -> None:
+    """tag-release.yml dispatches this workflow on the new tag (a tag pushed
+    with GITHUB_TOKEN starts nothing), so the dispatch needs no input and
+    writes the release, with provenance, as a tag push does."""
+    assert TRIGGERS["workflow_dispatch"]["inputs"]["tag"]["required"] is False
+    assert JOBS["release"]["if"] == ON_A_TAG
+    steps = JOBS["charts"]["steps"]
+    assert steps[_uses(steps, "actions/attest-build-provenance@")]["if"] == ON_A_TAG
+    assert steps[_runs(steps, "dist/provenance.intoto.jsonl")]["if"] == ON_A_TAG
+    # the tag it works on is the ref's own when no input names one
+    assert JOBS["charts"]["env"]["TAG"] == "${{ inputs.tag || github.ref_name }}"
+
+
+def test_a_dispatch_from_main_only_backfills() -> None:
+    assert "refs/heads/main" in JOBS["backfill"]["if"]
+    assert "refs/heads/main" not in JOBS["release"]["if"]
+    assert "startsWith(github.ref, 'refs/tags/v')" not in JOBS["backfill"]["if"]
