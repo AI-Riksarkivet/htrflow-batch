@@ -110,15 +110,13 @@ def test_the_manifest_list_joins_the_digests_the_publish_entries_signed() -> Non
     name = "digest-${{ matrix.component }}${{ matrix.tag_suffix }}"
     assert upload["with"]["name"] == upload["with"]["path"] == name
     record = next(s for s in publish if s.get("name") == "Record the signed digest")
-    # the digest recorded is the one the sign-attest step was given, or, on a
-    # re-run, the reused per-arch tag's whose signature has just verified
+    # the digest recorded is the one the sign-attest step was given: the one
+    # just pushed, or, on a re-run, the reused per-arch tag's whose
+    # signature has just verified
     signing = next(
         s for s in publish if s.get("uses") == "./.github/actions/sign-attest"
     )
-    assert signing["with"]["digest"] == "${{ steps.digest.outputs.digest }}"
-    assert record["env"]["DIGEST"] == (
-        "${{ steps.existing.outputs.digest || steps.digest.outputs.digest }}"
-    )
+    assert signing["with"]["digest"] == record["env"]["DIGEST"]
 
     steps = JOBS["manifest"]["steps"]
     download = next(s for s in steps if "download-artifact" in s.get("uses", ""))

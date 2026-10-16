@@ -220,10 +220,12 @@ jobs:
       # The plain tag is the manifest list: if it exists, the release
       # already happened and nothing here may run. The per-arch tag this job
       # pushes may exist from an earlier attempt at this release (a re-run);
-      # it is reused, unbuilt and unsigned again, only if it carries a
-      # signature this workflow made on main -- verified on the digest the
-      # tag names, which is then the digest this job hands on. Anything else
-      # under that tag stops the run: tags are immutable.
+      # it is reused, unbuilt, only if it carries a signature this workflow
+      # made on main -- verified on the digest the tag names, which is then
+      # the digest this job signs, attests and hands on. Anything else under
+      # that tag stops the run: tags are immutable. Only the registry's "no
+      # such manifest" counts as absent; any other failure to ask (a rate
+      # limit, the network) stops the run instead of reading as free.
       - name: Refuse to overwrite a published tag
         id: existing
         env:
@@ -231,12 +233,23 @@ jobs:
           ISSUER: https://token.actions.githubusercontent.com
         run: |
           set -euo pipefail
-          if docker manifest inspect "${IMAGE}:${TAG}" >/dev/null 2>&1; then
+          exists() {
+            local err
+            if err="$(docker manifest inspect "$1" 2>&1 >/dev/null)"; then
+              return 0
+            fi
+            if [[ "$err" == *"no such manifest"* ]]; then
+              return 1
+            fi
+            echo "::error::cannot tell whether $1 exists, refusing to publish: $err"
+            exit 1
+          }
+          if exists "${IMAGE}:${TAG}"; then
             echo "::error::${IMAGE}:${TAG} already exists; tags are immutable — bump the version and publish a new tag"
             exit 1
           fi
           ref="${IMAGE}:${TAG}${TAG_SUFFIX}"
-          if ! docker manifest inspect "$ref" >/dev/null 2>&1; then
+          if ! exists "$ref"; then
             exit 0
           fi
           digest="$(docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}')"
@@ -277,11 +290,13 @@ jobs:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
+      # On the reused digest too: an earlier attempt may have signed it and
+      # failed before its provenance or SBOM attestation, and a re-run
+      # completes it rather than shipping it without them.
       - uses: ./.github/actions/sign-attest
-        if: steps.existing.outputs.digest == ''
         with:
           image: ${{ env.IMAGE }}
-          digest: ${{ steps.digest.outputs.digest }}
+          digest: ${{ steps.existing.outputs.digest || steps.digest.outputs.digest }}
           registry-username: ${{ secrets.DOCKERHUB_USERNAME }}
           registry-password: ${{ secrets.DOCKERHUB_TOKEN }}
 
@@ -405,9 +420,10 @@ jobs:
   # built), and regenerates what is generated from them; the PR merges
   # itself once its required checks pass. No environment and no registry
   # credential: this job holds only the workflow's own token, with the
-  # rights to push a branch, open the PR and dispatch workflows -- and it
-  # hands that token only to the steps that call gh or push, never to the
-  # ones that run the workspace's code, and never leaves it in the checkout.
+  # rights to push a branch, open the PR and dispatch workflows. Only the
+  # steps that call gh or push are given it: while the workspace's code runs
+  # (main's own merged code: uv sync, htrflow-campaigns init, the config
+  # reference) the token is in neither its environment nor .git/config.
   #
   # Events made with GITHUB_TOKEN start no workflow, except a dispatch: the
   # opened PR gets no CI and its merge runs nothing on main. So the job

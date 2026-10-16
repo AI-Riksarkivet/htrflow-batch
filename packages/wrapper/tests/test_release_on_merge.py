@@ -70,6 +70,11 @@ def test_every_release_job_waits_for_the_plan_to_say_publish():
     assert checkout["uses"].startswith("actions/checkout@")
     assert checkout["with"]["fetch-depth"] == 0  # `state` reads the tags
     assert "python3 scripts/release.py state" in _script("plan")
+    for name, job in JOBS.items():
+        if name == "plan":
+            continue
+        assert "plan" in job["needs"], name
+        assert job["if"] == "needs.plan.outputs.state == 'publish'", name
 
 
 def test_a_push_queued_behind_a_release_does_not_release_it_again():
@@ -80,11 +85,6 @@ def test_a_push_queued_behind_a_release_does_not_release_it_again():
     script = _script("plan")
     assert "git fetch --no-tags origin main" in script
     assert 'python3 "$tip/scripts/release.py" state' in script
-    for name, job in JOBS.items():
-        if name == "plan":
-            continue
-        assert "plan" in job["needs"], name
-        assert job["if"] == "needs.plan.outputs.state == 'publish'", name
 
 
 def test_the_suite_runs_once_and_the_manifest_lists_wait_for_it():
@@ -113,15 +113,36 @@ def test_a_reused_per_arch_tag_must_verify():
     assert '--certificate-oidc-issuer "$ISSUER"' in step["run"]
     # the bare tag existing is the manifest list: the release already happened
     assert '"${IMAGE}:${TAG}"' in step["run"]
-    # a verified tag skips the build and the second signature
-    reused = "steps.existing.outputs.digest == ''"
-    assert steps[dagger]["if"] == reused
-    signing = next(s for s in steps if s.get("uses") == "./.github/actions/sign-attest")
-    assert signing["if"] == reused
+    # a verified tag skips the build
+    assert steps[dagger]["if"] == "steps.existing.outputs.digest == ''"
     uses = [s.get("uses", "") for s in steps]
     installer = next(i for i, u in enumerate(uses) if "cosign-installer" in u)
     login = next(i for i, u in enumerate(uses) if u.startswith("docker/login-action"))
     assert installer < login < verify  # tools before the credential
+
+
+def test_a_reused_per_arch_tag_is_signed_and_attested_again():
+    """An earlier attempt can have signed the image and failed before its
+    provenance or SBOM attestation. sign-attest runs on every digest the job
+    hands on, the reused one too, so a half-finished image is completed
+    rather than shipped without them."""
+    steps = JOBS["publish"]["steps"]
+    signing = next(s for s in steps if s.get("uses") == "./.github/actions/sign-attest")
+    assert "if" not in signing
+    either = "${{ steps.existing.outputs.digest || steps.digest.outputs.digest }}"
+    assert signing["with"]["digest"] == either
+    record = next(s for s in steps if s.get("name") == "Record the signed digest")
+    assert record["env"]["DIGEST"] == either
+
+
+def test_the_registry_check_fails_on_an_answer_it_cannot_read():
+    """Only "no such manifest" means a tag is free: a rate limit or a
+    network error must stop the run, not read as "absent"."""
+    step = next(s for s in JOBS["publish"]["steps"] if s.get("id") == "existing")
+    assert ">/dev/null 2>&1" not in step["run"]
+    assert "no such manifest" in step["run"]
+    assert 'exists "${IMAGE}:${TAG}"' in step["run"]
+    assert 'exists "$ref"' in step["run"]
 
 
 def test_the_tag_is_the_version_on_the_pushed_commit():
@@ -177,11 +198,13 @@ def test_the_pin_job_starts_main_checks_after_the_merge():
     assert poll < published and poll < ci
 
 
-def test_the_pin_job_token_never_meets_the_workspace_code():
+def test_the_pin_job_token_is_absent_while_workspace_code_runs():
     """`pin` runs the workspace's own programs (uv sync, htrflow-campaigns
-    init, the config reference). The token that can push and dispatch is
-    given only to the steps that call gh or push, never left in the
-    checkout or the job's environment."""
+    init, the config reference) -- main's own merged code. While they run,
+    the token that can push and dispatch is in neither their environment nor
+    `.git/config`: only the steps that call gh or push get it. This is not a
+    sandbox: those programs run in the same job, before the token's steps,
+    and could still leave something behind for them."""
     pin = JOBS["pin"]
     assert "GH_TOKEN" not in pin["env"]
     workspace = 0

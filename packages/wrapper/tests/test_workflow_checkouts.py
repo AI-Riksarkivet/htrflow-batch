@@ -4,7 +4,8 @@
 `extraheader` by default, where it outlives the step: every later step, and
 anything those steps run -- a build script, a dependency's install hook, a
 dagger container mounting the repo -- can push with it. The one job that
-pushes (publish.yml's pin job) hands the token to its push step alone.
+pushes (publish.yml's pin job) passes the token to the steps that call gh or
+push; it is never in `.git/config` while the job runs the workspace's code.
 
 Five of the seven workflows already said `persist-credentials: false`; this
 is the rule that keeps the next one from forgetting, and covers every
