@@ -219,3 +219,54 @@ def test_the_pin_job_token_is_absent_while_workspace_code_runs():
         if "gh " in run or "git push" in run:
             assert env.get("GH_TOKEN") == "${{ github.token }}", step.get("name")
     assert workspace == 2  # the needles above still find both steps
+
+
+TAG_RELEASE = yaml.safe_load((WORKFLOWS / "tag-release.yml").read_text())
+TAG_JOB = TAG_RELEASE["jobs"]["tag"]
+TAG_SCRIPT = "\n".join(step.get("run", "") for step in TAG_JOB["steps"])
+
+
+def test_tagging_follows_a_passing_published_run_never_a_scheduled_one():
+    # PyYAML reads the bare key `on` as the boolean True.
+    assert TAG_RELEASE[True] == {
+        "workflow_run": {
+            "workflows": ["Published images"],
+            "types": ["completed"],
+            "branches": ["main"],
+        }
+    }
+    assert TAG_RELEASE["permissions"] == {}
+    assert TAG_JOB["permissions"] == {"contents": "write", "actions": "write"}
+    assert TAG_JOB["if"] == (
+        "github.event.workflow_run.conclusion == 'success' && "
+        "contains(fromJSON('[\"push\",\"workflow_dispatch\"]'), "
+        "github.event.workflow_run.event)"
+    )
+    assert "schedule" not in TAG_JOB["if"]
+
+
+def test_tagging_happens_only_when_state_says_tag():
+    assert "python3 scripts/release.py state" in TAG_SCRIPT
+    assert TAG_SCRIPT.index("release.py state") < TAG_SCRIPT.index("git tag")
+    assert '!= "tag"' in TAG_SCRIPT and "exit 0" in TAG_SCRIPT
+    assert "git merge-base --is-ancestor" in TAG_SCRIPT
+    assert 'gh workflow run release.yml --ref "$TAG"' in TAG_SCRIPT
+
+
+def test_the_tag_goes_on_the_checked_commit_not_main_head():
+    checkout = TAG_JOB["steps"][0]
+    assert checkout["uses"].startswith("actions/checkout@")
+    assert checkout["with"]["ref"] == "${{ env.HEAD_SHA }}"
+    assert checkout["with"]["fetch-depth"] == 0  # state reads the tags
+    assert checkout["with"]["persist-credentials"] is False
+    assert TAG_JOB["env"]["HEAD_SHA"] == "${{ github.event.workflow_run.head_sha }}"
+    for line in TAG_SCRIPT.splitlines():
+        if "git" in line and " tag " in line:
+            assert '"$HEAD_SHA"' in line, line
+    assert "git tag" in TAG_SCRIPT
+    assert "${{" not in TAG_SCRIPT
+
+
+def test_an_existing_tag_is_kept_on_its_own_commit_only():
+    assert "refs/tags/${TAG}^{commit}" in TAG_SCRIPT
+    assert "--force" not in TAG_SCRIPT and " -f " not in TAG_SCRIPT
