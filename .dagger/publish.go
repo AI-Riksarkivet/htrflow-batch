@@ -165,6 +165,10 @@ func publishRefs(registry, imageRepository, tag, tagSuffix string) []string {
 // --tag-suffix is how one run's per-arch images get distinct tags.
 // Tags are immutable: a tag that already exists on the registry is refused
 // before anything is built, and asked again right before the push.
+// --skip-tests leaves out the workspace test suite, and only that: publish.yml
+// runs the suite once per release in a job of its own, which every manifest
+// list waits for, instead of once in each of its six publish jobs. The
+// driver test and the CRITICAL scan, which need the image, always run.
 func (m *HtrflowBatch) PublishDocker(
 	ctx context.Context,
 	// +default="wrapper"
@@ -200,6 +204,9 @@ func (m *HtrflowBatch) PublishDocker(
 	// itself.
 	// +optional
 	tagSuffix string,
+	// Skip the workspace test suite (the caller has run it on this source)
+	// +optional
+	skipTests bool,
 ) (string, error) {
 	resolvedTag, err := m.resolveTag(ctx, source, tag, skipValidation, caBundle)
 	if err != nil {
@@ -223,8 +230,10 @@ func (m *HtrflowBatch) PublishDocker(
 		return "", err
 	}
 
-	if _, err := m.Test(ctx, source, caBundle); err != nil {
-		return "", fmt.Errorf("tests failed, aborting publish: %w", err)
+	if !skipTests {
+		if _, err := m.Test(ctx, source, caBundle); err != nil {
+			return "", fmt.Errorf("tests failed, aborting publish: %w", err)
+		}
 	}
 
 	var container *dagger.Container
