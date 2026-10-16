@@ -1,4 +1,4 @@
-.PHONY: install format lint check test typecheck test-driver-real ci build scan publish release-notes \
+.PHONY: install format lint check test typecheck test-driver-real ci build scan publish release-notes release-bump \
         compose-up compose-test compose-smoke compose-smoke-run compose-down helm-lint helm-template \
         install-devstack install-kyverno \
         docs-serve docs-build config-reference api-contract wrapper-contract \
@@ -96,6 +96,10 @@ publish:
 # above the same list when a tag is pushed.
 release-notes:
 	uv run --only-group release git-cliff --unreleased --strip header
+
+# The release PR's file edits: `make release-bump VERSION=x.y.z CHART=a.b.c`.
+release-bump:
+	uv run --no-sync python scripts/release.py bump $(VERSION) --chart $(CHART)
 
 compose-up:
 	cd .docker && docker compose up -d

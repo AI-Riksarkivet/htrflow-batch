@@ -85,7 +85,8 @@ than a certificate error, since node does not read the system store.
   `scan-image` (Trivy over an image in the local docker daemon, CRITICAL
   with a fix fails; how CI gates the wrapper it builds with plain `docker build`),
   `publish` (manual, needs `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`; refuses
-  an existing tag).
+  an existing tag), `release-bump` (`VERSION=x.y.z CHART=a.b.c`: every version
+  and the hook's image tag in one edit).
 - **Compose:** `compose-up`, `compose-test`, `compose-smoke` (both images
   built from the checkout, then the smoke — see [Testing](testing.md)),
   `compose-smoke-run` (the smoke on any `WRAPPER_IMAGE` / `WEB_IMAGE`),
