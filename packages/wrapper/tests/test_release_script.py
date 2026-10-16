@@ -218,28 +218,51 @@ def tracked_files() -> list[str]:
         f
         for f in files
         if not f.startswith(("docs/superpowers/", "docs/audits/"))
-        and "tests/" not in f
+        and "tests" not in Path(f).parts[:-1]
         and (ROOT / f).is_file()
     ]
+
+
+PIN = re.compile(
+    r"riksarkivet/htrflow-(?:batch|web|campaigns)@sha256:(?!0{64})[0-9a-f]{64}"
+    r"|CONVERTER_REF\W+[\"']?[0-9a-f]{40}"
+)
+# A captured e2e transcript (local registry and ghcr.io refs): history, not a pin.
+TRANSCRIPTS = {"docs/development/e2e-indexed-jobs.md"}
+D = "sha256:" + "a" * 64
+S = "b" * 40
+
+
+@pytest.mark.parametrize(
+    ("line", "is_pin"),
+    [
+        (f"image: riksarkivet/htrflow-web@{D}", True),
+        (f"image: docker.io/riksarkivet/htrflow-web@{D}", True),
+        (f"image: ${{X:-riksarkivet/htrflow-batch@{D}}}", True),
+        (f"  CONVERTER_REF: {S}   # v1.0.0", True),
+        (f"- CONVERTER_REF: {S}", True),
+        (f'CONVERTER_REF: "{S}"', True),
+        (f"CONVERTER_REF={S}", True),
+        ("image: riksarkivet/htrflow-web@sha256:1fbabef5...", False),
+        ("image: riksarkivet/htrflow-web@sha256:" + "0" * 64, False),
+        ("CONVERTER_REF: abc123", False),
+    ],
+)
+def test_pin_pattern(line, is_pin):
+    assert bool(PIN.search(line)) is is_pin
 
 
 def test_every_release_pin_in_the_tree_is_owned_by_release_py():
     """No file pins a release image (full digest, as `pin` writes it) or
     CONVERTER_REF unless `pin` writes or regenerates it. A digest of zeros is
     a placeholder, and prose that abbreviates a digest is not a pin."""
-    pattern = re.compile(
-        r"(?:docker\.io/|:-)riksarkivet/htrflow-(?:batch|web|campaigns)"
-        r"@sha256:(?!0{64})[0-9a-f]{64}"
-        r"|^\s*CONVERTER_REF: [0-9a-f]{40}",
-        re.M,
-    )
     owned = {p for ps in release.PINNED.values() for p in ps}
     owned |= set(release.CONVERTER_REF_FILES)
     unowned = [
         f
         for f in tracked_files()
-        if pattern.search((ROOT / f).read_text(errors="ignore"))
-        and f not in owned
+        if PIN.search((ROOT / f).read_text(errors="ignore"))
+        and f not in owned | TRANSCRIPTS
         and not f.startswith(release.GENERATED)
     ]
     assert unowned == []
