@@ -3,8 +3,8 @@
 `actions/checkout` writes the job's token into `.git/config` as an
 `extraheader` by default, where it outlives the step: every later step, and
 anything those steps run -- a build script, a dependency's install hook, a
-dagger container mounting the repo -- can push with it. Nothing in this
-repository pushes from a workflow, so nothing needs it.
+dagger container mounting the repo -- can push with it. The one job that
+pushes (publish.yml's pin job) hands the token to its push step alone.
 
 Five of the seven workflows already said `persist-credentials: false`; this
 is the rule that keeps the next one from forgetting, and covers every

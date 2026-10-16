@@ -89,8 +89,9 @@ def test_every_image_ends_as_one_manifest_list_under_the_plain_tag() -> None:
     manifest = JOBS["manifest"]
     listed = {e["repository"] for e in manifest["strategy"]["matrix"]["include"]}
     assert listed == set(_published())
-    # Nothing may publish without being joined afterwards.
-    assert set(manifest["needs"]) == set(JOBS) - {"manifest"}
+    # Nothing may publish without being joined afterwards, and no list is
+    # created before the release's one run of the test suite has passed.
+    assert set(manifest["needs"]) == {"plan", "tests", "publish"}
     create = next(
         step["run"] for step in manifest["steps"] if "imagetools create" in str(step)
     )
@@ -109,12 +110,15 @@ def test_the_manifest_list_joins_the_digests_the_publish_entries_signed() -> Non
     name = "digest-${{ matrix.component }}${{ matrix.tag_suffix }}"
     assert upload["with"]["name"] == upload["with"]["path"] == name
     record = next(s for s in publish if s.get("name") == "Record the signed digest")
-    assert record["env"]["DIGEST"] == "${{ steps.digest.outputs.digest }}"
-    # the digest recorded is the one the sign-attest step was given
+    # the digest recorded is the one the sign-attest step was given, or, on a
+    # re-run, the reused per-arch tag's whose signature has just verified
     signing = next(
         s for s in publish if s.get("uses") == "./.github/actions/sign-attest"
     )
-    assert signing["with"]["digest"] == record["env"]["DIGEST"]
+    assert signing["with"]["digest"] == "${{ steps.digest.outputs.digest }}"
+    assert record["env"]["DIGEST"] == (
+        "${{ steps.existing.outputs.digest || steps.digest.outputs.digest }}"
+    )
 
     steps = JOBS["manifest"]["steps"]
     download = next(s for s in steps if "download-artifact" in s.get("uses", ""))
@@ -134,8 +138,8 @@ def test_the_manifest_list_joins_the_digests_the_publish_entries_signed() -> Non
 def test_every_pushed_digest_is_signed_and_attested() -> None:
     """Signature, provenance and SBOM come from the one composite action, so
     a new build job cannot quietly publish an unsigned image."""
-    for name, job in JOBS.items():
-        steps = [step.get("uses", "") for step in job["steps"]]
+    for name in ("publish", "manifest"):
+        steps = [step.get("uses", "") for step in JOBS[name]["steps"]]
         assert "./.github/actions/sign-attest" in steps, name
 
 
@@ -155,7 +159,8 @@ def test_no_run_block_interpolates_a_dispatch_input() -> None:
             assert "${{ inputs." not in run, (name, step.get("name"))
             if "$TAG" in run or "${TAG}" in run:
                 env = {**job.get("env", {}), **step.get("env", {})}
-                assert env.get("TAG") == "${{ inputs.tag }}", name
+                # the version on the pushed commit, as the plan job read it
+                assert env.get("TAG") == "v${{ needs.plan.outputs.version }}", name
 
 
 @pytest.mark.parametrize("name", _SCRIPTED)
@@ -241,12 +246,23 @@ def test_the_setup_pins_the_cli_and_engine_of_dagger_json() -> None:
 
 def test_tools_are_installed_before_the_registry_login() -> None:
     """Nothing a publish job downloads after `docker login` may be unpinned:
-    the dagger CLI is set up before the credential exists in the job."""
-    for name, job in JOBS.items():
-        uses = [s.get("uses", "") for s in job["steps"]]
+    the dagger CLI and cosign are set up before the credential exists in the
+    job. The tests job runs dagger with no registry login at all."""
+    for name in ("publish", "manifest"):
+        uses = [s.get("uses", "") for s in JOBS[name]["steps"]]
         logins = [i for i, u in enumerate(uses) if u.startswith("docker/login-action")]
-        if SETUP_DAGGER in uses:
-            assert logins and uses.index(SETUP_DAGGER) < logins[0], name
+        assert logins, name
+        tools = [
+            i
+            for i, u in enumerate(uses)
+            if u == SETUP_DAGGER or u.startswith("sigstore/cosign-installer@")
+        ]
+        for tool in tools:
+            assert tool < logins[0], (name, uses[tool])
+    assert not any(
+        s.get("uses", "").startswith("docker/login-action")
+        for s in JOBS["tests"]["steps"]
+    )
 
 
 def _step_index(steps: list[dict], needle: str) -> int:
@@ -261,7 +277,7 @@ def test_every_image_is_published_through_publish_docker() -> None:
     which runs the CRITICAL gate on the container it is about to push -- the
     order of its gates is asserted on its syntax tree by
     .dagger/publishcheck (`go test ./publishcheck/`)."""
-    assert set(JOBS) == {"publish", "manifest"}
+    assert set(JOBS) == {"plan", "tests", "publish", "manifest", "pin"}
     runs = [step.get("run", "") for step in JOBS["publish"]["steps"]]
     assert sum("dagger call --progress plain publish-docker" in r for r in runs) == 1
 

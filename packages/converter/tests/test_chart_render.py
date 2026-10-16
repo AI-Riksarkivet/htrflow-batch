@@ -956,9 +956,9 @@ REPOSITORY = "AI-Riksarkivet/htrflow-batch"
 def _signing_subject() -> str:
     """The identity Sigstore certifies for a release signature, derived from
     the workflow that signs: the file whose jobs run the sign-attest action,
-    triggered only by `workflow_dispatch` -- so its certificate names the
-    branch it ran from, which the release process runs on main, never a
-    tag."""
+    triggered only by a push to main and by `workflow_dispatch` -- so its
+    certificate names the branch it ran from, which is main (the plan job
+    refuses any other ref), never a tag."""
     signing = [
         w
         for w in sorted((REPO / ".github" / "workflows").glob("*.yml"))
@@ -966,7 +966,8 @@ def _signing_subject() -> str:
     ]
     assert len(signing) == 1, signing
     triggers = yaml.safe_load(signing[0].read_text(encoding="utf-8"))[True]
-    assert set(triggers) == {"workflow_dispatch"}, triggers
+    assert set(triggers) == {"push", "workflow_dispatch"}, triggers
+    assert triggers["push"] == {"branches": ["main"]}, triggers
     path = signing[0].relative_to(REPO).as_posix()
     return f"https://github.com/{REPOSITORY}/{path}@refs/heads/main"
 

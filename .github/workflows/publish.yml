@@ -1,13 +1,30 @@
 name: Publish
-# Manual, one tag per run, every component (audit T6/X16). The dagger
-# publish-docker function tests before it builds, publishes, and returns the
+# A merged version bump is a release. Every push to main runs the plan job,
+# which asks scripts/release.py what main needs next: `released` (the version
+# has its tag) and `tag` (the pins of the version are on main, only the tag is
+# left -- the pin PR's own merge) end the run there; only `publish` (a version
+# with neither) runs the rest. One run then, for that version and every
+# component: the workspace suite once, the images built natively per
+# architecture, pushed, signed and attested, joined into manifest lists, and
+# their digests pinned through a pull request that merges itself.
+#
+# No approval step: the Docker Hub credential and the signing identity stay
+# in the `release` environment, restricted to main, and main's branch
+# protection is what guards them (docs/development/releasing.md).
+#
+# The dagger publish-docker function builds, gates (driver test on the
+# wrapper, Trivy CRITICAL on every image), publishes, and returns the
 # reference with its digest; that digest is then signed with cosign (keyless,
 # Sigstore OIDC) and given SLSA build-provenance and SBOM attestations, so a
 # cluster policy (chart: security.verifyImages) can verify what it pulls.
 #
-# Tags are immutable: the run refuses a tag that already exists on the
-# registry. Bump packages/wrapper/pyproject.toml and use a new tag instead of
-# re-pushing (the wrapper's version must equal the tag — see resolveTag).
+# Tags are immutable: a run never overwrites `<tag>` or `<tag>-<arch>`. The
+# version on the pushed commit is the tag (resolveTag checks the wrapper's
+# version equals it). Recovery: re-run the failed jobs, or dispatch this
+# workflow on main, for the same version. A per-arch tag an earlier attempt
+# pushed is reused only if its signature verifies against this workflow on
+# main; one that does not, or a manifest list already under `<tag>`, stops
+# the run -- bump the version instead.
 #
 # EVERY image ships for two architectures and is built NATIVELY for each: on
 # ubuntu-24.04 for amd64, on ubuntu-24.04-arm for arm64 (free for public
@@ -25,33 +42,112 @@ name: Publish
 # the dagger engine could not see, and a job of its own; the amd64 one ran
 # on the upstream htrflow image, which failed the driver test.)
 on:
+  push:
+    branches: [main]
+  # Recovery only: runs the same plan for the version on the dispatched ref,
+  # which must be main (the plan refuses any other, and the `release`
+  # environment's branch rule keeps the credential from it regardless).
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Image tag to publish (vX.Y.Z, = packages/wrapper/pyproject.toml version). Never reuse a published tag."
-        required: true
-        type: string
 
 permissions:
   contents: read
 
-# Every job below holds the Docker Hub credential and the signing identity,
-# so every job runs in the `release` environment (finding 3068). What makes
-# that a protection lives in the repository settings, not here: required
-# reviewers, deployments from `main` only, and DOCKERHUB_USERNAME /
+# One release at a time; a second version bump waits for the first instead
+# of cancelling it halfway through a push.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+# Every job that holds the Docker Hub credential and the signing identity
+# runs in the `release` environment (finding 3068): `publish` and
+# `manifest`. What makes that a protection lives in the repository settings,
+# not here: deployments from `main` only, and DOCKERHUB_USERNAME /
 # DOCKERHUB_TOKEN as secrets of that environment instead of the repository
-# or the organisation (docs/development/releasing.md). Until those are set,
-# GitHub creates the environment on the first run with no rules, and the
-# repository secrets stay visible to it, so the workflow runs as before.
+# or the organisation (docs/development/releasing.md). `plan`, `tests` and
+# `pin` get neither.
 jobs:
+  # What main needs next, from the version in packages/wrapper/pyproject.toml
+  # and the `v*` tags. Every later job runs only when this says `publish`.
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      state: ${{ steps.plan.outputs.state }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # `state` reads the tags
+          persist-credentials: false
+
+      # release.py is standard library only: the runner's python3, no sync.
+      - name: What main needs next
+        id: plan
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != refs/heads/main ]]; then
+            echo "::error::releases run from main only, not $GITHUB_REF"
+            exit 1
+          fi
+          state="$(python3 scripts/release.py state)"
+          version="$(python3 scripts/release.py version)"
+          # A push made during a release waits in the concurrency group and
+          # runs after the pin PR merged, from a commit without the pins: by
+          # its own files the finished version still needs publishing. main's
+          # tip knows better; for the same version, its word stands.
+          git fetch --no-tags origin main
+          if [[ "$state" == publish && "$(git rev-parse FETCH_HEAD)" != "$GITHUB_SHA" ]]; then
+            tip="$RUNNER_TEMP/main"
+            git worktree add --quiet --detach "$tip" FETCH_HEAD
+            if [[ "$(python3 "$tip/scripts/release.py" version)" == "$version" ]]; then
+              state="$(python3 "$tip/scripts/release.py" state)"
+            fi
+          fi
+          echo "v${version}: ${state}"
+          echo "state=${state}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+  # The workspace suite, once per release. `main` does not require a branch
+  # to be up to date before merging, so the bump's merge commit is not itself
+  # what the PR's CI tested. The publish jobs run beside this one and push
+  # only their per-arch tags; no manifest list -- the tag anything pulls --
+  # is created until it passes.
+  tests:
+    name: Checks and Tests
+    needs: [plan]
+    if: needs.plan.outputs.state == 'publish'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-dagger
+
+      - name: Checks (ruff, ty, frontend, chart)
+        run: dagger call --progress plain checks
+        env:
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+
+      - name: Tests (pytest)
+        run: dagger call --progress plain test
+        env:
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+
   # Every image for both architectures, one matrix entry per image and
   # architecture on a runner of that architecture: same job body, same
-  # `<tag>-<arch>` scheme, same gates in publish-docker (tag check, tests,
-  # the driver test for the wrapper, Trivy), same sign-and-attest step.
+  # `<tag>-<arch>` scheme, same gates in publish-docker (tag check, the
+  # driver test for the wrapper, Trivy), same sign-and-attest step.
   # Never one runner with qemu: cross-building is what
   # test_publish_workflow.py and test_dockerfile_workspace.py forbid.
   publish:
     name: Publish ${{ matrix.component }}${{ matrix.tag_suffix }}
+    needs: [plan]
+    if: needs.plan.outputs.state == 'publish'
     runs-on: ${{ matrix.runner }}
     environment: release
     permissions:
@@ -90,14 +186,15 @@ jobs:
     env:
       REGISTRY: docker.io
       IMAGE: docker.io/${{ matrix.repository }}
-      # The dispatch inputs reach every `run:` below as environment
-      # variables and never as `${{ }}` inside the script: an expression is
-      # substituted into the text before a shell exists, so whatever was
-      # typed into the dispatch form would be code in a job holding the
-      # registry credential and the signing identity. The tag pattern is
-      # checked in the first step, which is itself one of those scripts, so
-      # it can never be what protects them.
-      TAG: ${{ inputs.tag }}
+      # Every outside value reaches the `run:` scripts below as an
+      # environment variable and never as `${{ }}` inside the script: an
+      # expression is substituted into the text before a shell exists, so
+      # the value would be code in a job holding the registry credential and
+      # the signing identity. The version comes from the pushed commit's
+      # pyproject.toml through the plan job; its pattern is checked in the
+      # first step, which is itself one of those scripts, so it can never be
+      # what protects them.
+      TAG: v${{ needs.plan.outputs.version }}
       TAG_SUFFIX: ${{ matrix.tag_suffix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -112,6 +209,7 @@ jobs:
       # Tools before credentials (finding 3070): nothing is downloaded after
       # the login that is not pinned by checksum or digest.
       - uses: ./.github/actions/setup-dagger
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -119,29 +217,53 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # The plain tag is the manifest list: if it exists, the release
+      # already happened and nothing here may run. The per-arch tag this job
+      # pushes may exist from an earlier attempt at this release (a re-run);
+      # it is reused, unbuilt and unsigned again, only if it carries a
+      # signature this workflow made on main -- verified on the digest the
+      # tag names, which is then the digest this job hands on. Anything else
+      # under that tag stops the run: tags are immutable.
       - name: Refuse to overwrite a published tag
-        # Both the per-arch tag this job pushes and the plain tag the manifest
-        # job will create must be free — the manifest list is as immutable as
-        # the images under it.
+        id: existing
+        env:
+          IDENTITY: ^https://github\.com/AI-Riksarkivet/htrflow-batch/\.github/workflows/publish\.yml@refs/heads/main$
+          ISSUER: https://token.actions.githubusercontent.com
         run: |
-          for ref in "${IMAGE}:${TAG}${TAG_SUFFIX}" "${IMAGE}:${TAG}"; do
-            if docker manifest inspect "$ref" >/dev/null 2>&1; then
-              echo "::error::$ref already exists; tags are immutable — bump the version and publish a new tag"
-              exit 1
-            fi
-          done
+          set -euo pipefail
+          if docker manifest inspect "${IMAGE}:${TAG}" >/dev/null 2>&1; then
+            echo "::error::${IMAGE}:${TAG} already exists; tags are immutable — bump the version and publish a new tag"
+            exit 1
+          fi
+          ref="${IMAGE}:${TAG}${TAG_SUFFIX}"
+          if ! docker manifest inspect "$ref" >/dev/null 2>&1; then
+            exit 0
+          fi
+          digest="$(docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}')"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no digest for $ref: $digest"; exit 1; }
+          if ! cosign verify "${IMAGE}@${digest}" \
+              --certificate-identity-regexp "$IDENTITY" \
+              --certificate-oidc-issuer "$ISSUER" >/dev/null; then
+            echo "::error::$ref exists but is not signed by this workflow on main; tags are immutable — bump the version and publish a new tag"
+            exit 1
+          fi
+          echo "reusing $ref, signed: ${IMAGE}@${digest}"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
       # Every value reaches the command through this step's environment,
       # never as `${{ }}` in the script, so the shell treats it as data.
       # dagger prints the function's return value -- the pushed reference
-      # with its digest -- on stdout and its progress on stderr.
-      - name: Publish with Dagger (tests, builds, pushes)
+      # with its digest -- on stdout and its progress on stderr. The suite
+      # is the tests job's: --skip-tests leaves out only that.
+      - name: Publish with Dagger (builds, gates, pushes)
         id: digest
+        if: steps.existing.outputs.digest == ''
         run: |
           ref="$(dagger call --progress plain publish-docker \
             --component "$COMPONENT" \
             --tag "$TAG" \
             --tag-suffix "$TAG_SUFFIX" \
+            --skip-tests \
             --docker-username env:DOCKERHUB_USERNAME \
             --docker-password env:DOCKERHUB_TOKEN)"
           ref="$(printf '%s' "$ref" | tr -d '[:space:]')"
@@ -156,19 +278,21 @@ jobs:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
       - uses: ./.github/actions/sign-attest
+        if: steps.existing.outputs.digest == ''
         with:
           image: ${{ env.IMAGE }}
           digest: ${{ steps.digest.outputs.digest }}
           registry-username: ${{ secrets.DOCKERHUB_USERNAME }}
           registry-password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # The digest this job pushed and signed, for the manifest job (audit
-      # 0923 D-10). A matrix job has one set of outputs, the last entry's,
-      # so each entry hands its digest over as an artifact of its own.
+      # The digest this job pushed and signed (or reused, its signature
+      # verified), for the manifest job (audit 0923 D-10). A matrix job has
+      # one set of outputs, the last entry's, so each entry hands its digest
+      # over as an artifact of its own.
       - name: Record the signed digest
         run: printf '%s\n' "$DIGEST" > "digest-${COMPONENT}${TAG_SUFFIX}"
         env:
-          DIGEST: ${{ steps.digest.outputs.digest }}
+          DIGEST: ${{ steps.existing.outputs.digest || steps.digest.outputs.digest }}
           COMPONENT: ${{ matrix.component }}
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -176,7 +300,7 @@ jobs:
           name: digest-${{ matrix.component }}${{ matrix.tag_suffix }}
           path: digest-${{ matrix.component }}${{ matrix.tag_suffix }}
           if-no-files-found: error
-          # A release approved days after the builds must still find them.
+          # A failed job re-run days later must still find its siblings'.
           retention-days: 7
 
   # The tags everything else references: one manifest list per image over its
@@ -186,10 +310,12 @@ jobs:
   # its own — the per-arch images carry the package lists, and an SBOM of an
   # index would only be an SBOM of whichever arch the runner happens to be.
   # Both entries wait for every publish entry: `needs` is per job, not per
-  # matrix entry, and one job here is cheaper than a second copy of it.
+  # matrix entry, and one job here is cheaper than a second copy of it. And
+  # every entry waits for the suite: no list before the tests pass.
   manifest:
     name: Manifest list (${{ matrix.component }})
-    needs: [publish]
+    needs: [plan, tests, publish]
+    if: needs.plan.outputs.state == 'publish'
     runs-on: ubuntu-24.04
     environment: release
     permissions:
@@ -209,7 +335,7 @@ jobs:
     env:
       REGISTRY: docker.io
       IMAGE: docker.io/${{ matrix.repository }}
-      TAG: ${{ inputs.tag }}   # as data, not as script text — see the publish job
+      TAG: v${{ needs.plan.outputs.version }} # as data, not as script text — see the publish job
       COMPONENT: ${{ matrix.component }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -258,3 +384,166 @@ jobs:
           image: ${{ env.IMAGE }}
           digest: ${{ steps.create.outputs.digest }}
           sbom: "false"
+
+      # The list's digest, for the pin job: as with the per-arch digests, an
+      # artifact per matrix entry, since a matrix job has one set of outputs.
+      - name: Record the list's digest
+        run: printf '%s\n' "$DIGEST" > "manifest-${COMPONENT}"
+        env:
+          DIGEST: ${{ steps.create.outputs.digest }}
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: manifest-${{ matrix.component }}
+          path: manifest-${{ matrix.component }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # The release's pins, through a pull request: main's branch protection
+  # forbids a workflow pushing to it. scripts/release.py writes every place
+  # a release digest is pinned and CONVERTER_REF (the commit this run
+  # built), and regenerates what is generated from them; the PR merges
+  # itself once its required checks pass. No environment and no registry
+  # credential: this job holds only the workflow's own token, with the
+  # rights to push a branch, open the PR and dispatch workflows -- and it
+  # hands that token only to the steps that call gh or push, never to the
+  # ones that run the workspace's code, and never leaves it in the checkout.
+  #
+  # Events made with GITHUB_TOKEN start no workflow, except a dispatch: the
+  # opened PR gets no CI and its merge runs nothing on main. So the job
+  # dispatches the required checks on the PR's branch (their check runs land
+  # on its head commit), and after the merge dispatches main's own checks:
+  # published.yml, whose success on the pin commit is what tags the release,
+  # and ci.yml. On a re-run it picks up the PR an earlier attempt opened.
+  pin:
+    name: Pin the release
+    needs: [plan, manifest]
+    if: needs.plan.outputs.state == 'publish'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # push the pin branch
+      pull-requests: write # open the PR and enable auto-merge
+      actions: write # dispatch the PR's checks and main's
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      BRANCH: release/v${{ needs.plan.outputs.version }}-pin
+      GH_REPO: ${{ github.repository }}
+    steps:
+      # The commit the images were built from, which is also CONVERTER_REF;
+      # the PR merges into whatever main is by then.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false # the push below gets the token for itself
+
+      # A re-run finds the PR an earlier attempt opened (open or merged)
+      # instead of writing a second one.
+      - name: Find an earlier pin PR
+        id: earlier
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          earlier="$(gh pr list --head "$BRANCH" --base main --state all \
+            --json state,url --jq 'map(select(.state != "CLOSED")) | .[0] // empty | "\(.state) \(.url)"')"
+          if [[ -n "$earlier" ]]; then
+            echo "an earlier attempt opened ${earlier#* } (${earlier%% *})"
+            echo "state=${earlier%% *}" >> "$GITHUB_OUTPUT"
+            echo "url=${earlier#* }" >> "$GITHUB_OUTPUT"
+          fi
+
+      # `pin` regenerates examples/campaigns/ and the configuration reference
+      # through the workspace's own programs.
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        if: steps.earlier.outputs.url == ''
+      - if: steps.earlier.outputs.url == ''
+        run: uv sync --locked --all-packages
+
+      # The three manifest-list digests the manifest job signed.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: steps.earlier.outputs.url == ''
+        with:
+          pattern: manifest-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/manifests # outside the tree the PR commits
+
+      - name: Write and commit the pins
+        if: steps.earlier.outputs.url == ''
+        run: |
+          set -euo pipefail
+          # A plain assignment, not `< <(…)`, so a failed pin fails here.
+          pinned="$(python3 scripts/release.py pin "$VERSION" \
+            --wrapper "$(cat "$RUNNER_TEMP/manifests/manifest-wrapper")" \
+            --web "$(cat "$RUNNER_TEMP/manifests/manifest-web")" \
+            --campaigns "$(cat "$RUNNER_TEMP/manifests/manifest-campaigns")" \
+            --converter-ref "$GITHUB_SHA")"
+          mapfile -t changed <<< "$pinned"
+          git switch -c "$BRANCH"
+          git add -- "${changed[@]}"
+          git -c user.name="github-actions[bot]" \
+            -c user.email="41898283+github-actions[bot]@users.noreply.github.com" \
+            commit -m "release: pin the v${VERSION} images and converter"
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git status --porcelain
+            echo "::error::release.py pin changed files it did not report"
+            exit 1
+          fi
+
+      - name: Open the pin PR and start its checks
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EARLIER_STATE: ${{ steps.earlier.outputs.state }}
+          EARLIER_URL: ${{ steps.earlier.outputs.url }}
+        run: |
+          set -euo pipefail
+          state="$EARLIER_STATE" url="$EARLIER_URL"
+          if [[ -z "$url" ]]; then
+            # The token goes to this one push as a header, the way checkout
+            # would have stored it, and no hook the workspace's code might
+            # have written runs with it. The branch is this release's own:
+            # an earlier attempt that pushed it but opened no PR left
+            # nothing anyone else built on, so --force.
+            auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+            echo "::add-mask::$auth"
+            git -c core.hooksPath=/dev/null \
+              -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+              push --force origin "$BRANCH"
+            url="$(gh pr create --base main --head "$BRANCH" \
+              --title "release: pin the v${VERSION} images and converter" \
+              --body "The v${VERSION} manifest-list digests and CONVERTER_REF ${GITHUB_SHA}, written by scripts/release.py pin in ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}. Merges itself once its checks pass.")"
+            state=OPEN
+          fi
+          if [[ "$state" == OPEN ]]; then
+            gh workflow run ci.yml --ref "$BRANCH" -f pull_request_checks=true
+            gh workflow run codeql.yml --ref "$BRANCH"
+            gh workflow run trufflehog.yml --ref "$BRANCH"
+            gh pr merge "$url" --auto --merge
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the merge, then start main's checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          URL: ${{ steps.pr.outputs.url }}
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 30 * 60))
+          while :; do
+            view="$(gh pr view "$URL" --json state,mergeCommit \
+              --jq '"\(.state) \(.mergeCommit.oid // "-")"')"
+            state="${view%% *}" merged="${view#* }"
+            [[ "$state" == MERGED ]] && break
+            if [[ "$state" == CLOSED ]]; then
+              echo "::error::$URL was closed without merging"
+              exit 1
+            fi
+            if (( SECONDS >= deadline )); then
+              echo "::error::$URL has not merged after 30 minutes; see its checks"
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "$URL merged as $merged"
+          gh workflow run published.yml --ref main
+          gh workflow run ci.yml --ref main
