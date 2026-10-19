@@ -2,7 +2,7 @@
 # (docs: reference/campaign-yaml.md, "With Argo CD"). Distroless like the web
 # image: no shell, no package manager; the hook's clone uses dulwich from the
 # same venv, so there is no git binary either.
-FROM debian:13-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS venv
+FROM debian:13-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS venv
 RUN apt-get update && apt-get install -y --no-install-recommends python3.13 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=ghcr.io/astral-sh/uv:0.12.6@sha256:88bc6eb1ccd4b82efd0e1b530caffabddf50dc2bf612e66c14ea25b8ee8a4d3d /uv /bin/uv
@@ -35,7 +35,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && uv pip install --python /app/.venv/bin/python --no-build --no-deps /tmp/dist/*.whl \
     && rm -rf /tmp/dist
 
-FROM gcr.io/distroless/python3-debian13:nonroot@sha256:83aa8d4f74a4d7f7cf2d472054139bef71a927b76c680c0f2e1021d6b1d6d732
+FROM gcr.io/distroless/python3-debian13:nonroot@sha256:f47f5807043391605425f2bd162b25f50cebdc90640bacc804e0177608fe5c65
 LABEL org.opencontainers.image.licenses="EUPL-1.2"
 COPY --from=venv /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"

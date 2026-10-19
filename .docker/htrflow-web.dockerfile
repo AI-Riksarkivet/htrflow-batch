@@ -15,7 +15,7 @@
 # The mount is optional — without it the stock CA set is used.
 
 # ---- Stage 1: the campaign browser (SvelteKit, adapter-static -> dist/) ----
-FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS spa
+FROM oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS spa
 WORKDIR /app
 COPY frontend/package.json frontend/bun.lock ./
 # RA hosts sit behind a TLS-intercepting proxy; CI does not — only point bun
@@ -100,7 +100,7 @@ SITE
 # Workspace two-step sync per ra-skills dockerfile/references/python-uv.md:
 # --frozen with only pyprojects bind-mounted (member sources absent), then
 # --locked after COPY. Bind-mount EVERY workspace member's pyproject.toml.
-FROM debian:13-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS venv
+FROM debian:13-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS venv
 RUN apt-get update && apt-get install -y --no-install-recommends python3.13 \
     && rm -rf /var/lib/apt/lists/*
 # uv 0.12.6 (multi-arch index digest), the binary the wrapper image uses too
@@ -139,7 +139,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # certificates, and nothing else. The OS packages a slim base brings along and
 # Trivy keeps flagging (perl, util-linux, ncurses, sqlite, …) are not in it.
 # Nothing execs into this container: the chart probes /healthz over HTTP.
-FROM gcr.io/distroless/python3-debian13:nonroot@sha256:83aa8d4f74a4d7f7cf2d472054139bef71a927b76c680c0f2e1021d6b1d6d732
+FROM gcr.io/distroless/python3-debian13:nonroot@sha256:f47f5807043391605425f2bd162b25f50cebdc90640bacc804e0177608fe5c65
 LABEL org.opencontainers.image.licenses="EUPL-1.2"
 COPY --from=venv /app/.venv /app/.venv
 # UV's page and what it needs, then the SPA: / is the campaign browser and
