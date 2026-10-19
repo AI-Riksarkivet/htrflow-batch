@@ -24,6 +24,8 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
 
+from . import safexml
+
 log = logging.getLogger("htrflow_batch")
 
 #: How every page failure of this kind starts: ``main._verify`` knows a
@@ -80,7 +82,7 @@ def exported(path: Path) -> Counter | None:
     ``Unicode``. ``None`` for a file that does not parse -- the upload
     refuses that one with its own sentence (store.upload_page)."""
     try:
-        root = ET.parse(path).getroot()
+        root = safexml.parse(path).getroot()
     except (ET.ParseError, OSError):
         return None
     held: Counter = Counter()

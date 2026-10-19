@@ -103,6 +103,13 @@ def test_stamp_keeps_the_declaration_and_the_default_namespace(tmp_path):
     assert 'xsi:schemaLocation="' in text
 
 
+def test_stamp_rejects_an_alto_with_a_dtd(tmp_path):
+    path = tmp_path / "0001.xml"
+    path.write_text("<!DOCTYPE alto><alto><Description/></alto>", encoding="utf-8")
+    with pytest.raises(MalformedOutput, match=r"0001\.xml is not well-formed XML"):
+        provenance.stamp_alto(path, image=IMAGE, base_revision="x")
+
+
 def test_stamp_rejects_an_alto_that_is_not_xml(tmp_path):
     path = tmp_path / "0001.xml"
     path.write_text("<alto><Description>", encoding="utf-8")
