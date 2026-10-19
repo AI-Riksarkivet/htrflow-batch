@@ -20,7 +20,7 @@ F = W + "docs/features/"
 def meta(path):
     t = open(path).read()
     fm = t.split("---")[1]
-    return dict(re.findall(r"^(\w+):\s*(.*)$", fm, re.M))
+    return dict(re.findall(r"^(\w+):[ \t]*(.*)$", fm, re.M))
 
 
 files = {}
