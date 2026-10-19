@@ -2229,3 +2229,23 @@ def test_without_the_retry_budget_a_deferred_page_stays_missing(
     _source_down_for(monkeypatch, sample_manifest, "0002", [])
     env = dict(env, INDEX_FAILURE_COUNT="", BACKOFF_LIMIT_PER_INDEX="")
     assert main(env, process_page_factory=fake_factory) == EXIT_TRANSIENT
+
+
+def test_hard_exit_exits_even_when_a_stream_will_not_flush(monkeypatch):
+    """conftest stubs _hard_exit in the imported module, so a fresh copy of
+    the module is loaded to reach the real one."""
+    import importlib.util
+
+    spec = importlib.util.find_spec("htrflow_batch.main")
+    real = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(real)
+
+    class _Broken:
+        def flush(self):
+            raise BrokenPipeError
+
+    exits = []
+    monkeypatch.setattr(real.sys, "stdout", _Broken())
+    monkeypatch.setattr(real.os, "_exit", exits.append)
+    real._hard_exit(143)
+    assert exits == [143]

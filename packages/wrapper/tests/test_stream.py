@@ -759,3 +759,13 @@ def test_a_transient_fetch_failure_is_deferred_not_failed(tmp_path, caplog):
     assert stats.results["0001"].status == "deferred"
     assert stats.results["0001"].error == "HTTP 503"
     assert "deferred" in caplog.text
+
+
+def test_discard_warns_when_the_workdir_file_will_not_go(tmp_path, caplog):
+    """The run goes on, but the workdir is tmpfs: deletes that keep failing
+    fill it, so each one is a warning rather than nothing."""
+    stuck = tmp_path / "0001.jpg"
+    stuck.mkdir()  # unlink() on a directory raises an OSError
+    with caplog.at_level("WARNING", logger="htrflow_batch"):
+        stream_mod.discard(stuck)
+    assert f"workdir file {stuck} not deleted" in caplog.text

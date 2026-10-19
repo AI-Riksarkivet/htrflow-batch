@@ -1215,3 +1215,77 @@ def test_a_page_whose_export_holds_its_text_is_returned(tmp_path, fake_htrflow):
         _TreePipeline(out_dir, nested=True), _image(tmp_path), out_dir
     )
     assert set(files) == {"alto", "page"}
+
+
+def test_release_documents_logs_registries_it_cannot_empty(
+    monkeypatch, caplog, fake_htrflow
+):
+    """Best effort, but not silent: a task the rich singleton already dropped
+    and a registry that refuses clear() both leave a debug line, and the rest
+    is still emptied."""
+    from htrflow_batch import driver
+
+    fake_htrflow()
+    progress = _inject_progress_fake(monkeypatch)
+    progress.register("doc")
+
+    def gone(task):
+        raise KeyError(task)
+
+    progress._progress = SimpleNamespace(remove_task=gone)
+    progress._exports = SimpleNamespace(clear=lambda: 1 / 0)
+    with caplog.at_level("DEBUG", logger="htrflow_batch"):
+        driver.release_documents()
+    assert "progress task for doc not removed" in caplog.text
+    assert "progress._exports not cleared" in caplog.text
+    assert progress._tasks == {} and progress._steps == {}
+
+
+def test_bury_logs_a_pipeline_whose_steps_it_cannot_replace(caplog):
+    from htrflow_batch import driver
+
+    steps = (_FakeStep(),)
+    with caplog.at_level("DEBUG", logger="htrflow_batch"):
+        assert driver._bury(SimpleNamespace(steps=steps)) == list(steps)
+    assert "not replaced with dead ones" in caplog.text
+
+
+def test_progress_mark_skips_a_queue_without_a_size(caplog):
+    """A snapshot for the stall watch: a queue that cannot report its size
+    is left out of it, never an error."""
+    from htrflow_batch import driver
+
+    class _NoSize:
+        def qsize(self):
+            raise NotImplementedError  # multiprocessing queues on macOS
+
+    queue = SimpleNamespace(_in=_NoSize(), _out=SimpleNamespace(qsize=lambda: 3))
+    with caplog.at_level("DEBUG", logger="htrflow_batch"):
+        _, queued = driver._progress_mark(
+            SimpleNamespace(steps=[SimpleNamespace(_queue=queue)])
+        )
+    assert queued == ((3,),)
+    assert "SimpleNamespace._in has no size to read" in caplog.text
+
+
+def test_release_steps_survives_a_torch_that_will_not_load(monkeypatch):
+    from htrflow_batch import driver
+
+    monkeypatch.setitem(sys.modules, "torch", None)  # import torch -> ImportError
+    step = SimpleNamespace(model="weights")
+    driver.release_steps([step])
+    assert step.model is None
+
+
+def test_release_steps_logs_an_empty_cache_that_fails(monkeypatch, caplog):
+    from htrflow_batch import driver
+
+    def boom():
+        raise RuntimeError("CUDA error: device-side assert triggered")
+
+    torch = ModuleType("torch")
+    torch.cuda = SimpleNamespace(empty_cache=boom)
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    with caplog.at_level("DEBUG", logger="htrflow_batch"):
+        driver.release_steps([SimpleNamespace(model="weights")])
+    assert "torch.cuda.empty_cache failed" in caplog.text
