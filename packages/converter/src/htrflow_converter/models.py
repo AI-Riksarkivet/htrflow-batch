@@ -1030,7 +1030,8 @@ _PROCESS_FLOOR = 2**30
 def memory_bytes(quantity: str) -> int:
     """A memory quantity ``Size`` has already held to ``_MEMORY_RE``."""
     m = _MEMORY_RE.match(quantity)
-    assert m is not None, quantity
+    if m is None:  # a caller skipped Size's validation: not a quantity at all
+        raise ValueError(f"not a memory quantity: {quantity!r}")
     return int(m[1]) * _UNITS[m[2] or ""]
 
 

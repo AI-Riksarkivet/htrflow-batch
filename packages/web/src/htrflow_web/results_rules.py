@@ -31,8 +31,6 @@ def allowed_key(raw_path: str, namespace: str) -> str | None:
 
 
 def served_type(stored: str | None) -> tuple[str, bool]:
-    base = (stored or "").split(";", 1)[0].strip().lower()
-    if base in _PASSED:
-        assert stored is not None  # Guaranteed: if stored is None, base is ""
+    if stored is not None and stored.split(";", 1)[0].strip().lower() in _PASSED:
         return stored, False
     return "application/octet-stream", True
