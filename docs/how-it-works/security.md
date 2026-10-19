@@ -166,6 +166,18 @@ takes any bucket policy and CORS rule off its buckets and creates a read-only
 login user; `scripts/compose_init.py` does the same for the compose stack,
 except for the fixtures bucket that plays the IIIF server.
 
+### XML the wrapper parses
+
+Every ALTO and PAGE file the wrapper parses goes through `defusedxml` with
+DTDs refused: its own htrflow output before the upload, and the copy it reads
+back from the results bucket on a resume. ALTO and PAGE never carry a DTD, so
+a file that declares one counts as not well-formed, and takes the same path
+as any other: refused at upload and kept under `failed/`, or left out of the
+viewer manifest when it is read back. That holds whatever XML parser the
+image's Python links against, so an account that may write a campaign's
+prefix cannot turn a stored file into an entity-expansion or external-entity
+attack on the next run.
+
 ### Source URLs are not secrets
 
 A volume's `manifest:` and `images:` URLs are stored **verbatim**, in four
