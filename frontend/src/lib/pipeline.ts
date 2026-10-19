@@ -24,7 +24,9 @@ export type PipelineModel = {
 
 type Entry = { indent: number; key: string; value: string };
 
-const KEY_RE = /^(\s*)([\w.-]+):\s*(.*)$/;
+// No `\s*` before the value: entries() trims it, and a `\s*` next to `.*`
+// backtracks quadratically on a long line `.` cannot finish (a lone `\r`).
+const KEY_RE = /^(\s*)([\w.-]+):(.*)$/;
 
 /** Every `key: value` line, with its indent; comments and blanks dropped. */
 function entries(yaml: string): Entry[] {
