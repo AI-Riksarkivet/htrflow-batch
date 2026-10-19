@@ -26,7 +26,7 @@ jobs:
           persist-credentials: false # the scan only reads the local history
 
       - name: Secret scanning
-        uses: trufflesecurity/trufflehog@0186870afd2c4a90def791d80260923ba583d076 # v3.98.0
+        uses: trufflesecurity/trufflehog@e76dff8a7e57d6df0c60ad8cbf5d5cba505a8fc9 # v3.99.2
         with:
           # The action runs the scanner as a container image whose tag defaults
           # to `latest`; pinning the action's SHA does not pin the scanner.
