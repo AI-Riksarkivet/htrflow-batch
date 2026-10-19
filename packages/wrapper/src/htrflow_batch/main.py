@@ -103,7 +103,7 @@ def _hard_exit(code: int) -> None:
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.flush()
-        except Exception:
+        except (OSError, ValueError):  # a closed or broken pipe: exit anyway
             pass
     os._exit(code)
 

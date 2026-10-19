@@ -214,7 +214,11 @@ class ResultStore:
             try:
                 self.delete_pages([name])
             except Exception:
-                pass
+                log.warning(
+                    "page %s: partial upload not deleted; the resume clears it",
+                    name,
+                    exc_info=True,
+                )
             raise
         try:
             self.page_dims[name] = parse_alto_dims(roots["alto"])
