@@ -17,6 +17,7 @@ from functools import lru_cache
 from importlib import metadata
 from pathlib import Path
 
+from . import safexml
 from .stream import MalformedOutput
 
 ALTO_NS = "http://www.loc.gov/standards/alto/ns-v4#"
@@ -60,7 +61,7 @@ def stamp_alto(path: Path, *, image: str, base_revision: str) -> None:
     """Append the block to the ALTO at ``path``, in place. An ALTO that will
     not parse is not a usable output: raise, and the page fails."""
     try:
-        tree = ET.parse(path)
+        tree = safexml.parse(path)
     except ET.ParseError as e:
         raise MalformedOutput(
             f"{path.name} is not well-formed XML ({e}).", {"alto": path}

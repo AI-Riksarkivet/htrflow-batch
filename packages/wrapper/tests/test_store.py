@@ -137,6 +137,19 @@ def test_upload_page_rejects_malformed_page_xml(cfg, s3, tmp_path):
         store.upload_page("0001", {"alto": alto, "page": page})
 
 
+def test_upload_page_refuses_xml_with_a_dtd_before_any_put(cfg, s3, tmp_path):
+    store = ResultStore(cfg)
+    alto = _mk(
+        tmp_path,
+        "alto/0001.xml",
+        '<!DOCTYPE alto [<!ENTITY x SYSTEM "file:///etc/passwd">]><alto>&x;</alto>',
+    )
+    page = _mk(tmp_path, "page/0001.xml", "<PcGts/>")
+    with pytest.raises(MalformedOutput, match="alto XML is not well-formed"):
+        store.upload_page("0001", {"alto": alto, "page": page})
+    assert s3.list_objects_v2(Bucket=cfg.s3_bucket).get("Contents", []) == []
+
+
 def test_a_malformed_page_is_refused_with_its_files(cfg, s3, tmp_path):
     """The refusal carries the page's files, so the page loop can keep a
     copy aside for debugging before the workdir loses them."""
