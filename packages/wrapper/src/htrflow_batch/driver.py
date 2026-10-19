@@ -323,13 +323,13 @@ def release_documents() -> None:
     for document in list(tasks):
         try:
             progress._progress.remove_task(tasks.pop(document))
-        except Exception:
-            pass  # one page's bookkeeping must not cost the next one's
+        except Exception:  # one page's bookkeeping must not cost the next one's
+            log.debug("progress task for %s not removed", document, exc_info=True)
     for name in ("_exports", "_steps"):
         try:
             getattr(progress, name, {}).clear()
         except Exception:
-            pass
+            log.debug("htrflow progress.%s not cleared", name, exc_info=True)
 
 
 class PipelineDead(RuntimeError):
@@ -468,8 +468,8 @@ def _bury(pipeline) -> list:
         try:
             pipeline.steps[:] = [_DeadStep() for _ in steps]
             pipeline._htrflow_batch_buried = steps
-        except Exception:
-            pass  # not a list we can reach: release_pipeline still frees it
+        except Exception:  # not a list we can reach: release_pipeline still frees it
+            log.debug("pipeline steps not replaced with dead ones", exc_info=True)
     return steps
 
 
@@ -492,10 +492,13 @@ def _progress_mark(pipeline) -> tuple:
             continue
         sizes = []
         for name in ("_in", "_out", "_queue"):
+            inner = getattr(queue, name, None)
+            if inner is None:
+                continue
             try:
-                sizes.append(getattr(queue, name).qsize())
-            except Exception:
-                pass
+                sizes.append(inner.qsize())
+            except Exception:  # a snapshot for diagnostics: never raise from it
+                log.debug("%s.%s has no size to read", type(queue).__name__, name)
         queued.append(tuple(sizes))
     return recorded, tuple(queued)
 
@@ -551,15 +554,17 @@ def release_steps(steps) -> None:
         _stop_threads(step)
         try:
             step.model = None
-        except Exception:
-            pass  # freeing the GPU must never replace the page's own error
+        except Exception:  # freeing the GPU must never replace the page's own error
+            log.debug("%s kept its model", type(step).__name__, exc_info=True)
     gc.collect()  # the step frees the model only once nothing refers to it
     try:
         import torch  # ty: ignore[unresolved-import]
-
+    except Exception:  # no torch, or one whose CUDA libraries will not load
+        return  # nothing cached to give back
+    try:
         torch.cuda.empty_cache()  # give the freed blocks back to the driver
-    except Exception:
-        pass  # no torch, or a CPU-only run: nothing cached to give back
+    except Exception:  # never replaces the page's own error either
+        log.debug("torch.cuda.empty_cache failed", exc_info=True)
 
 
 def _run_guarded(pipeline, document, stem: str, seconds: float):
