@@ -95,6 +95,9 @@ spec:
             - {name: tmp, mountPath: /tmp}
           securityContext: *restricted
           resources: *small
+      # Bounded: with read-only roots these are all the node disk the hook
+      # writes. A shallow clone of a campaigns repo is YAML and its render;
+      # past the limit the kubelet evicts the pod rather than fill the node.
       volumes:
-        - {name: repo, emptyDir: {}}
-        - {name: tmp, emptyDir: {}}
+        - {name: repo, emptyDir: {sizeLimit: 2Gi}}
+        - {name: tmp, emptyDir: {sizeLimit: 1Gi}}
