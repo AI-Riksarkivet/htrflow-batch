@@ -216,12 +216,16 @@ def fetch_manifest(
 
 def _image_service(service: object) -> dict | None:
     """The first image service: P2 allows a bare dict, P3 a list, which may
-    lead with an auth or search service. An entry with no type at all is
-    taken for an image service, as P2 manifests in the wild leave it out."""
+    lead with an auth or search service. An entry with no type, as P2's
+    usually have, is one unless its context or profile names another IIIF
+    API (``/api/auth/``, ``/api/search/``)."""
     for entry in service if isinstance(service, list) else [service]:
         if isinstance(entry, dict):
             kind = entry.get("type") or entry.get("@type")
-            if not isinstance(kind, str) or kind.startswith("ImageService"):
+            if isinstance(kind, str):
+                if kind.startswith("ImageService"):
+                    return entry
+            elif not _OTHER_API.search(_marks(entry)):
                 return entry
     return None
 
@@ -234,6 +238,15 @@ def _service_id(service: object) -> str | None:
 
 
 _V1_OR_V2 = re.compile(r"ImageService[12]\b|/api/image/[12]/")
+_V3 = re.compile(r"ImageService3\b|/api/image/3/")
+_OTHER_API = re.compile(r"iiif\.io/api/(?!image/)")
+
+
+def _marks(service: dict) -> str:
+    """What says which API, and which version, a service is."""
+    return json.dumps(
+        [service.get(k) for k in ("type", "@type", "@context", "profile")]
+    )
 
 
 def full_size(service: dict) -> str:
@@ -241,8 +254,7 @@ def full_size(service: dict) -> str:
     Image API 3 requires `max` at every level and drops `full`; 2 requires
     `full` (2.1 made `max` optional, 2.0 has none). A service that names no
     version is taken for 3."""
-    marks = [service.get(k) for k in ("type", "@type", "@context", "profile")]
-    return "full" if _V1_OR_V2.search(json.dumps(marks)) else "max"
+    return "full" if _V1_OR_V2.search(_marks(service)) else "max"
 
 
 def _sized(sid: str, image_width: int | None, width: int, whole: str) -> str:
@@ -313,8 +325,9 @@ def _body_candidates(body: object) -> list[dict]:
 def _p2_body(res: dict) -> dict:
     """A P2 image resource as a P3-style body. The service keeps v2-style
     keys (@id/@type/profile): UV silently shows no image otherwise (docs:
-    wrapper). Its profile is the service's own -- a level it does not
-    claim would have the viewer ask for sizes it 400s -- or level 0."""
+    wrapper). Its version and profile are the service's own -- a level it
+    does not claim would have the viewer ask for sizes it 400s -- or 2 and
+    level 0: P2 predates Image API 3, though manifests in the wild pair them."""
     body = {
         "id": res.get("@id") or res.get("id"),
         "type": "Image",
@@ -324,12 +337,14 @@ def _p2_body(res: dict) -> dict:
         if (value := _int_or_none(res.get(key))) is not None:
             body[key] = value
     if sid := _service_id(res.get("service")):
-        profile = (_image_service(res["service"]) or {}).get("profile")
+        service = _image_service(res["service"]) or {}
+        v3 = bool(_V3.search(_marks(service)))
         body["service"] = [
             {
                 "@id": sid,
-                "@type": "ImageService2",
-                "profile": profile or "http://iiif.io/api/image/2/level0.json",
+                "@type": "ImageService3" if v3 else "ImageService2",
+                "profile": service.get("profile")
+                or ("level0" if v3 else "http://iiif.io/api/image/2/level0.json"),
             }
         ]
     return body

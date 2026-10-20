@@ -741,3 +741,35 @@ def test_the_whole_image_is_asked_for_only_when_every_known_width_fits(
     canvas["items"][0]["items"][0]["body"]["width"] = image_width
     pages = pages_from_manifest({"items": [canvas]}, width=2500)
     assert pages[0].image_url == f"https://img/iiif/page-1/full/{size}/0/default.jpg"
+
+
+def test_a_p2_manifest_may_point_at_an_image_api_3_service(p2_manifest):
+    """Presentation 2 predates Image API 3, but manifests in the wild pair
+    them: the service keeps its version, so it is asked for `max`."""
+    from htrflow_batch.iiif import painting_body
+
+    canvas = p2_manifest["sequences"][0]["canvases"][0]
+    canvas["width"] = 1200
+    canvas["images"][0]["resource"]["service"] = {
+        "@id": "http://ex/img",
+        "@context": "http://iiif.io/api/image/3/context.json",
+        "profile": "level1",
+    }
+    pages = pages_from_manifest(p2_manifest, width=2500)
+    assert pages[0].image_url == "http://ex/img/full/max/0/default.jpg"
+    assert painting_body(canvas)["service"][0]["@type"] == "ImageService3"
+
+
+def test_an_untyped_p2_auth_service_is_passed_over(p2_manifest):
+    """P2 services rarely carry a type; one whose context names another IIIF
+    API is not the image service."""
+    p2_manifest["sequences"][0]["canvases"][0]["images"][0]["resource"]["service"] = [
+        {
+            "@id": "http://ex/login",
+            "@context": "http://iiif.io/api/auth/1/context.json",
+            "profile": "http://iiif.io/api/auth/1/login",
+        },
+        {"@id": "http://ex/img", "@context": "http://iiif.io/api/image/2/context.json"},
+    ]
+    pages = pages_from_manifest(p2_manifest, width=2500)
+    assert pages[0].image_url == "http://ex/img/full/2500,/0/default.jpg"
