@@ -45,6 +45,10 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
+          # The default suite leaves out most of the injection, path and
+          # request-forgery queries; this service takes URLs and paths from
+          # its users (/results/<key>, /alto?src=, /log?log=).
+          queries: security-extended
 
       - name: Analyse
         uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
