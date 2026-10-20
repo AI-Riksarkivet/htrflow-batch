@@ -154,10 +154,34 @@ def test_p2_manifest_yields_pages(p2_manifest):
     assert pages[0].image_url == "http://ex/img/full/2500,/0/default.jpg"
 
 
-def test_p2_narrow_canvas_requests_max(p2_manifest):
+def test_p2_narrow_canvas_requests_full(p2_manifest):
+    """Image API 2 requires `full` at every level; `max` is optional in 2.1
+    and absent from 2.0 (3.0 requires `max` and drops `full`)."""
     p2_manifest["sequences"][0]["canvases"][0]["width"] = 1200
     pages = pages_from_manifest(p2_manifest, width=2500)
-    assert pages[0].image_url == "http://ex/img/full/max/0/default.jpg"
+    assert pages[0].image_url == "http://ex/img/full/full/0/default.jpg"
+
+
+@pytest.mark.parametrize(
+    "service",
+    [
+        {"id": "https://img/iiif/page-1", "type": "ImageService2"},
+        {
+            "@id": "https://img/iiif/page-1",
+            "@context": "http://iiif.io/api/image/2/context.json",
+        },
+        {
+            "@id": "https://img/iiif/page-1",
+            "profile": ["http://iiif.io/api/image/2/level1.json", {}],
+        },
+    ],
+    ids=["type", "context", "profile"],
+)
+def test_a_v2_service_in_a_p3_manifest_is_asked_for_full(service):
+    canvas = _canvas_with_service(1200, 1600)
+    canvas["items"][0]["items"][0]["body"]["service"] = [service]
+    pages = pages_from_manifest({"items": [canvas]}, width=2500)
+    assert pages[0].image_url == "https://img/iiif/page-1/full/full/0/default.jpg"
 
 
 def test_p2_resource_without_service_uses_direct_url(p2_manifest):
