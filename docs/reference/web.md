@@ -40,6 +40,10 @@ Source: [`packages/web`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/ma
 Every `/api/v1` answer, its `401` and `502` included, carries
 `Cache-Control: private, no-store`: each is one logged-in person's view.
 
+Neither the API nor the results proxy describes itself: FastAPI's
+`/docs`, `/redoc` and `/openapi.json` are switched off, and this table is the
+list of routes.
+
 `/log` and `/alto` open only URLs under the results base, so a mailed link
 cannot point them at another host, nor outside the base on the same one:
 one with an escaped `/` or `\` in its path below the base is refused too,

@@ -1733,3 +1733,13 @@ def test_a_first_record_gets_its_failures_in_the_same_request(ssa):
     )
     assert _reasons(ssa) == {"vol1": "boom"}
     assert ssa.get(STATUS)["metadata"]["labels"] == LABELS
+
+
+@pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
+def test_the_api_publishes_no_description_of_itself(client: TestClient, path: str):
+    """FastAPI's Swagger UI, ReDoc and OpenAPI schema answered without a
+    login and listed every route to anyone (ZAP, 2026-10-20). Nothing in the
+    product reads them."""
+    resp = client.get(path)
+    assert resp.status_code == 404
+    assert "swagger" not in resp.text.lower() and '"openapi"' not in resp.text
