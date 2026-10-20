@@ -395,7 +395,9 @@ def create_app(
     ``results_proxy`` is where /results is passed through to: the reader's
     ``cfg.results_proxy`` when it has one, else this (site-only mode has no
     ``cfg``, and the compose stack still runs a results proxy beside it)."""
-    app = FastAPI()
+    # No Swagger UI, ReDoc or OpenAPI schema: they answered without a login
+    # and nothing in the product reads them (ZAP, 2026-10-20).
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     site_only = reader.cfg is None
     if progress is None and not site_only:
         progress = ProgressReader()
