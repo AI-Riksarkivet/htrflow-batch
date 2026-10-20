@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from urllib.parse import urlsplit
 
 
-def build_manifest(image_urls: Sequence[str]) -> dict:
+def image_canvases(image_urls: Sequence[str]) -> dict:
     """The page list, in the shape of a P3 manifest's ``items``."""
     canvases = []
     for i, url in enumerate(image_urls, start=1):
