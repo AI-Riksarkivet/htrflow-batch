@@ -243,8 +243,9 @@ came out:
 - **Downloads.** A `rendering` per canvas for its ALTO and its PAGE XML,
   which the viewer's download dialog lists for the current page; that
   dialog never reads `seeAlso`.
-- **Search service.** A stub `SearchService1` entry, because the viewer
-  shows the text panel only when one is present.
+- **No search service.** None exists, so none is advertised. Stock UV
+  shows the text panel only beside a search service; the web image's UV
+  patch drops that condition, as the panel reads the ALTO and never searches.
 
 Publishing `iiif.json` needs `RESULTS_URL`, the browser-reachable URL
 base, which is not the in-cluster S3 endpoint. The viewer manifest is written

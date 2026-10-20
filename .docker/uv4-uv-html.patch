@@ -26,6 +26,9 @@ commit; `git apply` skips this preamble. What each file changes:
 - SearchLeftPanel.ts: render the search service's hit text (before, match,
   after) as text too; with a manifest from anywhere, its search service is
   as untrusted as its ALTO.
+- BaseExtension.ts: show the text panel on its config switch alone. Stock
+  UV also requires the manifest to advertise a search service, which the
+  panel never uses; a manifest no longer has to name one it does not have.
 - OpenSeadragonCenterPanel.ts: re-add the current canvas's line overlays
   after clearOverlays(), in viewport coords.
 - styles.less: outline the line overlays; a line with a polygon carries
@@ -602,3 +605,28 @@ index c75ff0d..2712775 100644
          "downloadUrls": {
            "currentAsXml": "https://lbiiif-acc.riksarkivet.se/download/current/alto/{0}?format=xml&imageid={1}",
            "currentAsZippedXml": "https://lbiiif-acc.riksarkivet.se/download/current/alto/{0}?format=zip&imageid={1}",
+diff --git a/src/content-handlers/iiif/modules/uv-shared-module/BaseExtension.ts b/src/content-handlers/iiif/modules/uv-shared-module/BaseExtension.ts
+index 7e0388e..c3f5709 100644
+--- a/src/content-handlers/iiif/modules/uv-shared-module/BaseExtension.ts
++++ b/src/content-handlers/iiif/modules/uv-shared-module/BaseExtension.ts
+@@ -1140,17 +1140,9 @@ export class BaseExtension<T extends BaseConfig> implements IExtension {
+   }
+ 
+   isTextRightPanelEnabled(): boolean {
+-    if (
+-      !Bools.getBool(this.data.config!.options.textRightPanelEnabled, false)
+-    ) {
+-      return false;
+-    }
+-
+-    if (!this.helper.getSearchService()) {
+-      return false;
+-    }
+-
+-    return true;
++    // The panel reads each canvas's ALTO seeAlso; it never asks a search
++    // service, so a manifest need not advertise one to show it.
++    return Bools.getBool(this.data.config!.options.textRightPanelEnabled, false);
+   }
+ 
+   isFooterPanelEnabled(): boolean {
