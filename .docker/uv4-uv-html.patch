@@ -29,6 +29,9 @@ commit; `git apply` skips this preamble. What each file changes:
 - BaseExtension.ts: show the text panel on its config switch alone. Stock
   UV also requires the manifest to advertise a search service, which the
   panel never uses; a manifest no longer has to name one it does not have.
+- BaseExtension.ts (also): sanitize the terms-of-use message (the
+  manifest's licence or requiredStatement) as the metadata panel does;
+  it was set as HTML as it came.
 - OpenSeadragonCenterPanel.ts: re-add the current canvas's line overlays
   after clearOverlays(), in viewport coords.
 - styles.less: outline the line overlays; a line with a polygon carries
@@ -606,10 +609,30 @@ index c75ff0d..2712775 100644
            "currentAsXml": "https://lbiiif-acc.riksarkivet.se/download/current/alto/{0}?format=xml&imageid={1}",
            "currentAsZippedXml": "https://lbiiif-acc.riksarkivet.se/download/current/alto/{0}?format=zip&imageid={1}",
 diff --git a/src/content-handlers/iiif/modules/uv-shared-module/BaseExtension.ts b/src/content-handlers/iiif/modules/uv-shared-module/BaseExtension.ts
-index 7e0388e..c3f5709 100644
+index 7e0388e..0de5c2e 100644
 --- a/src/content-handlers/iiif/modules/uv-shared-module/BaseExtension.ts
 +++ b/src/content-handlers/iiif/modules/uv-shared-module/BaseExtension.ts
-@@ -1140,17 +1140,9 @@ export class BaseExtension<T extends BaseConfig> implements IExtension {
+@@ -42,7 +42,7 @@ import {
+   Urls,
+   Strings,
+ } from "../../Utils";
+-import { defaultLocale, isVisible } from "../../../../Utils";
++import { defaultLocale, isVisible, sanitize } from "../../../../Utils";
+ import { IIIFEvents } from "../../IIIFEvents";
+ import { Events } from "../../../../Events";
+ import type { StoreApi } from "zustand/vanilla";
+@@ -435,7 +435,9 @@ export class BaseExtension<T extends BaseConfig> implements IExtension {
+       }
+ 
+       if (terms) {
+-        this.showMessage(terms);
++        // The licence and credit line are the manifest's, which may be from
++        // anywhere; sanitized as the metadata panel sanitizes them.
++        this.showMessage(sanitize(terms));
+       }
+     });
+ 
+@@ -1140,17 +1142,9 @@ export class BaseExtension<T extends BaseConfig> implements IExtension {
    }
  
    isTextRightPanelEnabled(): boolean {
