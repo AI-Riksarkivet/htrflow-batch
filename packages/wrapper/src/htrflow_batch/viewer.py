@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
 from collections.abc import Mapping
 
@@ -56,36 +57,62 @@ def _label(value: object, fallback: str) -> dict:
     return _language_map(value) or {"none": [fallback]}
 
 
+#: A plain web URI: what `rights` may be, as a viewer may link to it.
+_WEB_URI = re.compile(r"https?://[^\s\"'<>`]+")
+_DIRECTIONS = {"left-to-right", "right-to-left", "top-to-bottom", "bottom-to-top"}
+
+
 def _carried(source: dict) -> dict:
     """What a viewer must or should show of the source, in P3 form: the
     credit line clients MUST render (requiredStatement), the licence, the
     description, and whether the canvases are a book read in some direction.
-    P2 names these attribution, license, description and viewingHint."""
-    if isinstance(source.get("items"), list):  # P3: as it is
-        keys = ("requiredStatement", "rights", "summary", "metadata", "navDate")
-        out = {k: source[k] for k in keys if source.get(k)}
-        out["behavior"] = _reading(source.get("behavior"))
-    else:
-        out = {"summary": _language_map(source.get("description"))}
-        if text := _language_map(source.get("attribution")):
-            out["requiredStatement"] = {"label": {"en": ["Attribution"]}, "value": text}
-        licence = source.get("license")
-        out["rights"] = licence[0] if isinstance(licence, list) and licence else licence
-        out["metadata"] = [
-            {
-                "label": _language_map(m.get("label")),
-                "value": _language_map(m.get("value")),
-            }
-            for m in source.get("metadata") or []
-            if isinstance(m, dict)
-        ]
-        out["navDate"] = source.get("navDate")
-        out["behavior"] = _reading(source.get("viewingHint"))
-    if isinstance(source.get("viewingDirection"), str):
+    P2 names these attribution, license, description and viewingHint. Every
+    value is untrusted, so each is normalised to its P3 shape or left out."""
+    p3 = isinstance(source.get("items"), list)
+    statement = (
+        source.get("requiredStatement")
+        if p3
+        else {"label": {"en": ["Attribution"]}, "value": source.get("attribution")}
+    )
+    licences = source.get("rights" if p3 else "license")
+    licences = licences if isinstance(licences, list) else [licences]
+    out = {
+        "summary": _language_map(source.get("summary" if p3 else "description")),
+        "metadata": [e for m in _items(source.get("metadata")) if (e := _pair(m))],
+        "navDate": source.get("navDate")
+        if isinstance(source.get("navDate"), str)
+        else None,
+        "behavior": _reading(source.get("behavior" if p3 else "viewingHint")),
+        "rights": next(
+            (u for u in (_uri(v) for v in licences) if _WEB_URI.fullmatch(u)), None
+        ),
+    }
+    if isinstance(statement, dict):
+        out["requiredStatement"] = _pair(statement, {"en": ["Attribution"]})
+    if source.get("viewingDirection") in _DIRECTIONS:
         out["viewingDirection"] = source["viewingDirection"]
-    if not (isinstance(rights := out.get("rights"), str) and rights.startswith("http")):
-        out.pop("rights", None)  # a URI a viewer may link to, or nothing
     return {k: v for k, v in out.items() if v}
+
+
+def _items(value: object) -> list[dict]:
+    return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
+
+
+def _pair(entry: dict, label: dict | None = None) -> dict | None:
+    """A metadata or requiredStatement entry as P3 language maps, or None
+    when it has no value (or no label, and none to fall back on): P3 needs
+    both."""
+    pair = {
+        "label": _language_map(entry.get("label")) or label,
+        "value": _language_map(entry.get("value")),
+    }
+    return pair if pair["label"] and pair["value"] else None
+
+
+def _uri(value: object) -> str:
+    """A licence as a string: itself, or a JSON-LD object's ``@id``."""
+    value = value.get("@id") or value.get("id") if isinstance(value, dict) else value
+    return value if isinstance(value, str) else ""
 
 
 def _reading(hint: object) -> list[str]:
