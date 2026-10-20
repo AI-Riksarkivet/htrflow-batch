@@ -100,7 +100,7 @@ SITE
 # Workspace two-step sync per ra-skills dockerfile/references/python-uv.md:
 # --frozen with only pyprojects bind-mounted (member sources absent), then
 # --locked after COPY. Bind-mount EVERY workspace member's pyproject.toml.
-FROM debian:13-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS venv
+FROM debian:13-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS venv
 RUN apt-get update && apt-get install -y --no-install-recommends python3.13 \
     && rm -rf /var/lib/apt/lists/*
 # uv 0.12.6 (multi-arch index digest), the binary the wrapper image uses too
@@ -139,7 +139,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # certificates, and nothing else. The OS packages a slim base brings along and
 # Trivy keeps flagging (perl, util-linux, ncurses, sqlite, …) are not in it.
 # Nothing execs into this container: the chart probes /healthz over HTTP.
-FROM gcr.io/distroless/python3-debian13:nonroot@sha256:83aa8d4f74a4d7f7cf2d472054139bef71a927b76c680c0f2e1021d6b1d6d732
+FROM gcr.io/distroless/python3-debian13:nonroot@sha256:ed91505d162119a1e46552bc7f471c77737729a525269a7e9b60646807564601
 LABEL org.opencontainers.image.licenses="EUPL-1.2"
 COPY --from=venv /app/.venv /app/.venv
 # UV's page and what it needs, then the SPA: / is the campaign browser and
