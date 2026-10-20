@@ -144,6 +144,9 @@ class _SlowStore:
         self.clock["now"] += 2.0
         self.puts[key] = obj
 
+    def put_viewer_manifest(self, obj):
+        self.put_json("iiif.json", obj)
+
     def put_text(self, key, text, content_type):
         self.clock["now"] += 4.0
         self.puts[key] = text
@@ -310,6 +313,9 @@ class _ScoredStore:
 
     def put_json(self, key, obj):
         self.puts[key] = obj
+
+    def put_viewer_manifest(self, obj):
+        self.put_json("iiif.json", obj)
 
     def put_text(self, key, text, content_type):
         self.puts[key] = text

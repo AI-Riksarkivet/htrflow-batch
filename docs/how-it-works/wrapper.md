@@ -247,6 +247,9 @@ came out:
   shows the text panel only beside a search service; the web image's UV
   patch drops that condition, as the panel reads the ALTO and never searches.
 
+It is stored as `application/ld+json` with the Presentation 3 context as
+its profile, which is how the specification asks a manifest be served.
+
 Publishing `iiif.json` needs `RESULTS_URL`, the browser-reachable URL
 base, which is not the in-cluster S3 endpoint. The viewer manifest is written
 after verify, under the same `<pipeline-id>/<volume-ref>/` prefix, and

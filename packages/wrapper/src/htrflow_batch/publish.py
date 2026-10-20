@@ -214,8 +214,7 @@ def run(
     canvases = [p.name for p in pages if p.name in dims]
     block = qp.summary(store.page_quality, pipeline_text, canvases)
     if dims:
-        store.put_json(
-            "iiif.json",
+        store.put_viewer_manifest(
             build_viewer_manifest(
                 cfg,
                 source_manifest,
