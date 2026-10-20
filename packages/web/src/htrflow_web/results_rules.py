@@ -11,13 +11,8 @@ FILE_HEADERS = {
     "X-Content-Type-Options": "nosniff",
 }
 
-#: The types the wrapper writes; iiif.json is JSON-LD (Presentation 3, 6.3).
-_PASSED = (
-    "application/json",
-    "application/ld+json",
-    "application/xml",
-    "text/xml",
-    "text/plain",
+_PASSED = frozenset(
+    "application/json application/ld+json application/xml text/xml text/plain".split()
 )
 _ENCODED_SEPARATOR = re.compile(r"%(2f|5c)", re.IGNORECASE)
 

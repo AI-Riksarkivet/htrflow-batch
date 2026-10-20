@@ -323,10 +323,8 @@ def _p2_body(res: dict) -> dict:
     for key in ("width", "height"):
         if (value := _int_or_none(res.get(key))) is not None:
             body[key] = value
-    service = _image_service(res.get("service")) or {}
-    sid = service.get("@id") or service.get("id")
-    if isinstance(sid, str) and sid:
-        profile = service.get("profile")
+    if sid := _service_id(res.get("service")):
+        profile = (_image_service(res["service"]) or {}).get("profile")
         body["service"] = [
             {
                 "@id": sid,
@@ -340,13 +338,11 @@ def _p2_body(res: dict) -> dict:
 def _fetch_url(body: dict, canvas: dict, width: int) -> str | None:
     """Where a body's image is downloaded from: its image service, sized, or
     the body itself when it has none."""
-    service = _image_service(body.get("service")) or {}
-    sid = service.get("id") or service.get("@id")
-    if isinstance(sid, str) and sid:
+    if sid := _service_id(body.get("service")):
         # The image's own width; the canvas is a coordinate space whose size
         # is often, not always, the image's -- the best guess without one.
         own = _int_or_none(body.get("width")) or _int_or_none(canvas.get("width"))
-        return _sized(sid, own, width, full_size(service))
+        return _sized(sid, own, width, full_size(_image_service(body["service"]) or {}))
     return _body_id(body)
 
 

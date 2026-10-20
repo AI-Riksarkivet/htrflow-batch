@@ -406,7 +406,16 @@ fail=0
 # 5049 -> 5041: ResultStore.put_bytes (unused since the wrapper stopped
 # writing thumbnails) and viewer.parse_alto_dims_bytes (only tests called it)
 # removed.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 5041
+# 5041 -> 5080 (2026-10-20, IIIF conventions against the specs): viewer.py
+# +32 -- the credit line viewers MUST render, the licence and the reading
+# hints carried from the source, with Presentation 2's names mapped. iiif.py
+# +26: the first IMAGE service rather than service[0], a v2 service's own
+# level and the image's size, sizing by the image not the canvas, and
+# `full` for Image API 2. fetch.py +11: the fallback on 403/404/501 too and
+# v2's canonical `w,`. store.py +3: iiif.json as JSON-LD. Paid down in part:
+# synthetic.py -20 and main.py -11, the image-list manifest no longer
+# published (its canvases have no size), and the search-service stub gone.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 5080
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
