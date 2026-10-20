@@ -83,7 +83,7 @@ def _carried(source: dict) -> dict:
         out["behavior"] = _reading(source.get("viewingHint"))
     if isinstance(source.get("viewingDirection"), str):
         out["viewingDirection"] = source["viewingDirection"]
-    if not (isinstance(out.get("rights"), str) and out["rights"].startswith("http")):
+    if not (isinstance(rights := out.get("rights"), str) and rights.startswith("http")):
         out.pop("rights", None)  # a URI a viewer may link to, or nothing
     return {k: v for k, v in out.items() if v}
 
