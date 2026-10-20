@@ -132,8 +132,8 @@ def build_viewer_manifest(
                 {
                     "id": f"{vol}/alto/{page.name}.xml",
                     "type": "Dataset",
-                    "profile": "http://www.loc.gov/standards/alto/ns-v4#",
-                    "format": "application/xml+alto",
+                    "profile": "http://www.loc.gov/standards/alto",
+                    "format": "application/xml",
                     "label": {"none": ["ALTO"]},
                 }
             ],

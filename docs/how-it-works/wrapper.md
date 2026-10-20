@@ -236,8 +236,10 @@ came out:
   not carried: its ranges name the source's canvases, not these.
 - **Dimensions.** The **width-capped dimensions actually processed**, so the
   Universal Viewer's line overlays line up without coordinate rewriting.
-- **Text.** A `seeAlso` per canvas pointing at its ALTO URL under the results URL (ALTO v4
-  profile), the shape the viewer's text panel matches on.
+- **Text.** A `seeAlso` per canvas pointing at its ALTO URL under the
+  results URL, with the IIIF registry's ALTO profile
+  (`http://www.loc.gov/standards/alto`) and `application/xml`. The viewer's
+  text panel takes the first `seeAlso` whose profile names ALTO.
 - **Downloads.** A `rendering` per canvas for its ALTO and its PAGE XML,
   which the viewer's download dialog lists for the current page; that
   dialog never reads `seeAlso`.
