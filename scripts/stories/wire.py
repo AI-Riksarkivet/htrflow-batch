@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Regenerate the story tables on docs/features/*/feature.md, the epic table on
-docs/features/index.md and the "Features & Stories" nav block in zensical.toml
-from the ordered id lists below. Adding a story = new file + its id in a list here.
+docs/features/index.md from the ordered id lists below, and keep the
+"Features & Stories" block out of zensical.toml's nav. Adding a story = new file + its id in a list here.
 Ids are stable and never renumbered. Run from anywhere: python3 scripts/stories/wire.py
 """
 
@@ -385,50 +385,6 @@ s = s.replace(
 open(p, "w").write(s)
 
 
-# nav
-def navrows(ids, folder):
-    # A title is a TOML basic string: escape the quote a story may carry.
-    def title(i):
-        t = files[i][1] if len(files[i][1]) <= 48 else files[i][1][:45] + "…"
-        return f"{i} {t}".replace('"', '\\"')
-
-    return "".join(
-        f'      {{"{title(i)}" = "features/{folder}/stories/{os.path.basename(files[i][0])}"}},\n'
-        for i in ids
-    )
-
-
-nav = (
-    """  { "Features & Stories" = [
-    {"Overview" = "features/index.md"},
-    {"Batch using Kueue+Helm chart" = [
-      {"Feature #2800" = "features/batch-kueue-helm/feature.md"},
-"""
-    + navrows(B_impl + B_partly + B_obsolete + B_prod + B_after, "batch-kueue-helm")
-    + """    ]},
-    {"UV4 linux" = [
-      {"Feature #2801" = "features/uv4-linux/feature.md"},
-"""
-    + navrows(U_impl + U_partly + U_open, "uv4-linux")
-    + """    ]},
-    {"Campaigns status page" = [
-      {"Feature #2923" = "features/campaign-status-page/feature.md"},
-"""
-    + navrows(C_impl + C_partly + C_open, "campaign-status-page")
-    + """    ]},
-    {"Search — Solr" = [
-      {"Feature #2811" = "features/search-solr/feature.md"},
-"""
-    + navrows(S_all, "search-solr")
-    + """    ]},
-    {"ATR as a Service" = [
-      {"Feature #2831" = "features/atr-as-a-service/feature.md"},
-"""
-    + navrows(T_all, "atr-as-a-service")
-    + """    ]},
-  ]},
-"""
-)
 # The stories are the product view for the backlog (Azure DevOps), not for the
 # published site (a product-owner ruling, 2026-09-07): the nav gets no "Features & Stories"
 # block, and zensical.toml excludes docs/features/ from the build.

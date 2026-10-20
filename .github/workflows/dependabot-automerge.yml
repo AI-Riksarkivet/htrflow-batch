@@ -24,7 +24,7 @@ jobs:
   automerge:
     name: Enable auto-merge
     if: github.event.pull_request.user.login == 'dependabot[bot]'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write # merge, once the required checks pass
       pull-requests: write # turn auto-merge on

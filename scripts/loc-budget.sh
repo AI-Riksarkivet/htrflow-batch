@@ -403,7 +403,10 @@ fail=0
 # rendering per canvas for its ALTO and PAGE XML, the only thing UV's
 # download dialog lists. The rest is the explicit checks that replaced
 # asserts (gone under -O) and the safexml imports.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 5049
+# 5049 -> 5041: ResultStore.put_bytes (unused since the wrapper stopped
+# writing thumbnails) and viewer.parse_alto_dims_bytes (only tests called it)
+# removed.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 5041
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
