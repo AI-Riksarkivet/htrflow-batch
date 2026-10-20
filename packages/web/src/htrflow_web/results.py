@@ -265,7 +265,8 @@ def create_results_app(
     limiter: LoginLimiter | None = None,
     max_probes: int = MAX_PROBES,
 ) -> FastAPI:
-    app = FastAPI()
+    # No /docs, /redoc or /openapi.json, as in app.py (ZAP, 2026-10-20).
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     clients = clients or ClientCache(cfg)
     limiter = limiter or LoginLimiter()
     user_limiter = LoginLimiter(max_failures=10, window=300.0)
