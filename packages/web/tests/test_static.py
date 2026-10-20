@@ -374,12 +374,13 @@ def test_a_page_with_no_policy_of_its_own_gets_the_strictest(
 #: hashes: the rest from this origin only, style attributes inline, forms
 #: only to here (2026-10-20 DAST), and fetches from the API and the bucket.
 SPA_PAGE = (
-    "frame-ancestors 'none'; default-src 'self'; "
-    "style-src-attr 'unsafe-inline'; form-action 'self'"
+    "frame-ancestors 'none'; img-src 'self'; style-src 'self'; "
+    "style-src-attr 'unsafe-inline'; font-src 'self'; frame-src 'self'; "
+    "media-src 'self'; manifest-src 'self'; form-action 'self'"
 )
 SPA_CSP = f"{SPA_PAGE}; connect-src 'self' https://results.example.org/"
-#: Site-only mode, or a base no source can name: fetches go anywhere http(s).
-SPA_OPEN = f"{SPA_PAGE}; connect-src 'self' http: https:"
+#: Site-only mode, or a base no source can name: fetches are not narrowed.
+SPA_OPEN = SPA_PAGE
 
 
 def test_a_policy_stated_in_the_body_is_not_the_pages_own(static_dir: Path):
@@ -594,14 +595,26 @@ def test_the_spas_pages_load_nothing_from_elsewhere_but_their_fetches(
 ):
     """The meta tag holds scripts to hashes and says nothing of the rest, so
     images, styles, fonts and frames loaded from anywhere and a form posted
-    anywhere (ZAP, 2026-10-20). The header's default-src and form-action say
-    it for every page; style attributes stay inline, as the progress bars
-    and layout variables set style="..."."""
+    anywhere (ZAP, 2026-10-20). The header names each of them; style
+    attributes stay inline, as the progress bars and layout variables set
+    style="..."."""
     directives = {
         d.split()[0]: d.split()[1:]
         for d in client.get("/").headers["Content-Security-Policy"].split("; ")
     }
-    assert directives["default-src"] == ["'self'"]
+    for name in ("img-src", "style-src", "font-src", "frame-src", "media-src"):
+        assert directives[name] == ["'self'"], name
     assert directives["form-action"] == ["'self'"]
     assert directives["style-src-attr"] == ["'unsafe-inline'"]
-    assert "style-src" not in directives  # <style> elements: 'self' only
+
+
+def test_the_header_leaves_scripts_to_the_pages_meta_policy(client: TestClient):
+    """The browser enforces the header and the meta tag both, and only the
+    tag carries the hash of SvelteKit's inline start-up script. A default-src
+    in the header covered scripts too, and blocked that script: every page
+    rendered blank (found in a browser on k3s, 2026-10-20)."""
+    names = {
+        d.split()[0]
+        for d in client.get("/").headers["Content-Security-Policy"].split("; ")
+    }
+    assert not names & {"default-src", "script-src", "script-src-elem", "worker-src"}
