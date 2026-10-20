@@ -214,3 +214,84 @@ def test_viewer_manifest_publishes_no_javascript_body(cfg):
     )
     manifest = build_viewer_manifest(cfg, {}, [page], {"0001": (100, 200)})
     assert "javascript:" not in json.dumps(manifest)
+
+
+def _one_page(source, quality=None, summary=None, cfg=None):
+    from htrflow_batch.iiif import PageRef
+
+    canvas = (source.get("items") or [{}])[0]
+    pages = [PageRef(index=1, name="0001", image_url="https://i/1.jpg", canvas=canvas)]
+    return build_viewer_manifest(
+        cfg, source, pages, {"0001": (10, 10)}, quality=quality, summary=summary
+    )
+
+
+P3_RIGHTS = {
+    "requiredStatement": {
+        "label": {"en": ["Attribution"]},
+        "value": {"en": ["Provided by an archive"]},
+    },
+    "rights": "http://creativecommons.org/publicdomain/mark/1.0/",
+    "summary": {"en": ["A court book"]},
+    "metadata": [{"label": {"en": ["Date"]}, "value": {"none": ["1652"]}}],
+    "navDate": "1652-01-01T00:00:00Z",
+    "behavior": ["paged"],
+    "viewingDirection": "right-to-left",
+}
+
+
+def test_the_source_rights_and_reading_hints_are_published(cfg):
+    """Clients MUST render requiredStatement: dropping it republished an
+    archive's images under our domain without its credit line. behavior and
+    viewingDirection tell a viewer a book from a stack of sheets."""
+    m = _one_page(dict(P3_RIGHTS, items=[{"id": "c1"}]), cfg=cfg)
+    for key, value in P3_RIGHTS.items():
+        assert m[key] == value
+
+
+def test_the_quality_summary_follows_the_source_metadata(cfg):
+    summary = {"mean": 0.8, "min": 0.4, "scored": 1}
+    m = _one_page(dict(P3_RIGHTS, items=[{"id": "c1"}]), summary=summary, cfg=cfg)
+    assert m["metadata"][0] == P3_RIGHTS["metadata"][0]
+    assert m["metadata"][1]["label"] == {"en": ["Predicted quality"]}
+
+
+def test_p2_rights_and_reading_hints_are_published_in_p3_form(cfg, p2_manifest):
+    p2_manifest.update(
+        attribution="Provided by an archive",
+        license="http://creativecommons.org/publicdomain/mark/1.0/",
+        description={"@value": "En dombok", "@language": "sv"},
+        metadata=[{"label": "Date", "value": "1652"}],
+        viewingHint="paged",
+        viewingDirection="right-to-left",
+    )
+    m = _p2_viewer_manifest(cfg, p2_manifest)
+    assert m["requiredStatement"] == {
+        "label": {"en": ["Attribution"]},
+        "value": {"none": ["Provided by an archive"]},
+    }
+    assert m["rights"] == "http://creativecommons.org/publicdomain/mark/1.0/"
+    assert m["summary"] == {"sv": ["En dombok"]}
+    assert m["metadata"] == [{"label": {"none": ["Date"]}, "value": {"none": ["1652"]}}]
+    assert m["behavior"] == ["paged"]
+    assert m["viewingDirection"] == "right-to-left"
+
+
+@pytest.mark.parametrize(
+    "canvas",
+    [
+        {"id": "c1", "behavior": ["non-paged"]},
+        {"@id": "c1", "viewingHint": "non-paged"},
+    ],
+)
+def test_a_non_paged_canvas_stays_out_of_the_page_turning(cfg, canvas):
+    """A colour chart or a loose slip is marked non-paged; a viewer MUST NOT
+    put it in the page-turning view."""
+    m = _one_page({"items": [canvas]}, cfg=cfg)
+    assert m["items"][0]["behavior"] == ["non-paged"]
+
+
+def test_a_rights_value_that_is_not_a_web_uri_is_left_out(cfg):
+    """`rights` is a URI a viewer may link to; anything else is not one."""
+    m = _one_page({"rights": "javascript:alert(1)", "items": [{"id": "c1"}]}, cfg=cfg)
+    assert "rights" not in m

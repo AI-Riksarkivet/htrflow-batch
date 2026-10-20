@@ -56,6 +56,45 @@ def _label(value: object, fallback: str) -> dict:
     return _language_map(value) or {"none": [fallback]}
 
 
+def _carried(source: dict) -> dict:
+    """What a viewer must or should show of the source, in P3 form: the
+    credit line clients MUST render (requiredStatement), the licence, the
+    description, and whether the canvases are a book read in some direction.
+    P2 names these attribution, license, description and viewingHint."""
+    if isinstance(source.get("items"), list):  # P3: as it is
+        keys = ("requiredStatement", "rights", "summary", "metadata", "navDate")
+        out = {k: source[k] for k in keys if source.get(k)}
+        out["behavior"] = _reading(source.get("behavior"))
+    else:
+        out = {"summary": _language_map(source.get("description"))}
+        if text := _language_map(source.get("attribution")):
+            out["requiredStatement"] = {"label": {"en": ["Attribution"]}, "value": text}
+        licence = source.get("license")
+        out["rights"] = licence[0] if isinstance(licence, list) and licence else licence
+        out["metadata"] = [
+            {
+                "label": _language_map(m.get("label")),
+                "value": _language_map(m.get("value")),
+            }
+            for m in source.get("metadata") or []
+            if isinstance(m, dict)
+        ]
+        out["navDate"] = source.get("navDate")
+        out["behavior"] = _reading(source.get("viewingHint"))
+    if isinstance(source.get("viewingDirection"), str):
+        out["viewingDirection"] = source["viewingDirection"]
+    if not (isinstance(out.get("rights"), str) and out["rights"].startswith("http")):
+        out.pop("rights", None)  # a URI a viewer may link to, or nothing
+    return {k: v for k, v in out.items() if v}
+
+
+def _reading(hint: object) -> list[str]:
+    """P3 ``behavior`` from a P3 list or a P2 ``viewingHint`` string."""
+    return [
+        v for v in (hint if isinstance(hint, list) else [hint]) if isinstance(v, str)
+    ]
+
+
 _QUALITY_LABEL = {"en": ["Predicted quality"]}
 
 
@@ -126,6 +165,8 @@ def build_viewer_manifest(
                 }
             ],
         }
+        if behavior := _reading(src.get("behavior") or src.get("viewingHint")):
+            canvas["behavior"] = behavior  # "non-paged": out of the page turning
         if quality and page.name in quality:
             canvas["metadata"] = _quality_entry(f"{quality[page.name]:.2f}")
         canvases.append(canvas)
@@ -134,6 +175,7 @@ def build_viewer_manifest(
         "id": f"{vol}/iiif.json",
         "type": "Manifest",
         "label": _label(source_manifest.get("label"), cfg.volume_ref),
+        **_carried(source_manifest),
         # UV4 (RA fork) shows the ALTO text panel only when
         # getSearchService() finds a search service; endpoint is a stub.
         "service": [
@@ -147,7 +189,7 @@ def build_viewer_manifest(
         "items": canvases,
     }
     if summary is not None:
-        manifest["metadata"] = _quality_entry(
+        manifest["metadata"] = manifest.get("metadata", []) + _quality_entry(
             f"mean {summary['mean']:.2f}, lowest {summary['min']:.2f}, "
             f"over {summary['scored']} pages"
         )
