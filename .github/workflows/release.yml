@@ -34,7 +34,7 @@ jobs:
     # Only from main or a tag push: the signing identity is this workflow at
     # that ref, and that is what the verification recipe anchors to.
     if: github.event_name == 'push' || github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read # check out the tag
       id-token: write # keyless cosign signatures and the provenance attestation
@@ -98,7 +98,7 @@ jobs:
   release:
     needs: charts
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write # create the release; nothing else
     steps:
@@ -154,7 +154,7 @@ jobs:
   backfill:
     needs: charts
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write # upload assets to the existing release; nothing else
     steps:
