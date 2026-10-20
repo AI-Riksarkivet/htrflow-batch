@@ -281,6 +281,10 @@ network:                   # NetworkPolicies (docs: development/security, D14)
   # range here, in s3Cidrs and in apply.gitCidrs loses the internal ranges
   # that lie inside it (the ones below, link-local and loopback).
   iiifCidrs: []
+  # Ports those IIIF servers answer on. A self-hosted image server is not
+  # always on 443 or 80; like s3Ports, the answer is a value rather than a
+  # rule with no ports at all, which would match every port.
+  iiifPorts: [443, 80]
   # S3 endpoint(s) for batch Jobs and the results proxy. A
   # real endpoint goes here.
   s3Cidrs: []

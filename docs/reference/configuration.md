@@ -248,6 +248,7 @@ Each key is a key of its `values.yaml`.
 | `network.enabled` | `values.yaml` | `true` | — | no secret — nobody |
 | `network.defaultDeny` | `values.yaml` | `true` | — | no secret — nobody |
 | `network.iiifCidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
+| `network.iiifPorts` | `values.yaml` | `[443, 80]` | — | no secret — nobody |
 | `network.s3Cidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `network.s3InNamespace` | `values.yaml` | `true` | — | no secret — nobody |
 | `network.s3Ports` | `values.yaml` | `[443]` | — | no secret — nobody |
