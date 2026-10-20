@@ -73,12 +73,14 @@ on is published for both architectures under its pinned digest, and neither
 recipe names an architecture. The converter dockerfile is the web one's
 last two stages on their own.
 
-**Findings that do not apply.** Distroless Debian CVEs that Debian has not
-fixed and nothing in the images can reach are recorded in
-`.docker/distroless.openvex.json`, one statement per CVE, each scoped to the
-exact package version so the next package update retires it; every Trivy
-scan reads it with `--vex`. A test fails when the code starts to reach what a
-statement calls unused. The file is for these images' scans only.
+**The interpreter is uv's CPython build.** The web and converter images run
+python-build-standalone, installed by uv at the patch release the
+dockerfiles pin (`UV_PYTHON`), on a distroless runtime with no Python of its
+own. Debian brings CPython security fixes to its stable release only in
+point releases. The OpenSSL, expat and sqlite inside this build are linked
+into it, so Trivy does not list them as packages: moving `UV_PYTHON` (and uv,
+which chooses the build) to the next patch release is what picks up their
+fixes.
 
 **Each architecture is built natively.** Nothing passes `--platform`:
 `uv` crashes in a cross-architecture build, and a GPU image built for a

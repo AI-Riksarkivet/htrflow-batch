@@ -405,13 +405,11 @@ poc-push-arm64:
 
 # Vulnerability scan of the web image (the wrapper goes through
 # `make scan` / dagger). Trivy pinned; HIGH/CRITICAL with a fix fail the target.
-# Same Trivy release and digest as .dagger/main.go, and the same VEX
-# statements (.docker/distroless.openvex.json) as every dagger scan.
+# Same Trivy release and digest as .dagger/main.go.
 TRIVY_IMAGE ?= aquasec/trivy:0.65.0@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436
 scan-web: build-web
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-	  -v trivy-cache:/root/.cache/trivy -v $(CURDIR):/out:ro $(TRIVY_IMAGE) image \
-	  --vex /out/.docker/distroless.openvex.json \
+	  -v trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image \
 	  --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 $(WEB_IMAGE)
 
 # Trivy over an image that exists only in the local docker daemon: the arm64
@@ -427,7 +425,7 @@ SCAN_FLAGS ?= --ignore-unfixed --exit-code 1
 scan-image:
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
 	  -v trivy-cache:/root/.cache/trivy -v $(CURDIR):/out $(DOCKER_CA) $(TRIVY_IMAGE) image \
-	  --skip-version-check --vex /out/.docker/distroless.openvex.json \
+	  --skip-version-check \
 	  --severity $(SCAN_SEVERITY) $(SCAN_FLAGS) $(SCAN_IMAGE)
 
 # Helm cannot label a namespace it did not create. The enforce level comes

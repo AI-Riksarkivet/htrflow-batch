@@ -112,7 +112,7 @@ func (m *HtrflowBatch) ScanPublished(
 	// Which image of the index Trivy reads, by its own environment variable:
 	// this selects a published image to read, it builds nothing.
 	args := append(trivyArgs(severity, format, exitCode, ignoreUnfixed), "--image-src", "remote", ref)
-	output, err := m.trivy(source, caBundle).
+	output, err := m.trivy(caBundle).
 		WithEnvVariable("TRIVY_PLATFORM", "linux/"+arch).
 		WithExec(args).
 		Stdout(ctx)

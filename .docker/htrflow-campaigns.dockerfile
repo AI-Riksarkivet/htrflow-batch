@@ -2,14 +2,19 @@
 # (docs: reference/campaign-yaml.md, "With Argo CD"). Distroless like the web
 # image: no shell, no package manager; the hook's clone uses dulwich from the
 # same venv, so there is no git binary either.
+# The interpreter is uv's CPython build, as in the web image: see
+# htrflow-web.dockerfile's stage 3 for why, and why it moves by hand.
 FROM debian:13-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS venv
-RUN apt-get update && apt-get install -y --no-install-recommends python3.13 \
-    && rm -rf /var/lib/apt/lists/*
-COPY --from=ghcr.io/astral-sh/uv:0.12.6@sha256:88bc6eb1ccd4b82efd0e1b530caffabddf50dc2bf612e66c14ea25b8ee8a4d3d /uv /bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.13.1@sha256:4a1f3666816dafadd20ceb71eac9a7d56d7ef30279f7d64048519ab901ada336 /uv /bin/uv
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
-    UV_PYTHON_DOWNLOADS=never \
-    UV_PYTHON=/usr/bin/python3.13
+    UV_PYTHON_INSTALL_DIR=/opt/python \
+    UV_PYTHON=3.13.16
+RUN uv python install --no-bin \
+    && rm -rf /opt/python/cpython-*/lib/python3.*/site-packages/pip \
+         /opt/python/cpython-*/lib/python3.*/site-packages/pip-*.dist-info
+ENV UV_PYTHON_DOWNLOADS=never \
+    UV_PYTHON_PREFERENCE=only-managed
 WORKDIR /app
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
@@ -35,8 +40,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && uv pip install --python /app/.venv/bin/python --no-build --no-deps /tmp/dist/*.whl \
     && rm -rf /tmp/dist
 
-FROM gcr.io/distroless/python3-debian13:nonroot@sha256:ed91505d162119a1e46552bc7f471c77737729a525269a7e9b60646807564601
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:b7e81cb1af38d9345680e68bcf564d388f96304e25222030fc8c051faf8565b3
 LABEL org.opencontainers.image.licenses="EUPL-1.2"
+COPY --from=venv /opt/python /opt/python
 COPY --from=venv /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 # The release this image is published under: see htrflow-web.dockerfile's
