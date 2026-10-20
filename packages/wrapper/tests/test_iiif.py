@@ -725,16 +725,18 @@ def test_a_p2_service_that_names_no_level_is_published_as_level_0(p2_manifest):
 
 @pytest.mark.parametrize(
     "canvas_width, image_width, size",
-    [(1000, 6000, "2500,"), (6000, 1200, "max")],
-    ids=["small-canvas-big-image", "big-canvas-small-image"],
+    [(1000, 6000, "2500,"), (6000, 768, "2500,"), (1200, 1000, "max")],
+    ids=["small-canvas-big-image", "painted-derivative", "both-within-the-cap"],
 )
-def test_the_size_asked_for_is_the_images_not_the_canvass(
+def test_the_whole_image_is_asked_for_only_when_every_known_width_fits(
     canvas_width, image_width, size
 ):
-    """A Canvas is a coordinate space; the image painted on it has its own
-    pixel size. Judged by the canvas, a small canvas over a large image
-    fetched the full master, and a large canvas over a small image asked
-    for an upscale."""
+    """A Canvas is a coordinate space, and a painting body is often a sized
+    derivative of a larger service image: neither width alone is the
+    service image's. Judged by the canvas, a small canvas over a large image
+    fetched the full master; judged by the body, a 768 px derivative did.
+    A wrong `w,` guess costs one refused request and the info.json fallback;
+    a wrong whole-image guess costs a master in the lookahead."""
     canvas = _canvas_with_service(canvas_width, canvas_width)
     canvas["items"][0]["items"][0]["body"]["width"] = image_width
     pages = pages_from_manifest({"items": [canvas]}, width=2500)
