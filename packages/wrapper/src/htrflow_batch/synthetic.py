@@ -1,51 +1,31 @@
-"""Build a synthetic P3 manifest for ``IMAGES`` volumes (docs: wrapper).
+"""The canvases of an ``IMAGES`` volume (docs: wrapper).
 
-Proven pattern: LoC Lincoln papers run 2026-07-29. Bare image URLs carry no
-IIIF image service, so annotation bodies hold nothing but the direct image
-URL -- the wrapper fetches ``body.id`` as-is and canvas dimensions are
-recovered from the ALTO output later.
+Proven pattern: LoC Lincoln papers run 2026-07-29. Bare image URLs come with
+no manifest and no IIIF image service, so each becomes a canvas whose one
+painting body is the URL itself: the wrapper fetches ``body.id`` as-is and
+the viewer manifest publishes it. They are not published as a manifest: a
+Presentation 3 canvas must have a size, and an image's is known only once it
+is fetched -- ``iiif.json``, built afterwards, carries them.
 """
 
 from __future__ import annotations
 
+import mimetypes
 from collections.abc import Sequence
+from urllib.parse import urlsplit
 
 
-def build_manifest(volume_id: str, image_urls: Sequence[str], manifest_id: str) -> dict:
-    """Build a minimal valid P3 manifest with one canvas per image URL."""
+def build_manifest(image_urls: Sequence[str]) -> dict:
+    """The page list, in the shape of a P3 manifest's ``items``."""
     canvases = []
     for i, url in enumerate(image_urls, start=1):
-        cid = f"{manifest_id.rsplit('/', 1)[0]}/canvas/{i}"
+        body = {"id": url, "type": "Image"}
+        if kind := mimetypes.guess_type(urlsplit(url).path)[0]:
+            body["format"] = kind
         canvases.append(
             {
-                "id": cid,
-                "type": "Canvas",
                 "label": {"none": [f"Image {i}"]},
-                "items": [
-                    {
-                        "id": f"{cid}/ap",
-                        "type": "AnnotationPage",
-                        "items": [
-                            {
-                                "id": f"{cid}/anno",
-                                "type": "Annotation",
-                                "motivation": "painting",
-                                "target": cid,
-                                "body": {
-                                    "id": url,
-                                    "type": "Image",
-                                    "format": "image/jpeg",
-                                },
-                            }
-                        ],
-                    }
-                ],
+                "items": [{"items": [{"motivation": "painting", "body": body}]}],
             }
         )
-    return {
-        "@context": "http://iiif.io/api/presentation/3/context.json",
-        "id": manifest_id,
-        "type": "Manifest",
-        "label": {"none": [volume_id]},
-        "items": canvases,
-    }
+    return {"items": canvases}

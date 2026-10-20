@@ -12,9 +12,10 @@ The `setup` stage fetches the campaign's IIIF manifest: Presentation 2 or 3,
 http(s) only, at most 5 redirects, capped at `MANIFEST_MAX_BYTES`, and
 within `DOWNLOAD_DEADLINE_SECONDS`.
 
-An `images:` volume has no manifest, so the wrapper **builds one**: a minimal
-Presentation 3 document with one canvas per URL and the bare URL as the
-painting body. It publishes that manifest under `sources/`.
+An `images:` volume has no manifest, so the wrapper **makes the canvases**:
+one per URL, with the bare URL as the painting body. They stay in memory. A
+Presentation 3 canvas must have a size, and an image's is known only once it
+is fetched, so the only manifest published is the volume's `iiif.json`.
 
 Each canvas becomes a `PageRef` with three fields: a 1-based `index`, a
 zero-padded `name` (`0001`), and the URL to fetch.
