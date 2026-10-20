@@ -660,3 +660,17 @@ def test_fetch_manifest_slow_drip_is_cut_off_and_transient(drip_server):
     ):
         fetch_manifest(f"{drip_server('head')}/manifest", client, deadline=0.5)
     assert time.monotonic() - t0 < 5
+
+
+def test_the_image_service_is_found_behind_other_services():
+    """A P3 ``service`` list may lead with something that is not an image
+    service (an auth service, a search service), or offer the image under
+    two versions. The image is asked from the first IMAGE service, never
+    simply from ``service[0]``."""
+    canvas = _canvas_with_service(3000, 4000)
+    canvas["items"][0]["items"][0]["body"]["service"] = [
+        {"id": "https://auth/login", "type": "AuthAccessService2"},
+        {"id": "https://img/iiif/page-1", "type": "ImageService3"},
+    ]
+    pages = pages_from_manifest({"items": [canvas]}, width=2500)
+    assert pages[0].image_url == "https://img/iiif/page-1/full/2500,/0/default.jpg"
