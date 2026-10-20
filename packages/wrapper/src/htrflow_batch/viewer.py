@@ -5,13 +5,8 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from collections.abc import Mapping
 
-from . import safexml
 from .config import Config
 from .iiif import PageRef, painting_body
-
-
-def parse_alto_dims_bytes(data: bytes) -> tuple[int, int]:
-    return parse_alto_dims(safexml.fromstring(data))
 
 
 def parse_alto_dims(root: ET.Element) -> tuple[int, int]:
