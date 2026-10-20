@@ -103,6 +103,18 @@ def build_viewer_manifest(
                     "label": {"none": ["ALTO"]},
                 }
             ],
+            # what UV's download dialog lists for the current page; it never
+            # reads seeAlso. Plain application/xml, since UV shows the
+            # format's subtype next to the label.
+            "rendering": [
+                {
+                    "id": f"{vol}/{fmt}/{page.name}.xml",
+                    "type": "Text",
+                    "format": "application/xml",
+                    "label": {"none": [label]},
+                }
+                for fmt, label in (("alto", "ALTO"), ("page", "PAGE"))
+            ],
             "items": [
                 {
                     "id": f"{canvas_id}/ap",
