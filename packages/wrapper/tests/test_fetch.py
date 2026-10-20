@@ -249,7 +249,9 @@ def test_the_unscaled_fallback_does_not_spend_an_attempt(tmp_path):
     ]
 
 
-def _after_a_400(tmp_path, info, url="https://img/iiif/full/2500,/0/default.jpg"):
+def _after_a_400(
+    tmp_path, info, url="https://img/iiif/full/2500,/0/default.jpg", refusal=400
+):
     """The image request that follows a 400 on the sized one, when the
     service's info.json answers ``info`` (a dict, or a status code). Level 1
     servers 400 a sized request wider than the original (no upscaling); the
@@ -263,7 +265,7 @@ def _after_a_400(tmp_path, info, url="https://img/iiif/full/2500,/0/default.jpg"
                 return httpx.Response(info)
             return httpx.Response(200, json=info)
         if "/full/2500,/" in req.url.path:
-            return httpx.Response(400)
+            return httpx.Response(refusal)
         return httpx.Response(200, content=JPEG + b"fallback")
 
     page = PageRef(index=1, name="0001", image_url=url, canvas={})
@@ -340,6 +342,19 @@ def test_the_400_fallback_asks_a_v2_service_for_a_listed_size_as_w(tmp_path):
     }
     seen = _after_a_400(tmp_path, info)
     assert seen[-1] == "https://img/iiif/full/2250,/0/default.jpg"
+
+
+@pytest.mark.parametrize("refusal", [403, 404, 501])
+def test_a_size_refused_with_another_status_falls_back_too(tmp_path, refusal):
+    """Image API 2.1 answers a size past its limits with 404 and a feature it
+    lacks with 501; a static Level 0 host has no file at a size it never
+    rendered, so it says 404 -- or 403, as a bucket that hides its listing
+    does. Each failed the page for good, a size it would have served unasked."""
+    seen = _after_a_400(tmp_path, {"width": 1000}, refusal=refusal)
+    assert seen[1:] == [
+        "https://img/iiif/info.json",
+        "https://img/iiif/full/max/0/default.jpg",
+    ]
 
 
 def test_the_400_fallback_keeps_the_query_the_image_was_asked_with(tmp_path):

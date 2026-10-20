@@ -114,6 +114,12 @@ FETCH_BACKOFF = 2.0
 MAX_RETRY_AFTER = 60.0
 
 
+#: How a sized image request is refused: 400 (Image API 3), 404 for a size
+#: past the limits and 501 for a feature not implemented (2.1), 404 or 403
+#: from a static Level 0 host with no file at that size.
+SIZE_REFUSALS = frozenset({400, 403, 404, 501})
+
+
 def _transient_status(status: int) -> bool:
     """A status that says "not now": asked again, never recorded as the
     page's outcome. 501 and 505 are about what we asked, not when."""
@@ -236,8 +242,9 @@ def _check_pixels(path: Path, max_pixels: int) -> None:
 
 
 #: A IIIF Image API request as ``iiif._sized`` writes it: ``/full/<w>,/``, or
-#: ``/full/max/`` or ``/full/full/`` (no ``width``) for an image within the cap. ``base`` may
-#: itself carry a query (IIPImage's ``?IIIF=``), ``query`` is one after it.
+#: ``/full/max/`` (v3) or ``/full/full/`` (v2) -- no ``width`` -- for an image
+#: within the cap. ``base`` may itself carry a query (IIPImage's ``?IIIF=``),
+#: ``query`` is one after it.
 _SIZED = re.compile(
     r"^(?P<base>.+)/full/(?:(?P<width>\d+),|max|full)/"
     r"(?P<rest>[^/?#]+/[^/?#]+)(?P<query>[?#].*)?$"
@@ -250,11 +257,12 @@ INFO_MAX_BYTES = 1024 * 1024
 
 
 def _unscaled(url: str, client: httpx.Client, deadline: float) -> str | None:
-    """Where to ask after a 400 on a sized request, or None for a URL that
-    is not one. Audit 0923 W-9: this was always ``/full/max/``, the master,
-    even from a service that would serve a size within the cap -- and 64
-    masters in the lookahead outgrow the workdir. The image's info.json says
-    what it has (``_size_within``); ``max`` is the last resort."""
+    """Where to ask after a sized request is refused (SIZE_REFUSALS), or
+    None for a URL that is not one. Audit 0923 W-9: this was always the
+    whole image, the master, even from a service that would serve a size
+    within the cap -- and 64 masters in the lookahead outgrow the workdir.
+    The image's info.json says what it has (``_size_within``); the whole
+    image is the last resort."""
     m = _SIZED.match(url)
     if m is None or m["width"] is None:  # not sized; ``max`` has no smaller
         return None
@@ -369,9 +377,9 @@ def fetch_page(
                     return FetchResult(page=page, path=path, error=None, size=size)
                 last, status = f"HTTP {resp.status_code}", resp.status_code
                 wait = _retry_after(resp)
-            if status == 400 and not refused_size:
-                # Level 0/1 servers 400 a size they do not offer (an upscale,
-                # a width not listed); ask for one they do instead of failing
+            if status in SIZE_REFUSALS and not refused_size:
+                # Servers refuse a size they do not offer (an upscale, a
+                # width not listed); ask for one they do instead of failing
                 # the page. W13: a different URL, not another go at the one
                 # that failed, so it spends none of the page's attempts. Once.
                 refused_size = True
