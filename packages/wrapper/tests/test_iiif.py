@@ -674,3 +674,26 @@ def test_the_image_service_is_found_behind_other_services():
     ]
     pages = pages_from_manifest({"items": [canvas]}, width=2500)
     assert pages[0].image_url == "https://img/iiif/page-1/full/2500,/0/default.jpg"
+
+
+def test_a_p2_image_is_published_with_its_own_level_and_size(p2_manifest):
+    """The P2 -> P3 body used to claim level 2 for every v2 service, telling
+    the viewer a level 0/1 server cuts any region at any size. The service
+    says what it is; the image (P3: SHOULD) carries its size."""
+    from htrflow_batch.iiif import painting_body
+
+    canvas = p2_manifest["sequences"][0]["canvases"][0]
+    canvas["images"][0]["resource"].update(width=6000, height=8000)
+    body = painting_body(canvas)
+    assert body["service"][0]["profile"] == "http://iiif.io/api/image/2/level1.json"
+    assert (body["width"], body["height"]) == (6000, 8000)
+
+
+def test_a_p2_service_that_names_no_level_is_published_as_level_0(p2_manifest):
+    """Level 0 asks the viewer for nothing the service did not offer."""
+    from htrflow_batch.iiif import painting_body
+
+    canvas = p2_manifest["sequences"][0]["canvases"][0]
+    del canvas["images"][0]["resource"]["service"]["profile"]
+    body = painting_body(canvas)
+    assert body["service"][0]["profile"] == "http://iiif.io/api/image/2/level0.json"
