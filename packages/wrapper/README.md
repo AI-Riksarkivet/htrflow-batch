@@ -56,7 +56,7 @@ Exit codes: `0` success, `13` permanent (do not retry), `1` transient,
 | Env var | Meaning |
 |---|---|
 | `VOLUME_REF` | Volume id, last segment of the S3 result prefix |
-| `IIIF_MANIFEST_URL` **or** `IMAGES` | Exactly one: a Presentation v2/v3 manifest URL, or space-separated image URLs (a synthetic manifest is built and published) |
+| `IIIF_MANIFEST_URL` **or** `IMAGES` | Exactly one: a Presentation v2/v3 manifest URL, or space-separated image URLs (one canvas per URL, no source manifest) |
 | `PIPELINE_PATH` | Mounted pipeline YAML (`/config/pipeline.yaml` in Jobs) |
 | `PIPELINE_ID` | Pipeline id, first segment of the S3 result prefix |
 | `S3_BUCKET` | Results bucket |
@@ -82,7 +82,7 @@ page has the full table with semantics.
 | `config.py` | `Config.from_env`, fail-fast on missing env |
 | `main.py` | The stage machine, SIGTERM handling, exit-code mapping |
 | `iiif.py` | Manifest fetch with byte caps and the permanent/transient split; v2 and v3 parsing into an ordered page list |
-| `synthetic.py` | Synthetic v3 manifest for `IMAGES` volumes |
+| `synthetic.py` | The canvases of an `IMAGES` volume |
 | `fetch.py` | Bounded-lookahead downloader: sized requests, raster acceptance, retry and backoff |
 | `stream.py` | Consumer loop: process each page as it lands, upload, rolling-delete |
 | `driver.py` | htrflow integration: pipeline from YAML, `process_page`, version pin |

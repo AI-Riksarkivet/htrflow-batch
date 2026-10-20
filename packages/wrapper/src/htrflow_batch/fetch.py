@@ -52,7 +52,7 @@ from .bounded import (
     body_chunks,
     get,
 )
-from .iiif import PageRef, _int_or_none
+from .iiif import PageRef, _int_or_none, full_size
 
 if TYPE_CHECKING:
     from .imagecache import ImageCache
@@ -112,6 +112,12 @@ FETCH_BACKOFF = 2.0
 #: for longer is outlasting the attempts, and the index's retry, minutes
 #: later, is the better place to ask again.
 MAX_RETRY_AFTER = 60.0
+
+
+#: How a sized image request is refused: 400 (Image API 3), 404 for a size
+#: past the limits and 501 for a feature not implemented (2.1), 404 or 403
+#: from a static Level 0 host with no file at that size.
+SIZE_REFUSALS = frozenset({400, 403, 404, 501})
 
 
 def _transient_status(status: int) -> bool:
@@ -236,10 +242,11 @@ def _check_pixels(path: Path, max_pixels: int) -> None:
 
 
 #: A IIIF Image API request as ``iiif._sized`` writes it: ``/full/<w>,/``, or
-#: ``/full/max/`` (no ``width``) for a canvas within the cap. ``base`` may
-#: itself carry a query (IIPImage's ``?IIIF=``), ``query`` is one after it.
+#: ``/full/max/`` (v3) or ``/full/full/`` (v2) -- no ``width`` -- for an image
+#: within the cap. ``base`` may itself carry a query (IIPImage's ``?IIIF=``),
+#: ``query`` is one after it.
 _SIZED = re.compile(
-    r"^(?P<base>.+)/full/(?:(?P<width>\d+),|max)/"
+    r"^(?P<base>.+)/full/(?:(?P<width>\d+),|max|full)/"
     r"(?P<rest>[^/?#]+/[^/?#]+)(?P<query>[?#].*)?$"
 )
 
@@ -250,11 +257,12 @@ INFO_MAX_BYTES = 1024 * 1024
 
 
 def _unscaled(url: str, client: httpx.Client, deadline: float) -> str | None:
-    """Where to ask after a 400 on a sized request, or None for a URL that
-    is not one. Audit 0923 W-9: this was always ``/full/max/``, the master,
-    even from a service that would serve a size within the cap -- and 64
-    masters in the lookahead outgrow the workdir. The image's info.json says
-    what it has (``_size_within``); ``max`` is the last resort."""
+    """Where to ask after a sized request is refused (SIZE_REFUSALS), or
+    None for a URL that is not one. Audit 0923 W-9: this was always the
+    whole image, the master, even from a service that would serve a size
+    within the cap -- and 64 masters in the lookahead outgrow the workdir.
+    The image's info.json says what it has (``_size_within``); the whole
+    image is the last resort."""
     m = _SIZED.match(url)
     if m is None or m["width"] is None:  # not sized; ``max`` has no smaller
         return None
@@ -277,14 +285,16 @@ def _image_info(client: httpx.Client, url: str, deadline: float) -> dict:
 
 
 def _size_within(info: dict, cap: int) -> str:
-    """The IIIF size to ask for: the full size when it is within ``cap`` (no
-    upscale), else the largest listed ``sizes`` entry within it (all a Level
-    0 service offers, asked as ``w,h``), else a ``maxWidth`` below it (v3 on
-    the service, v2 in its profile), else ``max``, which only FETCH_MAX_BYTES
-    and MAX_IMAGE_PIXELS then bound."""
+    """The IIIF size to ask for: the whole image when it is within ``cap``
+    (no upscale), else the largest listed ``sizes`` entry within it (all a
+    Level 0 service offers, in the canonical form a static one has files
+    at: ``w,`` in v2, ``w,h`` in v3), else a ``maxWidth`` below it (v3 on
+    the service, v2 in its profile), else the whole image, which only
+    FETCH_MAX_BYTES and MAX_IMAGE_PIXELS then bound."""
+    whole = full_size(info)
     width = _int_or_none(info.get("width"))
     if width and width <= cap:
-        return "max"
+        return whole
     fits = [
         (w, h)
         for s in _list(info.get("sizes"))
@@ -294,10 +304,11 @@ def _size_within(info: dict, cap: int) -> str:
         and w <= cap
     ]
     if fits:
-        return "{},{}".format(*max(fits))
+        w, h = max(fits)
+        return f"{w}," if whole == "full" else f"{w},{h}"
     limits = [info] + [p for p in _list(info.get("profile")) if isinstance(p, dict)]
     widths = [w for d in limits if (w := _int_or_none(d.get("maxWidth")))]
-    return f"{min(widths)}," if widths and min(widths) <= cap else "max"
+    return f"{min(widths)}," if widths and min(widths) <= cap else whole
 
 
 def _list(value: object) -> list:
@@ -366,9 +377,9 @@ def fetch_page(
                     return FetchResult(page=page, path=path, error=None, size=size)
                 last, status = f"HTTP {resp.status_code}", resp.status_code
                 wait = _retry_after(resp)
-            if status == 400 and not refused_size:
-                # Level 0/1 servers 400 a size they do not offer (an upscale,
-                # a width not listed); ask for one they do instead of failing
+            if status in SIZE_REFUSALS and not refused_size:
+                # Servers refuse a size they do not offer (an upscale, a
+                # width not listed); ask for one they do instead of failing
                 # the page. W13: a different URL, not another go at the one
                 # that failed, so it spends none of the page's attempts. Once.
                 refused_size = True

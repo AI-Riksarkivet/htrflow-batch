@@ -225,15 +225,32 @@ came out:
 
 - **Image.** Copied from the source canvas, with its image service, so
   tiles keep coming from the IIIF origin and the platform serves no images.
+  An image from a Presentation 2 manifest keeps its size and its service's
+  own compliance level (level 0 when it names none), so the viewer asks it
+  only for what it serves.
+- **Rights and reading.** The source's credit line (`requiredStatement`,
+  which viewers must show), `rights`, `summary`, `metadata`, `navDate`,
+  `behavior` and `viewingDirection`, with Presentation 2's `attribution`,
+  `license`, `description` and `viewingHint` turned into them. A canvas
+  marked `non-paged` stays marked. Each value is untrusted, so it is
+  normalised to its Presentation 3 shape or left out: `rights` is the first
+  plain web URI the source names. The table of contents (`structures`) is
+  not carried: its ranges name the source's canvases, not these.
 - **Dimensions.** The **width-capped dimensions actually processed**, so the
   Universal Viewer's line overlays line up without coordinate rewriting.
-- **Text.** A `seeAlso` per canvas pointing at its ALTO URL under the results URL (ALTO v4
-  profile), the shape the viewer's text panel matches on.
+- **Text.** A `seeAlso` per canvas pointing at its ALTO URL under the
+  results URL, with the IIIF registry's ALTO profile
+  (`http://www.loc.gov/standards/alto`) and `application/xml`. The viewer's
+  text panel takes the first `seeAlso` whose profile names ALTO.
 - **Downloads.** A `rendering` per canvas for its ALTO and its PAGE XML,
   which the viewer's download dialog lists for the current page; that
   dialog never reads `seeAlso`.
-- **Search service.** A stub `SearchService1` entry, because the viewer
-  shows the text panel only when one is present.
+- **No search service.** None exists, so none is advertised. Stock UV
+  shows the text panel only beside a search service; the web image's UV
+  patch drops that condition, as the panel reads the ALTO and never searches.
+
+It is stored as `application/ld+json` with the Presentation 3 context as
+its profile, which is how the specification asks a manifest be served.
 
 Publishing `iiif.json` needs `RESULTS_URL`, the browser-reachable URL
 base, which is not the in-cluster S3 endpoint. The viewer manifest is written

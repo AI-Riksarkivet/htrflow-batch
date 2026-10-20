@@ -214,21 +214,53 @@ def fetch_manifest(
     return data
 
 
-def _service_id(service: object) -> str | None:
-    """P2 allows a bare dict, P3 a list; both use `id` or `@id`."""
-    if isinstance(service, list):
-        service = service[0] if service else None
-    if isinstance(service, dict):
-        sid = service.get("id") or service.get("@id")
-        return sid if isinstance(sid, str) else None
+def _image_service(service: object) -> dict | None:
+    """The first image service: P2 allows a bare dict, P3 a list, which may
+    lead with an auth or search service. An entry with no type, as P2's
+    usually have, is one unless its context or profile names another IIIF
+    API (``/api/auth/``, ``/api/search/``)."""
+    for entry in service if isinstance(service, list) else [service]:
+        if isinstance(entry, dict):
+            kind = entry.get("type") or entry.get("@type")
+            if isinstance(kind, str):
+                if kind.startswith("ImageService"):
+                    return entry
+            elif not _OTHER_API.search(_marks(entry)):
+                return entry
     return None
 
 
-def _sized(sid: str, canvas: dict, width: int) -> str:
+def _service_id(service: object) -> str | None:
+    """The image service's `id` (P3) or `@id` (P2)."""
+    entry = _image_service(service) or {}
+    sid = entry.get("id") or entry.get("@id")
+    return sid if isinstance(sid, str) else None
+
+
+_V1_OR_V2 = re.compile(r"ImageService[12]\b|/api/image/[12]/")
+_V3 = re.compile(r"ImageService3\b|/api/image/3/")
+_OTHER_API = re.compile(r"iiif\.io/api/(?!image/)")
+
+
+def _marks(service: dict) -> str:
+    """What says which API, and which version, a service is."""
+    return json.dumps(
+        [service.get(k) for k in ("type", "@type", "@context", "profile")]
+    )
+
+
+def full_size(service: dict) -> str:
+    """The size that names the whole image, for a service or an info.json:
+    Image API 3 requires `max` at every level and drops `full`; 2 requires
+    `full` (2.1 made `max` optional, 2.0 has none). A service that names no
+    version is taken for 3."""
+    return "full" if _V1_OR_V2.search(_marks(service)) else "max"
+
+
+def _sized(sid: str, image_width: int | None, width: int, whole: str) -> str:
     # Some IIIF servers reject "!w,h" (501) but take "w,"; Level1 servers reject
-    # upscaling (400), so a canvas narrower than the cap must ask for max.
-    cw = _int_or_none(canvas.get("width"))
-    size = "max" if cw and cw <= width else f"{width},"
+    # upscaling (400), so an image narrower than the cap must ask for it whole.
+    size = whole if image_width and image_width <= width else f"{width},"
     return f"{sid.rstrip('/')}/full/{size}/0/default.jpg"
 
 
@@ -293,19 +325,26 @@ def _body_candidates(body: object) -> list[dict]:
 def _p2_body(res: dict) -> dict:
     """A P2 image resource as a P3-style body. The service keeps v2-style
     keys (@id/@type/profile): UV silently shows no image otherwise (docs:
-    wrapper)."""
+    wrapper). Its version and profile are the service's own -- a level it
+    does not claim would have the viewer ask for sizes it 400s -- or 2 and
+    level 0: P2 predates Image API 3, though manifests in the wild pair them."""
     body = {
         "id": res.get("@id") or res.get("id"),
         "type": "Image",
         "format": res.get("format", "image/jpeg"),
     }
-    sid = _service_id(res.get("service"))
-    if sid:
+    for key in ("width", "height"):
+        if (value := _int_or_none(res.get(key))) is not None:
+            body[key] = value
+    if sid := _service_id(res.get("service")):
+        service = _image_service(res["service"]) or {}
+        v3 = bool(_V3.search(_marks(service)))
         body["service"] = [
             {
                 "@id": sid,
-                "@type": "ImageService2",
-                "profile": "http://iiif.io/api/image/2/level2.json",
+                "@type": "ImageService3" if v3 else "ImageService2",
+                "profile": service.get("profile")
+                or ("level0" if v3 else "http://iiif.io/api/image/2/level0.json"),
             }
         ]
     return body
@@ -314,9 +353,16 @@ def _p2_body(res: dict) -> dict:
 def _fetch_url(body: dict, canvas: dict, width: int) -> str | None:
     """Where a body's image is downloaded from: its image service, sized, or
     the body itself when it has none."""
-    sid = _service_id(body.get("service"))
-    if sid:
-        return _sized(sid, canvas, width)
+    if sid := _service_id(body.get("service")):
+        # Whole only when every width known fits: the canvas is a coordinate
+        # space and the body is often a sized derivative, so neither alone is
+        # the service image's. A wrong `w,` costs a refusal and the info.json
+        # fallback; a wrong whole image costs a master in the lookahead.
+        known = [_int_or_none(body.get("width")), _int_or_none(canvas.get("width"))]
+        widest = max((w for w in known if w), default=None)
+        return _sized(
+            sid, widest, width, full_size(_image_service(body["service"]) or {})
+        )
     return _body_id(body)
 
 

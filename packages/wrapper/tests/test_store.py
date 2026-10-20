@@ -31,6 +31,17 @@ def test_upload_page_and_listing(cfg, s3, tmp_path):
     assert obj["Body"].read() == b"<alto/>"
 
 
+def test_the_viewer_manifest_is_json_ld_with_the_presentation_3_profile(cfg, s3):
+    """Presentation 3 (6.3): a manifest SHOULD be served as application/ld+json
+    with the context as its profile."""
+    store = ResultStore(cfg)
+    store.put_viewer_manifest({"type": "Manifest"})
+    obj = s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/iiif.json")
+    assert obj["ContentType"] == (
+        'application/ld+json;profile="http://iiif.io/api/presentation/3/context.json"'
+    )
+
+
 def test_put_json_content_type(cfg, s3):
     store = ResultStore(cfg)
     store.put_json("manifest.json", {"ok": True})

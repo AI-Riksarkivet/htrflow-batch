@@ -178,8 +178,7 @@ class Progress:
         if not dims or len(dims) + len(self.store.dimless_pages) < done:
             return
         try:
-            self.store.put_json(
-                "iiif.json",
+            self.store.put_viewer_manifest(
                 build_viewer_manifest(
                     self.cfg,
                     self.source,
