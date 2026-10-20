@@ -697,3 +697,21 @@ def test_a_p2_service_that_names_no_level_is_published_as_level_0(p2_manifest):
     del canvas["images"][0]["resource"]["service"]["profile"]
     body = painting_body(canvas)
     assert body["service"][0]["profile"] == "http://iiif.io/api/image/2/level0.json"
+
+
+@pytest.mark.parametrize(
+    "canvas_width, image_width, size",
+    [(1000, 6000, "2500,"), (6000, 1200, "max")],
+    ids=["small-canvas-big-image", "big-canvas-small-image"],
+)
+def test_the_size_asked_for_is_the_images_not_the_canvass(
+    canvas_width, image_width, size
+):
+    """A Canvas is a coordinate space; the image painted on it has its own
+    pixel size. Judged by the canvas, a small canvas over a large image
+    fetched the full master, and a large canvas over a small image asked
+    for an upscale."""
+    canvas = _canvas_with_service(canvas_width, canvas_width)
+    canvas["items"][0]["items"][0]["body"]["width"] = image_width
+    pages = pages_from_manifest({"items": [canvas]}, width=2500)
+    assert pages[0].image_url == f"https://img/iiif/page-1/full/{size}/0/default.jpg"
