@@ -117,7 +117,7 @@ def test_campaigns_image_is_distroless_nonroot_and_locked():
     text = (REPO / ".docker/htrflow-campaigns.dockerfile").read_text()
     final = re.split(r"^FROM ", text, flags=re.M)[-1]
     assert re.match(
-        r"gcr\.io/distroless/python3-debian13:nonroot@sha256:[0-9a-f]{64}\s", final
+        r"gcr\.io/distroless/cc-debian13:nonroot@sha256:[0-9a-f]{64}\s", final
     )
     commands = _commands(text)
     installs = [
