@@ -160,6 +160,32 @@ never be scheduled (review of PR #35).
 {{- end }}
 {{- end }}
 {{- end }}
+{{- /*
+The one-flavor path (`queue.resources`, read only while `queue.flavors` is
+empty) and `queue.priorityClasses` get the same two checks: a name listed
+twice is an object Kueue or Helm refuses at install, and a quota of nothing
+admits no campaign pod and reads as "Queued".
+*/}}
+{{- if not .Values.queue.flavors }}
+{{- $seenResource := dict }}
+{{- range .Values.queue.resources }}
+{{- if hasKey $seenResource .name }}
+{{- fail (printf "queue.resources names %s twice: a ClusterQueue covers a resource once, so remove one of them" .name) }}
+{{- end }}
+{{- $_ := set $seenResource .name true }}
+{{- $quota := toString .quota }}
+{{- if not (regexMatch "[1-9]" (regexReplaceAll "(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E|m)$" $quota "")) }}
+{{- fail (printf "queue.resources has a %s quota of %q: a quota of nothing admits no campaign pod, ever, and the queue reads as Queued; give it more than 0" .name $quota) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- $seenClass := dict }}
+{{- range .Values.queue.priorityClasses }}
+{{- if hasKey $seenClass .name }}
+{{- fail (printf "queue.priorityClasses names %s twice: a WorkloadPriorityClass is one cluster-scoped object, so rename one of them" .name) }}
+{{- end }}
+{{- $_ := set $seenClass .name true }}
+{{- end }}
 {{- end }}
 
 {{/*
