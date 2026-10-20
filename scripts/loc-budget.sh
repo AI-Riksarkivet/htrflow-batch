@@ -1722,5 +1722,10 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 6319
 # 2173 -> 2174 (audit 1001 R5): trusted hops follow network.web.ingressFrom too.
 # 2174 -> 2176 (audit 1001 review): two hops need a ClusterIP Service too.
 # 2176 -> 2183 (audit 1001 R7): a resultsUrl not ending in /results is refused.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2183
+# 2183 -> 2215 (chart audit 1020): _helpers.tpl +24, the one-flavor quotas and
+# the priority classes get the flavor list's duplicate and zero checks;
+# web.enabled wraps web.yaml and results.yaml (+4), gates rbac-scope's web
+# rule (+6) and the install notes (+5); network.yaml +2, IIIF ports from a
+# value; results.yaml -1, a duplicate digest check.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2215
 exit $fail
