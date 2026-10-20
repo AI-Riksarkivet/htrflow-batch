@@ -176,16 +176,6 @@ def build_viewer_manifest(
         "type": "Manifest",
         "label": _label(source_manifest.get("label"), cfg.volume_ref),
         **_carried(source_manifest),
-        # UV4 (RA fork) shows the ALTO text panel only when
-        # getSearchService() finds a search service; endpoint is a stub.
-        "service": [
-            {
-                "@context": "http://iiif.io/api/search/1/context.json",
-                "@id": f"{vol}/search",
-                "@type": "SearchService1",
-                "profile": "http://iiif.io/api/search/1/search",
-            }
-        ],
         "items": canvases,
     }
     if summary is not None:

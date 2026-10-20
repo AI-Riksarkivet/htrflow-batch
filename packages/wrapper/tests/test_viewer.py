@@ -57,14 +57,13 @@ def test_build_viewer_manifest(sample_manifest, cfg):
     assert "alto" in sa["profile"]
 
 
-def test_viewer_manifest_declares_search_service(sample_manifest, cfg):
-    """UV4 (RA fork) gates the ALTO text panel on getSearchService() —
-    without a search service entry the transcription panel never shows."""
+def test_viewer_manifest_advertises_no_search_service(sample_manifest, cfg):
+    """No search endpoint exists, so none is advertised: a viewer that
+    honoured the old stub got a 404. The text panel no longer needs one
+    (the UV patch's BaseExtension.ts hunk)."""
     pages = pages_from_manifest(sample_manifest, width=2500)
     m = build_viewer_manifest(cfg, sample_manifest, pages, {"0001": (2500, 3538)})
-    svc = m["service"][0]
-    assert svc["profile"] == "http://iiif.io/api/search/1/search"
-    assert svc["@id"] == "http://public/htr-results/demo-v1/SE-RA-1234/search"
+    assert "service" not in m
 
 
 def test_each_canvas_offers_its_xml_for_download(sample_manifest, cfg):
