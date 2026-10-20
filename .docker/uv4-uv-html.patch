@@ -31,6 +31,12 @@ commit; `git apply` skips this preamble. What each file changes:
 - styles.less: outline the line overlays; a line with a polygon carries
   its outline and fill (the current-line highlight too) on the polygon, in
   a stroke that stays thin at any zoom.
+- DownloadDialogue.tsx: offer a canvas's renderings (the page's ALTO and
+  PAGE XML) whether or not its image has an image service; stock UV only
+  offers them behind that service, so a plain-JPEG page had no download.
+- uv-iiif-config.json: downloadOcrEnabled off. Its links are built for
+  RA's own download server from ids a regex pulls out of the image URL;
+  they never point at a run's results.
 
 diff --git a/src/content-handlers/iiif/modules/uv-openseadragoncenterpanel-module/css/styles.less b/src/content-handlers/iiif/modules/uv-openseadragoncenterpanel-module/css/styles.less
 index b2622a8..45b417d 100644
@@ -557,3 +563,42 @@ index e6035dd..082fc17 100644
          );
          $(div).on("keydown", (e: any) => {
            const originalEvent: KeyboardEvent = <KeyboardEvent>e.originalEvent;
+diff --git a/src/content-handlers/iiif/extensions/uv-openseadragon-extension/DownloadDialogue.tsx b/src/content-handlers/iiif/extensions/uv-openseadragon-extension/DownloadDialogue.tsx
+index 2057170..b23fad7 100644
+--- a/src/content-handlers/iiif/extensions/uv-openseadragon-extension/DownloadDialogue.tsx
++++ b/src/content-handlers/iiif/extensions/uv-openseadragon-extension/DownloadDialogue.tsx
+@@ -247,6 +247,13 @@ const DownloadDialogue = ({
+ 
+     const canvas: Canvas = getSelectedCanvas();
+ 
++    // a canvas's renderings (its ALTO, say) are files of their own, not
++    // derivatives of the image, so neither the image's service nor its size
++    // has a say in whether they are offered
++    if (option === DownloadOption.CANVAS_RENDERINGS) {
++      return canvas.getRenderings().length > 0;
++    }
++
+     // if the external resource doesn't have a service descriptor or is level 0
+     // only allow wholeImageHighRes
+     if (
+@@ -274,7 +281,6 @@ const DownloadDialogue = ({
+         if (!downloadWholeImageHighResEnabled) {
+           return false;
+         }
+-      case DownloadOption.CANVAS_RENDERINGS:
+       case DownloadOption.IMAGE_RENDERINGS:
+         const maxDimensions: Size | null = canvas.getMaxDimensions();
+ 
+diff --git a/src/uv-iiif-config.json b/src/uv-iiif-config.json
+index c75ff0d..2712775 100644
+--- a/src/uv-iiif-config.json
++++ b/src/uv-iiif-config.json
+@@ -29,7 +29,7 @@
+     "downloadDialogue": {
+       "options": {
+         "selectionEnabled": true,
+-        "downloadOcrEnabled": true,
++        "downloadOcrEnabled": false,
+         "downloadUrls": {
+           "currentAsXml": "https://lbiiif-acc.riksarkivet.se/download/current/alto/{0}?format=xml&imageid={1}",
+           "currentAsZippedXml": "https://lbiiif-acc.riksarkivet.se/download/current/alto/{0}?format=zip&imageid={1}",
