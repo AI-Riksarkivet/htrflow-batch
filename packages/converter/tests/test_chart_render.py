@@ -2206,7 +2206,9 @@ def test_the_web_front_no_longer_touches_the_s3_secret():
         for e in web["spec"]["template"]["spec"]["containers"][0]["env"]
     }
     assert env["HTRFLOW_RESULTS_PROXY"] == "http://htrflow-results:8082/results"
-    assert env["HTRFLOW_INTERNAL_RESULTS_BASE"] == "http://htrflow-results:8082/results"
+    # The web package reads progress at the proxy unless told otherwise; the
+    # chart used to say the same address twice.
+    assert "HTRFLOW_INTERNAL_RESULTS_BASE" not in env
 
 
 def test_the_network_policies_route_web_to_proxy_and_proxy_to_s3():
