@@ -339,10 +339,15 @@ def _fetch_url(body: dict, canvas: dict, width: int) -> str | None:
     """Where a body's image is downloaded from: its image service, sized, or
     the body itself when it has none."""
     if sid := _service_id(body.get("service")):
-        # The image's own width; the canvas is a coordinate space whose size
-        # is often, not always, the image's -- the best guess without one.
-        own = _int_or_none(body.get("width")) or _int_or_none(canvas.get("width"))
-        return _sized(sid, own, width, full_size(_image_service(body["service"]) or {}))
+        # Whole only when every width known fits: the canvas is a coordinate
+        # space and the body is often a sized derivative, so neither alone is
+        # the service image's. A wrong `w,` costs a refusal and the info.json
+        # fallback; a wrong whole image costs a master in the lookahead.
+        known = [_int_or_none(body.get("width")), _int_or_none(canvas.get("width"))]
+        widest = max((w for w in known if w), default=None)
+        return _sized(
+            sid, widest, width, full_size(_image_service(body["service"]) or {})
+        )
     return _body_id(body)
 
 

@@ -38,9 +38,11 @@ shape the URL:
 - **`w,` rather than `!w,h`.** Some image servers answer 501 to the
   best-fit form, and every server from level 1 up supports the width form.
 - **The whole image when it is already narrower than the cap.** Level 1
-  servers refuse upscaling. The width compared is the image's own, from the
-  painting body, and the canvas's only when the body gives none: a canvas is
-  a coordinate space, not always the image's size.
+  servers refuse upscaling. Both the canvas's width and the painting body's
+  must be within the cap, as neither is always the service image's: a
+  canvas is a coordinate space, and a body is often a sized derivative. A
+  wrong guess the other way costs one refused request and the fallback
+  below, never a full-resolution master.
 - **The whole image is `full` in Image API 2 and `max` in 3.** Version 2
   requires `full` at every level and makes `max` optional; version 3 requires
   `max` and drops `full`. The version comes from the service's type, context
