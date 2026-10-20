@@ -16,6 +16,10 @@ htrflow-batch {{ .Chart.Version }} installed.
 {{- if .Values.network.enabled }}
 - NetworkPolicies rendered{{ if .Values.network.defaultDeny }} with a namespace default deny{{ end }} (values: network.*).
 {{- end }}
+{{- if not .Values.web.enabled }}
+- Web front: not rendered (web.enabled=false), and neither is the results proxy. Campaigns publish
+  to the bucket; nothing serves a browser.
+{{- else }}
 {{- if .Values.web.ingress.enabled }}
 - Web front: Deployment htrflow-web, Ingress at https://{{ .Values.web.ingress.host }}/ — campaign browser at /,
 {{- else if eq .Values.web.service.type "ClusterIP" }}
@@ -26,6 +30,7 @@ htrflow-batch {{ .Chart.Version }} installed.
   Universal Viewer at /uv.html, read API at /api/v1/jobs, result files at /results/ through the
   results proxy (Deployment htrflow-results), all behind one login with a result-store account.
   Session key: Secret {{ .Values.results.sessionSecret }}; result links: {{ .Values.resultsUrl }}.
+{{- end }}
 {{- if .Values.security.allowTagImages }}
 - WARNING security.allowTagImages=true: control-plane images are tag-pinned and re-pulled on every rollout. PoC only.
 {{- end }}

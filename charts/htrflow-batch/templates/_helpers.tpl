@@ -64,7 +64,7 @@ them: dropping ingressFrom must fail on ITS OWN sentence, not the catch-all
 one that network.web.ingressCidrs' still-default 0.0.0.0/0 would otherwise
 raise first.
 */}}
-{{- if .Values.web.ingress.enabled }}
+{{- if and .Values.web.enabled .Values.web.ingress.enabled }}
 {{- if ne .Values.web.service.type "ClusterIP" }}
 {{- fail "web.ingress.enabled needs web.service.type=ClusterIP" }}
 {{- end }}
@@ -101,7 +101,7 @@ network.enabled=false to get at the policy objects alone.
 {{- fail "network.iiifCidrs is empty and has no default: name the address ranges of the IIIF servers your campaigns fetch page images from, e.g. --set network.iiifCidrs='{<cidr>}' (0.0.0.0/0 admits any origin and still reaches no cluster or private address)" }}
 {{- end }}
 {{- end }}
-{{- if and .Values.network.enabled (not .Values.network.web.allowPublicIngress) (not (or .Values.web.ingress.enabled .Values.network.web.ingressFrom)) }}
+{{- if and .Values.web.enabled .Values.network.enabled (not .Values.network.web.allowPublicIngress) (not (or .Values.web.ingress.enabled .Values.network.web.ingressFrom)) }}
 {{- if not .Values.network.web.ingressCidrs }}
 {{- fail "network.web.ingressCidrs is empty, and a NetworkPolicy rule with no sources admits every address, so an empty list would open the web front to everyone rather than close it: list the ranges that may reach it, or set network.web.allowPublicIngress=true to accept that any address may" }}
 {{- end }}

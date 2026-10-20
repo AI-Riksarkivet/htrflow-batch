@@ -111,6 +111,7 @@ credentials ([Security → The results boundary](../how-it-works/security.md#the
 
 | Key | Default | Description |
 |-----|---------|-------------|
+| `web.enabled` | `true` | `false` renders neither the web front nor the results proxy, which serves only it, and asks for none of the values only they read (`resultsUrl`, `results.sessionSecret`). Campaigns still run and publish to the bucket; nothing serves a browser |
 | `security.allowedImageRepos` | `[]` | Repository prefixes any Job or Pod in the namespace may pin, enforced by a ClusterPolicy when `security.policies.enabled`; empty = no policy. Namespace-wide on purpose, so supporting workloads (the devstack's RustFS) need their prefix here too |
 | `security.jobImageRepos` | `[]` | The exact repositories (the part before `@sha256:`) a campaign or warm-up Job's images may come from, enforced by the `job-shape` policy. `allowedImageRepos` admits every repository the namespace runs, the web and converter images included; this narrows the converter's Jobs to the wrapper's. Empty = no narrowing |
 | `security.requireModelRevision` | `false` | Every model in a pipeline ConfigMap must carry a 40-hex revision, enforced by a ClusterPolicy when `security.policies.enabled`. The rules and messages are in [Campaign & Pipeline YAML](campaign-yaml.md#pipeline-file-pipelinesidyaml) |
