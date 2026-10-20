@@ -95,8 +95,6 @@ spec:
             # passes /results through to it. It holds no bucket access itself.
             - name: HTRFLOW_RESULTS_PROXY
               value: http://htrflow-results:8082/results
-            - name: HTRFLOW_INTERNAL_RESULTS_BASE
-              value: http://htrflow-results:8082/results
             # The API acts on its own namespace; the downward API keeps it
             # correct whatever --namespace the release uses. Deliberately
             # single-valued today (one namespace, this release's) — the
