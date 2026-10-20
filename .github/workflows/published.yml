@@ -15,7 +15,6 @@ on:
       - "charts/htrflow-batch/values.yaml"
       - "packages/converter/src/htrflow_converter/template/pipelines/demo-v1.yaml"
       - "packages/converter/src/htrflow_converter/template/argocd/apply.yaml"
-      - ".docker/distroless.openvex.json"
       - ".github/workflows/published.yml"
   schedule:
     - cron: "0 5 * * 1" # Mondays 05:00 UTC, beside security.yml
