@@ -1,5 +1,5 @@
-{{- /* Two identities, each held to its own objects; a policy with no rules
-     is one Kyverno refuses, so none of either renders none at all. */}}
+{{- /* Two identities, each held to its own objects. Kyverno refuses a policy
+     with no rules, so with neither identity the policy is left out whole. */}}
 {{- if and .Values.security.policies.enabled (or .Values.web.enabled .Values.apply.rbac.enabled) }}
 # What RBAC cannot say (2026-09-14, audit): a Role's verbs cover a whole
 # resource type and never one object's name, so the read API's create/patch
