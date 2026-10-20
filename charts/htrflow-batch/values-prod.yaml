@@ -34,6 +34,11 @@ security:
     - docker.io/riksarkivet/htrflow-batch
     - docker.io/riksarkivet/htrflow-web
     - docker.io/riksarkivet/htrflow-campaigns
+  # Of those, the one a campaign or warm-up Job may run: the wrapper. The
+  # allow-list above admits the web and converter images too, and this is
+  # what keeps them out of a Job (the job-shape policy).
+  jobImageRepos:
+    - docker.io/riksarkivet/htrflow-batch
   # Hugging Face weights are pickles and a repo id alone is mutable.
   requireModelRevision: true
   policies:
