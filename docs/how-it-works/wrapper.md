@@ -228,6 +228,12 @@ came out:
   An image from a Presentation 2 manifest keeps its size and its service's
   own compliance level (level 0 when it names none), so the viewer asks it
   only for what it serves.
+- **Rights and reading.** The source's credit line (`requiredStatement`,
+  which viewers must show), `rights`, `summary`, `metadata`, `navDate`,
+  `behavior` and `viewingDirection`, with Presentation 2's `attribution`,
+  `license`, `description` and `viewingHint` turned into them. A canvas
+  marked `non-paged` stays marked. The table of contents (`structures`) is
+  not carried: its ranges name the source's canvases, not these.
 - **Dimensions.** The **width-capped dimensions actually processed**, so the
   Universal Viewer's line overlays line up without coordinate rewriting.
 - **Text.** A `seeAlso` per canvas pointing at its ALTO URL under the results URL (ALTO v4
