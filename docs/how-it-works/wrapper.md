@@ -225,6 +225,9 @@ came out:
 
 - **Image.** Copied from the source canvas, with its image service, so
   tiles keep coming from the IIIF origin and the platform serves no images.
+  An image from a Presentation 2 manifest keeps its size and its service's
+  own compliance level (level 0 when it names none), so the viewer asks it
+  only for what it serves.
 - **Dimensions.** The **width-capped dimensions actually processed**, so the
   Universal Viewer's line overlays line up without coordinate rewriting.
 - **Text.** A `seeAlso` per canvas pointing at its ALTO URL under the results URL (ALTO v4
