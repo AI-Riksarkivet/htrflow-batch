@@ -233,11 +233,10 @@ def _service_id(service: object) -> str | None:
     return sid if isinstance(sid, str) else None
 
 
-def _sized(sid: str, canvas: dict, width: int) -> str:
+def _sized(sid: str, image_width: int | None, width: int) -> str:
     # Some IIIF servers reject "!w,h" (501) but take "w,"; Level1 servers reject
-    # upscaling (400), so a canvas narrower than the cap must ask for max.
-    cw = _int_or_none(canvas.get("width"))
-    size = "max" if cw and cw <= width else f"{width},"
+    # upscaling (400), so an image narrower than the cap must ask for max.
+    size = "max" if image_width and image_width <= width else f"{width},"
     return f"{sid.rstrip('/')}/full/{size}/0/default.jpg"
 
 
@@ -331,7 +330,10 @@ def _fetch_url(body: dict, canvas: dict, width: int) -> str | None:
     the body itself when it has none."""
     sid = _service_id(body.get("service"))
     if sid:
-        return _sized(sid, canvas, width)
+        # The image's own width; the canvas is a coordinate space whose size
+        # is often, not always, the image's -- the best guess without one.
+        own = _int_or_none(body.get("width")) or _int_or_none(canvas.get("width"))
+        return _sized(sid, own, width)
     return _body_id(body)
 
 
