@@ -1,5 +1,6 @@
+{{- $cq := .Values.queue.clusterQueueName | default (printf "%s-cq" .Values.queue.name) }}
 htrflow-batch {{ .Chart.Version }} installed.
-- LocalQueue: {{ .Values.queue.name }} (namespace {{ .Release.Namespace }}); ClusterQueue admits this namespace only.
+- LocalQueue: {{ .Values.queue.name }} (namespace {{ .Release.Namespace }}){{ if .Values.queue.createClusterQueue }}; ClusterQueue {{ $cq }}, created here, admits this namespace only.{{ else }} on ClusterQueue {{ $cq }}, which this release did not create: it must admit this namespace itself.{{ end }}
 - Kueue CRDs are a prerequisite, not installed by this chart.
 - Model cache PVC: {{ .Values.modelCache.name }}{{ if .Values.modelCache.create }} (rendered, kept on uninstall){{ else }} (must already exist){{ end }}.
 - Campaigns are Indexed Jobs rendered by `htrflow-campaigns render` and applied outside this chart
