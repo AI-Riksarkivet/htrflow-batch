@@ -214,14 +214,23 @@ def fetch_manifest(
     return data
 
 
-def _service_id(service: object) -> str | None:
-    """P2 allows a bare dict, P3 a list; both use `id` or `@id`."""
-    if isinstance(service, list):
-        service = service[0] if service else None
-    if isinstance(service, dict):
-        sid = service.get("id") or service.get("@id")
-        return sid if isinstance(sid, str) else None
+def _image_service(service: object) -> dict | None:
+    """The first image service: P2 allows a bare dict, P3 a list, which may
+    lead with an auth or search service. An entry with no type at all is
+    taken for an image service, as P2 manifests in the wild leave it out."""
+    for entry in service if isinstance(service, list) else [service]:
+        if isinstance(entry, dict):
+            kind = entry.get("type") or entry.get("@type")
+            if not isinstance(kind, str) or kind.startswith("ImageService"):
+                return entry
     return None
+
+
+def _service_id(service: object) -> str | None:
+    """The image service's `id` (P3) or `@id` (P2)."""
+    entry = _image_service(service) or {}
+    sid = entry.get("id") or entry.get("@id")
+    return sid if isinstance(sid, str) else None
 
 
 def _sized(sid: str, canvas: dict, width: int) -> str:
