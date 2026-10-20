@@ -100,13 +100,17 @@ _CSP_HOST = re.compile(r"[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*")
 
 
 #: What the SPA's pages may load beyond the scripts their meta tag holds to
-#: hashes, which the tag says nothing of: the rest from this origin only, so
-#: an injected image, stylesheet, font or frame cannot reach out, and a form
-#: may post only here (ZAP, 2026-10-20). Style attributes stay inline: the
-#: progress bars and layout variables are set as style="...". Directives the
-#: meta tag has are left to it -- the browser enforces both.
+#: hashes, which the tag says nothing of: images, styles, fonts, frames and
+#: media from this origin only, and a form may post only here (ZAP,
+#: 2026-10-20). Style attributes stay inline: the progress bars and layout
+#: variables are set as style="...". Each directive is named, never
+#: default-src: that covers scripts too, and only the meta tag knows the hash
+#: of SvelteKit's inline start-up script -- a header default-src blocked it,
+#: and every page rendered blank. The browser enforces both policies.
 SPA_PAGE_POLICY = (
-    "default-src 'self'; style-src-attr 'unsafe-inline'; form-action 'self'"
+    "img-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; "
+    "font-src 'self'; frame-src 'self'; media-src 'self'; manifest-src 'self'; "
+    "form-action 'self'"
 )
 
 
@@ -117,20 +121,18 @@ def spa_csp(results_base: str) -> str:
     build cannot say, because the bucket is not known until the service
     starts (2026-09-23 audit).
 
-    Fetches stay open to any http(s) URL when there is no base (site-only
-    mode, where the run log reads any http(s) URL, as it did before there
-    was one) or when the base is not a URL a CSP source can express:
-    default-src would otherwise hold them to this origin."""
+    Fetches are not narrowed when there is no base (site-only mode, where
+    the run log reads any http(s) URL, as it did before there was one) or
+    when the base is not a URL a CSP source can express."""
     page = f"{SECURITY_HEADERS['Content-Security-Policy']}; {SPA_PAGE_POLICY}"
-    anywhere = f"{page}; connect-src 'self' http: https:"
     parts = urlsplit(results_base)
     try:
         port = parts.port
     except ValueError:
-        return anywhere
+        return page
     host = parts.hostname or ""
     if parts.scheme not in ("http", "https") or not _CSP_HOST.fullmatch(host):
-        return anywhere
+        return page
     # Percent-encoded where a CSP source cannot hold the character: `;` ends
     # a directive and `,` a policy. The browser compares paths decoded.
     path = quote(parts.path.rstrip("/"), safe="/-._~%!$&'()*+=:@")
