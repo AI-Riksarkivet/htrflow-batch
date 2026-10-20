@@ -25,6 +25,15 @@ def hard_exits(monkeypatch) -> list:
     return codes
 
 
+_REAL_HARD_EXIT = main_mod._hard_exit  # taken before any test stubs it
+
+
+@pytest.fixture
+def real_hard_exit():
+    """The unstubbed ``_hard_exit``, for the test of it."""
+    return _REAL_HARD_EXIT
+
+
 @pytest.fixture(autouse=True)
 def fresh_abandoned_threads(monkeypatch) -> None:
     """``driver._ABANDONED`` is process-wide; one test's released steps must
