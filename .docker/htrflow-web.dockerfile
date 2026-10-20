@@ -92,23 +92,37 @@ if (pages.join() !== page) throw new Error(`UV pages shipped: ${pages}`);
 console.log(`UV site: ${[...refs].join(", ")} (+ the chunk directory)`);
 SITE
 
-# ---- Stage 3: the service's virtualenv, for the runtime's own Python ----
-# The runtime below is distroless: no shell, no package manager. So the venv
-# is built here, on Debian 13 slim with Debian's python3.13, the same Debian
-# package the distroless python3-debian13 image carries, and copied across.
-# Its interpreter link (/usr/bin/python3.13) resolves in both images.
+# ---- Stage 3: the interpreter and the service's virtualenv ----
+# The runtime below is distroless: no shell, no package manager. So both are
+# built here and copied across, to the same paths. The interpreter is uv's
+# CPython build (python-build-standalone), not Debian's python3.13: Debian
+# carries CPython security fixes to stable only as point releases, and
+# trixie's 3.13.5 went without the 3.13.16 ones (CVE-2026-19445, -19553,
+# -7210) for weeks. Its OpenSSL, expat and sqlite are linked into it, so no
+# scanner sees them as packages: moving UV_PYTHON to the next patch release
+# is what picks up their fixes.
 # Workspace two-step sync per ra-skills dockerfile/references/python-uv.md:
 # --frozen with only pyprojects bind-mounted (member sources absent), then
 # --locked after COPY. Bind-mount EVERY workspace member's pyproject.toml.
 FROM debian:13-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS venv
-RUN apt-get update && apt-get install -y --no-install-recommends python3.13 \
-    && rm -rf /var/lib/apt/lists/*
-# uv 0.12.6 (multi-arch index digest), the binary the wrapper image uses too
-COPY --from=ghcr.io/astral-sh/uv:0.12.6@sha256:88bc6eb1ccd4b82efd0e1b530caffabddf50dc2bf612e66c14ea25b8ee8a4d3d /uv /bin/uv
+# uv 0.13.1 (multi-arch index digest). uv picks the interpreter build, so
+# it moves with UV_PYTHON: 0.13.0 is the first whose 3.13.16 bundles expat
+# 2.9.0 (CVE-2026-66046 and the others the Debian 2.9.0 update fixed).
+COPY --from=ghcr.io/astral-sh/uv:0.13.1@sha256:4a1f3666816dafadd20ceb71eac9a7d56d7ef30279f7d64048519ab901ada336 /uv /bin/uv
+# The interpreter is the one download: uv checks it against the SHA-256 it
+# carries for that build. The syncs below must then find it, not fetch one.
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
-    UV_PYTHON_DOWNLOADS=never \
-    UV_PYTHON=/usr/bin/python3.13
+    UV_PYTHON_INSTALL_DIR=/opt/python \
+    UV_PYTHON=3.13.16
+# Without the pip it comes with: the service runs from its own venv and
+# installs nothing at run time, and pip's vendored copies (urllib3, msgpack,
+# setuptools) are packages a scanner rightly flags and nothing updates.
+RUN uv python install --no-bin \
+    && rm -rf /opt/python/cpython-*/lib/python3.*/site-packages/pip \
+         /opt/python/cpython-*/lib/python3.*/site-packages/pip-*.dist-info
+ENV UV_PYTHON_DOWNLOADS=never \
+    UV_PYTHON_PREFERENCE=only-managed
 WORKDIR /app
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
@@ -135,12 +149,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && rm -rf /tmp/dist
 
 # ---- Stage 4: the service (read API + the two builds above as its site) ----
-# Distroless Debian 13 carries the Python runtime, glibc, OpenSSL and the CA
-# certificates, and nothing else. The OS packages a slim base brings along and
-# Trivy keeps flagging (perl, util-linux, ncurses, sqlite, …) are not in it.
+# Distroless Debian 13 "cc" carries glibc, libgcc, OpenSSL and the CA
+# certificates, and nothing else; the interpreter comes from stage 3. The OS
+# packages a slim base brings along and Trivy keeps flagging (perl,
+# util-linux, ncurses, sqlite, …) are not in it.
 # Nothing execs into this container: the chart probes /healthz over HTTP.
-FROM gcr.io/distroless/python3-debian13:nonroot@sha256:ed91505d162119a1e46552bc7f471c77737729a525269a7e9b60646807564601
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:b7e81cb1af38d9345680e68bcf564d388f96304e25222030fc8c051faf8565b3
 LABEL org.opencontainers.image.licenses="EUPL-1.2"
+COPY --from=venv /opt/python /opt/python
 COPY --from=venv /app/.venv /app/.venv
 # UV's page and what it needs, then the SPA: / is the campaign browser and
 # UV is /uv.html.
@@ -163,6 +179,5 @@ LABEL org.opencontainers.image.version="${HTRFLOW_BATCH_VERSION}"
 # passwd entry; distroless has no useradd, and no shell to run one.
 USER 1000:1000
 EXPOSE 8081
-# The base's ENTRYPOINT is the bare interpreter; the service replaces it.
 ENTRYPOINT ["/app/.venv/bin/htrflow-web"]
 CMD []
