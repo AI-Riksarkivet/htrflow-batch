@@ -18,12 +18,20 @@ disabled — mirrors charts/htrflow-batch's htrflow-batch.validate.
 {{- if and .Values.rustfs.console.enabled (not .Values.rustfs.enabled) }}
 {{- fail "rustfs.console.enabled needs rustfs.enabled" }}
 {{- end }}
-{{- /* Credentials nobody chose: empty (generated afresh on every render) or a
-     value this repo publishes. See values.yaml's devStack block. */}}
-{{- $known := list "" "ci-access-key" "ci-secret-key-0123456789" "minioadmin" "rustfsadmin" }}
-{{- if and .Values.rustfs.enabled (not .Values.devStack.insecureDefaults) }}
-{{- if or (has .Values.rustfs.accessKey $known) (has .Values.rustfs.secretKey $known) }}
-{{- fail "rustfs.accessKey/secretKey is empty or a value published in this repo: set credentials of your own, or set devStack.insecureDefaults: true to accept generated or known ones (charts/htrflow-devstack/values.yaml says why)" }}
+{{- /* Credentials nobody chose (values.yaml's devStack block). A value this
+     repository publishes is no secret at all and no flag admits it; empty
+     keys are generated afresh on every render, which insecureDefaults
+     accepts for a toy stack. */}}
+{{- if .Values.rustfs.enabled }}
+{{- $published := list "rustfsadmin" "minioadmin" }}
+{{- range $key := list "accessKey" "secretKey" }}
+{{- $value := index $.Values.rustfs $key }}
+{{- if has $value $published }}
+{{- fail (printf "rustfs.%s is %q, a value published in this repository, which is no secret at all: set credentials of your own, or leave both keys empty and set devStack.insecureDefaults: true for generated ones" $key $value) }}
+{{- end }}
+{{- end }}
+{{- if and (not .Values.devStack.insecureDefaults) (or (not .Values.rustfs.accessKey) (not .Values.rustfs.secretKey)) }}
+{{- fail "rustfs.accessKey/secretKey is empty, so Helm generates them afresh on every render and reads them back from the Secret on upgrade: set credentials of your own, or set devStack.insecureDefaults: true to accept generated ones (charts/htrflow-devstack/values.yaml says why)" }}
 {{- end }}
 {{- end }}
 {{- end }}

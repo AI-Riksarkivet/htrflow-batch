@@ -1,7 +1,8 @@
 # Every optional feature on, for `helm lint -f` / `helm template -f` /
 # kubeconform in CI. No cluster is needed.
-# The credentials below are published in this repo, so the render refuses
-# them without this (charts/htrflow-devstack/values.yaml, devStack).
+# No credentials are set: a value written here would be published, and the
+# render refuses one of those whatever else is set. Empty keys are generated
+# per render, which this accepts (charts/htrflow-devstack/values.yaml, devStack).
 devStack:
   insecureDefaults: true
 
@@ -11,8 +12,6 @@ s3:
 
 rustfs:
   enabled: true
-  accessKey: ci-access-key
-  secretKey: ci-secret-key-0123456789
   console:
     enabled: true
 
