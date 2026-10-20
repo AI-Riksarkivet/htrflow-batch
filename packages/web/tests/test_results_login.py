@@ -461,3 +461,12 @@ def test_a_login_while_the_session_key_is_unreadable_is_503(cfg, tmp_path):
         r = login(c)
     assert r.status_code == 503
     assert "set-cookie" not in r.headers
+
+
+@pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
+def test_the_results_proxy_publishes_no_description_of_itself(app, path):
+    """The proxy is reached through the web front only, but it describes
+    itself to nobody either (ZAP, 2026-10-20)."""
+    resp = TestClient(app).get(path)
+    assert resp.status_code == 404
+    assert "swagger" not in resp.text.lower() and '"openapi"' not in resp.text
