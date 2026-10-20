@@ -260,10 +260,11 @@ The chart values are in [Chart Values](chart.md#web-front-web).
 | Response | Policy |
 |---|---|
 | Every response | `frame-ancestors 'none'`, with `X-Content-Type-Options: nosniff` and `Referrer-Policy: strict-origin-when-cross-origin`. |
-| The SPA's pages | Their own meta CSP from the build (`script-src 'self'` plus the hash of SvelteKit's init script, `object-src 'none'`, `base-uri 'self'`), and a header adding `connect-src 'self' <results base>/`: the page may fetch only from the API and the results URL, both on its own origin. |
+| The SPA's pages | Their own meta CSP from the build (`script-src 'self'` plus the hash of SvelteKit's init script, `object-src 'none'`, `base-uri 'self'`), and a header adding `default-src 'self'; style-src-attr 'unsafe-inline'; form-action 'self'; connect-src 'self' <results base>/`. Everything but scripts loads from the page's own origin only, style attributes may be inline, a form posts only here, and the page fetches only from the API and the results URL. |
 | `uv.html` | A policy of its own, chosen by the file served, whatever path reached it: hashed inline script, inline styles, images and manifests from anywhere. |
 | Any other HTML document in the site | `default-src 'none'; sandbox`. |
 
 The meta CSP is why configuration arrives as `/config.js` and never as an
 inline script. In site-only mode, or with a results base a CSP source
-cannot express, the SPA gets no `connect-src` header.
+cannot express, the SPA's `connect-src` is `'self' http: https:`: the run log
+may then fetch from any http(s) URL, and everything else stays on the origin.
