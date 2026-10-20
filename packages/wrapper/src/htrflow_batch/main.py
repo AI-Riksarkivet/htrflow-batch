@@ -40,7 +40,7 @@ from .stream import (
     Unrecoverable,
     consume,
 )
-from .synthetic import build_manifest
+from .synthetic import image_canvases
 
 log = logging.getLogger("htrflow_batch")
 
@@ -443,7 +443,7 @@ def _setup(
     if cfg.images:
         for u in cfg.image_urls:
             check_http_url(u, "IMAGES URL")
-        source = build_manifest(cfg.image_urls)
+        source = image_canvases(cfg.image_urls)
     else:
         source = fetch_manifest(
             cfg.manifest_url,
