@@ -22,6 +22,7 @@ import json
 import re
 import shutil
 import subprocess
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -1070,6 +1071,11 @@ def test_the_production_profile_turns_on_what_the_defaults_leave_off(
         "docker.io/riksarkivet/htrflow-web",
         "docker.io/riksarkivet/htrflow-campaigns",
     ]
+    # allowedImageRepos admits the web and converter images too; this is
+    # what holds a campaign or warm-up Job to the wrapper's repository.
+    assert values["security"]["jobImageRepos"] == [
+        "docker.io/riksarkivet/htrflow-batch"
+    ]
 
 
 def test_every_pod_the_profile_renders_passes_pod_security_restricted(
@@ -1603,6 +1609,58 @@ BATCH_GUARDS = {
         " none of a resource every campaign pod requests admits no campaign"
         " pod, so give it more than 0 or leave the flavor out",
     ),
+    # The one-flavor path is `queue.resources`; it had none of the three
+    # checks the flavor list has, so a 0Gi quota rendered and read as
+    # "Queued" for ever, and a doubled resource or class failed at install.
+    "resource-twice": (
+        yaml.safe_dump(
+            {
+                "queue": {
+                    "resources": [
+                        {"name": "cpu", "quota": 4},
+                        {"name": "cpu", "quota": 8},
+                        {"name": "memory", "quota": "8Gi"},
+                        {"name": "nvidia.com/gpu", "quota": 1},
+                    ]
+                }
+            }
+        ),
+        DEFAULT_SETS,
+        "queue.resources names cpu twice: a ClusterQueue covers a resource"
+        " once, so remove one of them",
+    ),
+    "resource-zero-quota": (
+        yaml.safe_dump(
+            {
+                "queue": {
+                    "resources": [
+                        {"name": "cpu", "quota": 4},
+                        {"name": "memory", "quota": "0Gi"},
+                        {"name": "nvidia.com/gpu", "quota": 1},
+                    ]
+                }
+            }
+        ),
+        DEFAULT_SETS,
+        'queue.resources has a memory quota of "0Gi": a quota of nothing admits'
+        " no campaign pod, ever, and the queue reads as Queued; give it more"
+        " than 0",
+    ),
+    "priority-class-twice": (
+        yaml.safe_dump(
+            {
+                "queue": {
+                    "priorityClasses": [
+                        {"name": "htr-bulk", "value": 0, "description": "a"},
+                        {"name": "htr-bulk", "value": 10, "description": "b"},
+                    ]
+                }
+            }
+        ),
+        DEFAULT_SETS,
+        "queue.priorityClasses names htr-bulk twice: a WorkloadPriorityClass is"
+        " one cluster-scoped object, so rename one of them",
+    ),
 }
 DEVSTACK_GUARDS = {
     "console-without-rustfs": (
@@ -1613,22 +1671,25 @@ DEVSTACK_GUARDS = {
     "rustfs-generated-credentials": (
         None,
         ("rustfs.enabled=true",),
-        "rustfs.accessKey/secretKey is empty or a value published in this repo:"
-        " set credentials of your own, or set devStack.insecureDefaults: true to"
-        " accept generated or known ones (charts/htrflow-devstack/values.yaml"
-        " says why)",
+        "rustfs.accessKey/secretKey is empty, so Helm generates them afresh on"
+        " every render and reads them back from the Secret on upgrade: set"
+        " credentials of your own, or set devStack.insecureDefaults: true to"
+        " accept generated ones (charts/htrflow-devstack/values.yaml says why)",
     ),
+    # A value this repository publishes is no secret at all, and no flag
+    # makes it one: `make install-devstack` sets insecureDefaults for the
+    # generated case and used to admit these with it.
     "rustfs-published-credentials": (
         None,
         (
             "rustfs.enabled=true",
             "rustfs.accessKey=site-key",
             "rustfs.secretKey=minioadmin",
+            "devStack.insecureDefaults=true",
         ),
-        "rustfs.accessKey/secretKey is empty or a value published in this repo:"
-        " set credentials of your own, or set devStack.insecureDefaults: true to"
-        " accept generated or known ones (charts/htrflow-devstack/values.yaml"
-        " says why)",
+        'rustfs.secretKey is "minioadmin", a value published in this repository,'
+        " which is no secret at all: set credentials of your own, or leave both"
+        " keys empty and set devStack.insecureDefaults: true for generated ones",
     ),
 }
 #: Each chart's guards, and a render of it that none of them refuses.
@@ -2145,7 +2206,9 @@ def test_the_web_front_no_longer_touches_the_s3_secret():
         for e in web["spec"]["template"]["spec"]["containers"][0]["env"]
     }
     assert env["HTRFLOW_RESULTS_PROXY"] == "http://htrflow-results:8082/results"
-    assert env["HTRFLOW_INTERNAL_RESULTS_BASE"] == "http://htrflow-results:8082/results"
+    # The web package reads progress at the proxy unless told otherwise; the
+    # chart used to say the same address twice.
+    assert "HTRFLOW_INTERNAL_RESULTS_BASE" not in env
 
 
 def test_the_network_policies_route_web_to_proxy_and_proxy_to_s3():
@@ -2184,3 +2247,135 @@ def test_the_web_front_has_no_s3_egress_and_the_proxy_has_it():
         for p in peers("htr-results")
     )
     assert rustfs in peers("htr-results")
+
+
+# --- chart audit 2026-10-20 ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "sets,ports",
+    [
+        ((), [{"port": 443}, {"port": 80}]),
+        (("network.iiifPorts={8080}",), [{"port": 8080}]),
+    ],
+    ids=["default", "another-port"],
+)
+def test_iiif_egress_names_the_ports_it_needs(sets: tuple[str, ...], ports: list):
+    """A self-hosted image server is not always on 443 or 80; like
+    `network.s3Ports`, the answer is a value, not a fork of the chart."""
+    policy = named(render(sets=DEFAULT_SETS + sets), "NetworkPolicy", "htr-batch-job")
+    iiif = [
+        r
+        for r in policy["spec"]["egress"]
+        if any(t.get("ipBlock", {}).get("cidr") == "203.0.113.27/32" for t in r["to"])
+    ]
+    assert len(iiif) == 1
+    assert iiif[0]["ports"] == ports
+
+
+def test_an_empty_iiif_port_list_is_refused_not_opened():
+    """A rule with no ports matches every port."""
+    refused = helm_template(sets=DEFAULT_SETS + ("json:network.iiifPorts=[]",))
+    assert refused.returncode != 0
+    assert "/network/iiifPorts" in refused.stderr, refused.stderr
+
+
+@pytest.mark.parametrize("name", ["Bad_Name", "a..b", "-a", "NOT A NAME"])
+@pytest.mark.parametrize("key", ["modelCache.name", "s3.existingSecret", "queue.name"])
+def test_a_name_the_api_server_would_refuse_is_refused_here(key: str, name: str):
+    """A PVC, a Secret reference and a LocalQueue are named like every other
+    object; a typo here passed the schema and failed at apply time -- for
+    the Secret, at the first campaign's apply, with a Kubernetes error
+    instead of the chart's sentence."""
+    refused = helm_template(sets=DEFAULT_SETS + (f"{key}={name}",))
+    assert refused.returncode != 0
+    assert key.replace(".", "/") in refused.stderr, refused.stderr
+
+
+def test_the_install_notes_say_whose_cluster_queue_the_queue_is_on(tmp_path: Path):
+    """Created here, the ClusterQueue admits this namespace only; referenced
+    from elsewhere, nothing in this release constrains it, and the notes
+    must not claim it does."""
+    created = install_notes(DEFAULT_SETS, tmp_path / "created")
+    assert "ClusterQueue htr-batch-cq, created here, admits this namespace only" in (
+        created
+    )
+    shared = install_notes(
+        DEFAULT_SETS
+        + ("queue.createClusterQueue=false", "queue.clusterQueueName=shared-cq"),
+        tmp_path / "shared",
+    )
+    assert "ClusterQueue shared-cq, which this release did not create" in shared
+    assert "admits this namespace only" not in shared
+
+
+@pytest.mark.parametrize("chart", [CHART, DEVSTACK_CHART], ids=lambda c: c.name)
+def test_the_packaged_chart_carries_no_render_fixtures(chart: Path, tmp_path: Path):
+    """`ci/` holds placeholders (an all-zero digest, documentation address
+    ranges) that are never an install; the release-attached package must
+    not offer them as values files."""
+    subprocess.run(
+        ["helm", "package", str(chart), "-d", str(tmp_path)],
+        check=True,
+        capture_output=True,
+    )
+    (tgz,) = tmp_path.glob("*.tgz")
+    with tarfile.open(tgz) as tar:
+        names = tar.getnames()
+    assert names
+    assert not [n for n in names if f"{chart.name}/ci/" in n], names
+
+
+#: The web front and the results proxy off: campaigns still run, their
+#: results still land in the bucket, and nothing serves a browser.
+WEB_OFF = ("web.enabled=false", "resultsUrl=", "results.sessionSecret=")
+
+
+def test_the_web_front_and_the_results_proxy_can_be_left_out():
+    """`web.enabled=false` renders neither Deployment, nor their Services,
+    identity, Ingress and NetworkPolicies -- the proxy serves only the web
+    front, so one switch covers both -- and asks for none of the values only
+    they read (`resultsUrl`, `results.sessionSecret`). The queue, the model
+    cache and the campaign and warm-up NetworkPolicies stay."""
+    objs = render(sets=WEB_OFF + (POLICIES_OFF,))
+    kinds = {o["kind"] for o in objs}
+    assert not kinds & {"Deployment", "Service", "Ingress", "ServiceAccount", "Role"}
+    policies = {o["metadata"]["name"] for o in objects(objs, "NetworkPolicy")}
+    assert policies == {
+        "htr-default-deny",
+        "htr-allow-dns",
+        "htr-batch-job",
+        "htr-warmup",
+    }
+    assert {o["kind"] for o in objs} >= {"LocalQueue", "PersistentVolumeClaim"}
+
+
+def test_without_the_web_front_its_ingress_guards_have_nothing_to_hold():
+    """The catch-all ingress list guards a NodePort that is not rendered."""
+    result = helm_template(sets=WEB_OFF + (POLICIES_OFF, "web.ingress.enabled=true"))
+    assert result.returncode == 0, result.stderr
+
+
+def test_without_the_web_front_the_web_identity_rule_is_not_rendered():
+    """rbac-scope holds the web identity to its status ConfigMaps; with no
+    web front there is no such identity, and a policy with no rules at all
+    is one Kyverno refuses, so without the apply identity either the policy
+    is left out whole."""
+    with_apply = render(
+        values="ci/full-values.yaml", sets=("web.enabled=false", "resultsUrl=")
+    )
+    scope = named(with_apply, "ClusterPolicy", f"htrflow-batch-rbac-scope-{NAMESPACE}")
+    assert "web-writes-status-only" not in {r["name"] for r in scope["spec"]["rules"]}
+    alone = render(
+        values="ci/full-values.yaml",
+        sets=("web.enabled=false", "resultsUrl=", "apply.rbac.enabled=false"),
+    )
+    assert f"htrflow-batch-rbac-scope-{NAMESPACE}" not in {
+        o["metadata"]["name"] for o in objects(alone, "ClusterPolicy")
+    }
+
+
+def test_the_install_notes_say_the_web_front_is_off(tmp_path: Path):
+    notes = install_notes(WEB_OFF + (POLICIES_OFF,), tmp_path)
+    assert "Web front: not rendered (web.enabled=false)" in notes
+    assert "NodePort" not in notes

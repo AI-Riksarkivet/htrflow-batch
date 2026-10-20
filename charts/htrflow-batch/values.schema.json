@@ -106,8 +106,7 @@
       ],
       "properties": {
         "existingSecret": {
-          "type": "string",
-          "minLength": 1
+          "$ref": "#/definitions/dnsSubdomain"
         }
       }
     },
@@ -147,8 +146,7 @@
           "type": "boolean"
         },
         "name": {
-          "type": "string",
-          "minLength": 1
+          "$ref": "#/definitions/dnsSubdomain"
         },
         "size": {
           "$ref": "#/definitions/quantity"
@@ -186,7 +184,8 @@
       "properties": {
         "name": {
           "type": "string",
-          "minLength": 1
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+          "maxLength": 63
         },
         "flavor": {
           "$ref": "#/definitions/dnsSubdomain"
@@ -389,6 +388,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "enabled",
         "image",
         "nodePort",
         "resources",
@@ -396,6 +396,9 @@
         "ingress"
       ],
       "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
         "image": {
           "$ref": "#/definitions/imageRef"
         },
@@ -589,6 +592,7 @@
         "enabled",
         "defaultDeny",
         "iiifCidrs",
+        "iiifPorts",
         "s3Cidrs",
         "s3InNamespace",
         "s3Ports",
@@ -607,6 +611,15 @@
         },
         "iiifCidrs": {
           "$ref": "#/definitions/cidrList"
+        },
+        "iiifPorts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          }
         },
         "s3Cidrs": {
           "$ref": "#/definitions/cidrList"

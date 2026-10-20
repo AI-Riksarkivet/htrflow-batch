@@ -246,6 +246,11 @@ NVIDIA_DEVICE_PLUGIN ?= true
 # controller, not a piece of this platform, and making it a devstack
 # subchart would tie every `helm upgrade` of the PoC to it.
 KYVERNO ?= true
+# Chart 3.9.x is Kyverno 1.19. Stay on that line: the chart's policies are
+# kyverno.io/v1 ClusterPolicies, which Kyverno deprecates in 1.19 and removes
+# in 1.20 -- porting them to the CEL policy types is a change of its own. The
+# CLI the policy tests and a campaigns repo's CI run (.dagger/main.go, the
+# converter's render.yml template) is pinned to the same line.
 KYVERNO_CHART_VERSION ?= 3.9.0
 # Kueue is a prerequisite the chart does not install (it renders the queue
 # objects Kueue reconciles). Its official Helm chart, the same one a GitOps

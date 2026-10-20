@@ -5,17 +5,6 @@
 # types are rejected at install/upgrade time. When upgrading always pass
 # `--reset-then-reuse-values` (or a full values file): plain `--reuse-values`
 # keeps the OLD chart's defaults and once rendered every NetworkPolicy away.
-#
-# 0.3.0: campaigns are Indexed Jobs rendered by packages/converter and
-# applied outside this chart (htrflow-campaigns apply) — the chart no longer renders
-# pipeline ConfigMaps, warm-up Jobs, campaign Jobs or the old GitOps
-# CronJob controller.
-# 0.4.0: the `web` block replaces the old `api` and `viewer` ones — one Deployment
-# (`htrflow-web`) serves the campaign browser, Universal Viewer and the read
-# API, so the nginx viewer, its ConfigMap and its /api/ proxy are gone.
-# 0.5.0: `apply.rbac` (off) renders a ServiceAccount for `htrflow-campaigns
-# apply` when that command runs inside the cluster instead of from a
-# kubeconfig.
 
 s3:
   # No template in this chart creates this Secret: it is created by hand,
@@ -142,6 +131,11 @@ queue:
 # the cluster (Role, not ClusterRole) and writes only its per-campaign
 # status ConfigMaps.
 web:
+  # false renders neither the web front nor the results proxy (which serves
+  # only it), and asks for none of the values only they read (resultsUrl,
+  # results.sessionSecret). Campaigns still run and publish to the bucket;
+  # nothing serves a browser.
+  enabled: true
   # Digest-pinned (…@sha256:…) unless security.allowTagImages is true. The
   # default is the published v0.12.0 web image; for a locally built one set
   # the digest `make poc-push` prints.
@@ -232,11 +226,9 @@ security:
     # policies on instead.
     allowDisabled: false
   # Pod Security Admission level `make psa-labels` enforces on the namespace
-  # (warn/audit are always `restricted`). The platform pods are restricted-
-  # clean. `baseline` was historically needed for charts/htrflow-devstack's
-  # git daemon (removed — it ran as root); nothing left in either chart
-  # needs it. Kept as the default here rather than flipped in this fix, but
-  # `restricted` is worth trying now.
+  # (warn/audit are always `restricted`). Every pod this chart and the
+  # converter render is restricted-clean, and values-prod.yaml sets
+  # `restricted`; `baseline` only leaves room for a hand-applied pod.
   psaEnforce: baseline       # baseline | restricted
   # Tag references (`:dev`) for web.image. Off = the chart
   # refuses anything that is not `@sha256:`-pinned: anyone who can push to
@@ -276,6 +268,10 @@ network:                   # NetworkPolicies (docs: development/security, D14)
   # range here, in s3Cidrs and in apply.gitCidrs loses the internal ranges
   # that lie inside it (the ones below, link-local and loopback).
   iiifCidrs: []
+  # Ports those IIIF servers answer on. A self-hosted image server is not
+  # always on 443 or 80; like s3Ports, the answer is a value rather than a
+  # rule with no ports at all, which would match every port.
+  iiifPorts: [443, 80]
   # S3 endpoint(s) for batch Jobs and the results proxy. A
   # real endpoint goes here.
   s3Cidrs: []

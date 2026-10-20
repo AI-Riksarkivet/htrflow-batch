@@ -2,9 +2,9 @@ apiVersion: v2
 name: htrflow-batch
 description: Kueue-gated batch HTR platform around htrflow (queues, model cache and one web front serving the campaign browser, Universal Viewer and the status API). Campaigns are rendered as Indexed Jobs by packages/converter and applied by htrflow-campaigns apply, by hand or as an Argo CD hook, not by this chart.
 type: application
-# Bump on every template/values change (README "Changelog"); a stable
-# version hid 21 revisions of drift on the PoC (audit O6).
-version: 0.18.0
+# Bump on every template or values change, with an entry in README.md's
+# Changelog: a version that stays put hides drift between git and the cluster.
+version: 0.19.0
 appVersion: "0.12.0"
 annotations:
   artifacthub.io/license: EUPL-1.2

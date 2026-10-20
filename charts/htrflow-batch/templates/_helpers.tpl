@@ -64,7 +64,7 @@ them: dropping ingressFrom must fail on ITS OWN sentence, not the catch-all
 one that network.web.ingressCidrs' still-default 0.0.0.0/0 would otherwise
 raise first.
 */}}
-{{- if .Values.web.ingress.enabled }}
+{{- if and .Values.web.enabled .Values.web.ingress.enabled }}
 {{- if ne .Values.web.service.type "ClusterIP" }}
 {{- fail "web.ingress.enabled needs web.service.type=ClusterIP" }}
 {{- end }}
@@ -101,7 +101,7 @@ network.enabled=false to get at the policy objects alone.
 {{- fail "network.iiifCidrs is empty and has no default: name the address ranges of the IIIF servers your campaigns fetch page images from, e.g. --set network.iiifCidrs='{<cidr>}' (0.0.0.0/0 admits any origin and still reaches no cluster or private address)" }}
 {{- end }}
 {{- end }}
-{{- if and .Values.network.enabled (not .Values.network.web.allowPublicIngress) (not (or .Values.web.ingress.enabled .Values.network.web.ingressFrom)) }}
+{{- if and .Values.web.enabled .Values.network.enabled (not .Values.network.web.allowPublicIngress) (not (or .Values.web.ingress.enabled .Values.network.web.ingressFrom)) }}
 {{- if not .Values.network.web.ingressCidrs }}
 {{- fail "network.web.ingressCidrs is empty, and a NetworkPolicy rule with no sources admits every address, so an empty list would open the web front to everyone rather than close it: list the ranges that may reach it, or set network.web.allowPublicIngress=true to accept that any address may" }}
 {{- end }}
@@ -159,6 +159,32 @@ never be scheduled (review of PR #35).
 {{- end }}
 {{- end }}
 {{- end }}
+{{- end }}
+{{- /*
+The one-flavor path (`queue.resources`, read only while `queue.flavors` is
+empty) and `queue.priorityClasses` get the same two checks: a name listed
+twice is an object Kueue or Helm refuses at install, and a quota of nothing
+admits no campaign pod and reads as "Queued".
+*/}}
+{{- if not .Values.queue.flavors }}
+{{- $seenResource := dict }}
+{{- range .Values.queue.resources }}
+{{- if hasKey $seenResource .name }}
+{{- fail (printf "queue.resources names %s twice: a ClusterQueue covers a resource once, so remove one of them" .name) }}
+{{- end }}
+{{- $_ := set $seenResource .name true }}
+{{- $quota := toString .quota }}
+{{- if not (regexMatch "[1-9]" (regexReplaceAll "(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E|m)$" $quota "")) }}
+{{- fail (printf "queue.resources has a %s quota of %q: a quota of nothing admits no campaign pod, ever, and the queue reads as Queued; give it more than 0" .name $quota) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- $seenClass := dict }}
+{{- range .Values.queue.priorityClasses }}
+{{- if hasKey $seenClass .name }}
+{{- fail (printf "queue.priorityClasses names %s twice: a WorkloadPriorityClass is one cluster-scoped object, so rename one of them" .name) }}
+{{- end }}
+{{- $_ := set $seenClass .name true }}
 {{- end }}
 {{- end }}
 

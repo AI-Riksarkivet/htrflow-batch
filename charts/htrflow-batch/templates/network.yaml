@@ -76,8 +76,9 @@ spec:
          IIIF origin) still reaches no cluster, node or metadata address. */}}
     - to: {{ include "htrflow-batch.egressTo" (list $ .) }}
       ports:
-        - { port: 443 }
-        - { port: 80 }
+        {{- range $.Values.network.iiifPorts }}
+        - { port: {{ . }} }
+        {{- end }}
     {{- end }}
 ---
 # Warm-up Jobs: the ONE pod allowed to reach HF Hub (a CDN, so: the public
