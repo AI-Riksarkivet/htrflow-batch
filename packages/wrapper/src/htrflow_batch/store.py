@@ -321,9 +321,6 @@ class ResultStore:
         manifest under ``sources/`` (docs: wrapper, IMAGES)."""
         self._put(self.cfg.root_key(key), _json_bytes(obj), "application/json")
 
-    def put_bytes(self, rel_key: str, data: bytes, content_type: str) -> None:
-        self._put(self._key(rel_key), data, content_type)
-
     def put_text(self, rel_key: str, text: str, content_type: str) -> None:
         self._put(self._key(rel_key), text.encode(), content_type)
 
