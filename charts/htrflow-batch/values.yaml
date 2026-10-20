@@ -142,6 +142,11 @@ queue:
 # the cluster (Role, not ClusterRole) and writes only its per-campaign
 # status ConfigMaps.
 web:
+  # false renders neither the web front nor the results proxy (which serves
+  # only it), and asks for none of the values only they read (resultsUrl,
+  # results.sessionSecret). Campaigns still run and publish to the bucket;
+  # nothing serves a browser.
+  enabled: true
   # Digest-pinned (…@sha256:…) unless security.allowTagImages is true. The
   # default is the published v0.12.0 web image; for a locally built one set
   # the digest `make poc-push` prints.

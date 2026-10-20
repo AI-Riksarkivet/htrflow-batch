@@ -1,3 +1,4 @@
+{{- if .Values.web.enabled }}
 {{- /* charts/htrflow-batch/templates/results.yaml
 The results proxy: result files on the web front's origin, read from the
 bucket with each logged-in user's own store keys (docs: security,
@@ -114,4 +115,5 @@ spec:
     {{- range $s3 }}
     - {{ toJson . }}
     {{- end }}
+{{- end }}
 {{- end }}

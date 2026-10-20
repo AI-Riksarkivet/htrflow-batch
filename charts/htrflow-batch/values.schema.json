@@ -388,6 +388,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "enabled",
         "image",
         "nodePort",
         "resources",
@@ -395,6 +396,9 @@
         "ingress"
       ],
       "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
         "image": {
           "$ref": "#/definitions/imageRef"
         },

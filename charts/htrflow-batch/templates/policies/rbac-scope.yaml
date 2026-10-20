@@ -1,4 +1,6 @@
-{{- if .Values.security.policies.enabled }}
+{{- /* Two identities, each held to its own objects; a policy with no rules
+     is one Kyverno refuses, so none of either renders none at all. */}}
+{{- if and .Values.security.policies.enabled (or .Values.web.enabled .Values.apply.rbac.enabled) }}
 # What RBAC cannot say (2026-09-14, audit): a Role's verbs cover a whole
 # resource type and never one object's name, so the read API's create/patch
 # on configmaps also covers `htr-pipeline-<id>` -- the immutable ConfigMap a
@@ -32,6 +34,7 @@ spec:
   failurePolicy: Fail
   background: false
   rules:
+{{- if .Values.web.enabled }}
     - name: web-writes-status-only
       match:
         any:
@@ -54,6 +57,7 @@ spec:
               - key: {{ `"{{ regex_match('^campaign-[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?-status$', request.object.metadata.name) }}"` }}
                 operator: Equals
                 value: false
+{{- end }}
 {{- if .Values.apply.rbac.enabled }}
     # `htrflow-campaigns apply --prune` is what makes "deleting a campaign
     # file cancels the campaign" true, and a prune is a delete, so the Role
