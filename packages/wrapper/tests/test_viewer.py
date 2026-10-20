@@ -295,3 +295,13 @@ def test_a_rights_value_that_is_not_a_web_uri_is_left_out(cfg):
     """`rights` is a URI a viewer may link to; anything else is not one."""
     m = _one_page({"rights": "javascript:alert(1)", "items": [{"id": "c1"}]}, cfg=cfg)
     assert "rights" not in m
+
+
+def test_the_alto_link_uses_the_registered_profile_and_a_real_media_type(cfg):
+    """The IIIF registry of profiles names ALTO
+    `http://www.loc.gov/standards/alto`; `application/xml+alto` is no
+    registered media type. The viewer only needs "alto" in the profile of
+    the first seeAlso, which this keeps."""
+    sa = _one_page({"items": [{"id": "c1"}]}, cfg=cfg)["items"][0]["seeAlso"]
+    assert sa[0]["profile"] == "http://www.loc.gov/standards/alto"
+    assert sa[0]["format"] == "application/xml"
