@@ -19,7 +19,7 @@ lists what the module exposes on your checkout.
 | `build-wrapper` | the wrapper image from `.docker/htrflow-batch.dockerfile`, for the engine's own platform ([Releasing](releasing.md#one-dockerfile-every-architecture)) |
 | `build-web` | the web image from `.docker/htrflow-web.dockerfile` (CPU-only, no torch): the campaign browser SPA, the Universal Viewer fork at the pinned `UV4_REF` with `.docker/uv4-uv-html.patch` applied, and the read API that serves both. A CA bundle goes in as the optional `ca` build secret |
 | `build-campaigns` | the converter image from `.docker/htrflow-campaigns.dockerfile` (distroless, CPU-only, no git binary or shell): the `htrflow-campaigns` CLI and dulwich, what the Argo CD hook in a campaigns repository runs ([Campaign YAML](../reference/campaign-yaml.md)) |
-| `scan` | Trivy over the built wrapper image; fails on findings (default `CRITICAL,HIGH`, unfixed ignored). Every Trivy run reads the VEX statements in `.docker/distroless.openvex.json` ([Releasing](releasing.md)) |
+| `scan` | Trivy over the built wrapper image; fails on findings (default `CRITICAL,HIGH`, unfixed ignored) |
 | `scan-web` | the same over the built web image — a distroless Debian runtime with no shell or package manager, so a clean gate is realistic; `make scan-web` is the local twin |
 | `scan-campaigns` | the same over the built converter image, which `ci.yml` gates on pull requests too |
 | `scan-json` | `scan` with JSON output that never fails the call; what `make scan` runs |
