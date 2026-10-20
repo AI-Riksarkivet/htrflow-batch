@@ -203,7 +203,7 @@ covers the bucket.
 - **Warm-up pods** mount no S3 Secret.
 - **The read API and the results proxy** hold no S3 credential. The read API
   reads `progress.json` through the proxy with the caller's session
-  (`HTRFLOW_INTERNAL_RESULTS_BASE`), and the proxy reads with the user's own
+  (`HTRFLOW_RESULTS_PROXY`), and the proxy reads with the user's own
   keys, sealed in the cookie ([The results boundary](#the-results-boundary)).
   The proxy mounts only the session Secret and the S3 Secret's non-secret keys.
 
@@ -327,7 +327,7 @@ S3 endpoint keeps working by being named.
 
 | Pod | Ingress | Egress (besides kube-dns) | Cannot reach |
 |---|---|---|---|
-| campaign pod (`app=htrflow-batch`) | none | S3 (the in-namespace `app=rustfs` pod on 9000, or `network.s3Cidrs` on `network.s3Ports`); the IIIF origins in `network.iiifCidrs` on 443/80 | Hugging Face Hub, the API server, the registry, anything else in-cluster, the rest of the internet |
+| campaign pod (`app=htrflow-batch`) | none | S3 (the in-namespace `app=rustfs` pod on 9000, or `network.s3Cidrs` on `network.s3Ports`); the IIIF origins in `network.iiifCidrs` on `network.iiifPorts` (443 and 80 by default) | Hugging Face Hub, the API server, the registry, anything else in-cluster, the rest of the internet |
 | warm-up pod (`app=htrflow-warmup`) | none | the public internet on 443, minus the carve-out above (Hugging Face Hub is a CDN, so there is no CIDR to pin) | S3, the API server, anything in-cluster, link-local and private addresses |
 | web front (`app=htrflow-web`) | `network.web.ingressCidrs` on 8081, matched on the client's own address (the Service's `externalTrafficPolicy: Local` keeps it); in ingress mode (`web.ingress.enabled`), the peers in `network.web.ingressFrom` instead: selectors on the ingress controller's pods only, never an address range | every API server (`network.apiServer.cidr` / `cidrs`, or all `kubernetes` Endpoints addresses); the results proxy (`app=htrflow-results`) on 8082 | the IIIF origin, S3, Hugging Face Hub, anything else in-cluster |
 | results proxy (`app=htrflow-results`) | `app=htrflow-web` pods on 8082 | DNS; S3 (same targets as the campaign pod) | the API server, the IIIF origin, anything else in-cluster |

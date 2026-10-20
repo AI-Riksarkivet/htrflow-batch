@@ -137,8 +137,9 @@ the volume up.
   over (an absent file included).
 - One request makes at most 100 bucket reads and spends at most 5 s on
   them, active volumes first. The rest come from later polls.
-- The API reads progress through the results proxy at
-  `HTRFLOW_INTERNAL_RESULTS_BASE`, forwarding the caller's session cookie;
+- The API reads progress through the results proxy (`HTRFLOW_RESULTS_PROXY`,
+  unless `HTRFLOW_INTERNAL_RESULTS_BASE` points a local run elsewhere),
+  forwarding the caller's session cookie;
   the cache is per user, so one person never sees what another's account read.
   A volume the account may not read shows no progress.
 
@@ -244,7 +245,7 @@ second copy to keep in step.
 | API env var | Default | Meaning |
 |---|---|---|
 | `HTRFLOW_RESULTS_URL` | required | The browser-reachable base every result URL is built from. The chart sets it from `resultsUrl`. |
-| `HTRFLOW_INTERNAL_RESULTS_BASE` | `HTRFLOW_RESULTS_PROXY` | Where the pod reads progress files. The chart sets it to the results proxy's Service, `http://htrflow-results:8082/results`. |
+| `HTRFLOW_INTERNAL_RESULTS_BASE` | `HTRFLOW_RESULTS_PROXY` | Where the pod reads progress files when that is not the proxy: a local run only. The chart leaves it unset. |
 | `HTRFLOW_RESULTS_PROXY` | required | The results proxy's Service, `http://htrflow-results:8082/results`. The web front asks it whether a request's session cookie is valid (an answer is cached for 30 seconds per cookie) and passes `/results` through to it; every `/api/v1` route answers `401` without a session and `502` when the proxy does not answer. |
 | `HTRFLOW_NAMESPACES` | the pod's own namespace (`htr-batch` outside a cluster) | Comma-separated namespaces to list. |
 | `HTRFLOW_WEB_STATIC` | `/app/static` | The built site; missing means API only. |

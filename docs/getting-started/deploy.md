@@ -136,7 +136,7 @@ make psa-labels HTR_RELEASE=htr HTR_NAMESPACE=<namespace>
 | `results.sessionSecret` | The name of the session Secret from [the results bucket stays private](#the-results-bucket-stays-private). |
 | `results.keyDerivation` | `hcp` (default), or `none` for a store that issues S3 keys. |
 | `network.apiServer.cidr` | The kube-apiserver address as pods reach it. Further HA API servers go in `network.apiServer.cidrs`; with both empty, it is looked up from the cluster. |
-| `network.iiifCidrs` | Your IIIF source, and any host `images:` volumes point at. |
+| `network.iiifCidrs` | Your IIIF source, and any host `images:` volumes point at, on `network.iiifPorts` (default 443 and 80). |
 | `network.s3Cidrs` | The S3 endpoint, on `network.s3Ports` (default 443). |
 | `network.clusterCidrs` | Your pod and service CIDRs, which the warm-up pods' public egress excludes. |
 | `network.web.ingressCidrs` | Your browsers' address ranges, not the node range. See [Web front access](#web-front-access). |

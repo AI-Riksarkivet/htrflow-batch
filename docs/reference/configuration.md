@@ -136,7 +136,7 @@ Each key is an environment variable of the container.
 | Key | Set by | Default | Must agree with | Security |
 |---|---|---|---|---|
 | `HTRFLOW_RESULTS_URL` | the chart: `resultsUrl` | required unless `HTRFLOW_WEB_SITE_ONLY` | chart `resultsUrl`, converter `results_url`, wrapper `RESULTS_URL` | the results URL — nobody |
-| `HTRFLOW_INTERNAL_RESULTS_BASE` | the chart, fixed: `http://htrflow-results:8082/results` | `HTRFLOW_RESULTS_PROXY` | — | no secret — nobody |
+| `HTRFLOW_INTERNAL_RESULTS_BASE` | **a local run only**; no chart value | `HTRFLOW_RESULTS_PROXY` | — | no secret — nobody |
 | `HTRFLOW_RESULTS_PROXY` | the chart, fixed: `http://htrflow-results:8082/results` | required unless `HTRFLOW_WEB_SITE_ONLY` | — | no secret — nobody |
 | `HTRFLOW_NAMESPACES` | the chart, fixed: the release namespace (no value sets it) | the pod's own namespace, else `htr-batch` | — | no secret — nobody |
 | `HTRFLOW_WEB_STATIC` | the image build (`ENV`): where the image puts the site | `/app/static` | — | no secret — nobody |
@@ -209,6 +209,7 @@ Each key is a key of its `values.yaml`.
 | `queue.flavors` | `values.yaml` | *(empty)* | converter `flavors` | no secret — nobody |
 | `queue.createPriorityClasses` | `values.yaml` | `true` | — | no secret — nobody |
 | `queue.priorityClasses` | `values.yaml` | `[{description: a handful of volumes someone is waiting for,…` | converter `priority_classes` | no secret — nobody |
+| `web.enabled` | `values.yaml` | `true` | — | no secret — nobody |
 | `web.image` | `values.yaml` | `docker.io/riksarkivet/htrflow-web@sha256:b7f204e22d300e920c…` | — | digest-pinned unless `security.allowTagImages` — render |
 | `web.nodePort` | `values.yaml` | `30800` | — | no secret — nobody |
 | `web.resources.requests.cpu` | `values.yaml` | `50m` | — | no secret — nobody |
@@ -247,6 +248,7 @@ Each key is a key of its `values.yaml`.
 | `network.enabled` | `values.yaml` | `true` | — | no secret — nobody |
 | `network.defaultDeny` | `values.yaml` | `true` | — | no secret — nobody |
 | `network.iiifCidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
+| `network.iiifPorts` | `values.yaml` | `[443, 80]` | — | no secret — nobody |
 | `network.s3Cidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `network.s3InNamespace` | `values.yaml` | `true` | — | no secret — nobody |
 | `network.s3Ports` | `values.yaml` | `[443]` | — | no secret — nobody |
