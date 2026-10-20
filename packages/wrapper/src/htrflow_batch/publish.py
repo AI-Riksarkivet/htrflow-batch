@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from . import quality as qp
+from . import safexml
 from .config import Config
 from .iiif import PageRef, redact_url, redact_urls, source_digest
 from .store import ResultStore
@@ -46,7 +47,7 @@ def alto_dims(
             continue
         data = store.get_bytes(f"alto/{p.name}.xml")
         try:
-            root = ET.fromstring(data)
+            root = safexml.fromstring(data)
         except ET.ParseError:
             continue  # an ALTO that will not parse is left out, not fatal
         # A resumed page's score comes back with its size (quality.py).

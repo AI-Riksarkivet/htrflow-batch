@@ -137,6 +137,19 @@ def test_upload_page_rejects_malformed_page_xml(cfg, s3, tmp_path):
         store.upload_page("0001", {"alto": alto, "page": page})
 
 
+def test_upload_page_refuses_xml_with_a_dtd_before_any_put(cfg, s3, tmp_path):
+    store = ResultStore(cfg)
+    alto = _mk(
+        tmp_path,
+        "alto/0001.xml",
+        '<!DOCTYPE alto [<!ENTITY x SYSTEM "file:///etc/passwd">]><alto>&x;</alto>',
+    )
+    page = _mk(tmp_path, "page/0001.xml", "<PcGts/>")
+    with pytest.raises(MalformedOutput, match="alto XML is not well-formed"):
+        store.upload_page("0001", {"alto": alto, "page": page})
+    assert s3.list_objects_v2(Bucket=cfg.s3_bucket).get("Contents", []) == []
+
+
 def test_a_malformed_page_is_refused_with_its_files(cfg, s3, tmp_path):
     """The refusal carries the page's files, so the page loop can keep a
     copy aside for debugging before the workdir loses them."""
@@ -440,3 +453,27 @@ def test_s3_verify_tls_false_skips_the_check_on_every_s3_client(cfg, monkeypatch
     )
     ResultStore(cfg.model_copy(update={"s3_verify_tls": False}))
     assert len(seen) == 2 and all(v is False for v in seen)
+
+
+def test_a_cleanup_that_fails_too_is_logged_and_the_store_error_raised(
+    cfg, s3, tmp_path, monkeypatch, caplog
+):
+    store = ResultStore(cfg)
+    real = store.client.put_object
+
+    def put(**kw):
+        if kw["Key"].endswith("alto/0001.xml"):
+            raise ConnectionError("SlowDown")
+        return real(**kw)
+
+    def delete(names):
+        raise ConnectionError("still down")
+
+    monkeypatch.setattr(store.client, "put_object", put)
+    monkeypatch.setattr(store, "delete_pages", delete)
+    alto = _mk(tmp_path, "alto/0001.xml", "<alto/>")
+    page = _mk(tmp_path, "page/0001.xml", "<PcGts/>")
+    with caplog.at_level("WARNING", logger="htrflow_batch"):
+        with pytest.raises(ConnectionError, match="SlowDown"):
+            store.upload_page("0001", {"alto": alto, "page": page})
+    assert "page 0001: partial upload not deleted; the resume clears it" in caplog.text

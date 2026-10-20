@@ -66,6 +66,28 @@ def test_viewer_manifest_declares_search_service(sample_manifest, cfg):
     assert svc["@id"] == "http://public/htr-results/demo-v1/SE-RA-1234/search"
 
 
+def test_each_canvas_offers_its_xml_for_download(sample_manifest, cfg):
+    """UV's download dialog lists a canvas's `rendering`, not its
+    `seeAlso`: without these the dialog has no way to the page's ALTO."""
+    pages = pages_from_manifest(sample_manifest, width=2500)
+    m = build_viewer_manifest(cfg, sample_manifest, pages, {"0001": (2500, 3538)})
+    vol = "http://public/htr-results/demo-v1/SE-RA-1234"
+    assert m["items"][0]["rendering"] == [
+        {
+            "id": f"{vol}/alto/0001.xml",
+            "type": "Text",
+            "format": "application/xml",
+            "label": {"none": ["ALTO"]},
+        },
+        {
+            "id": f"{vol}/page/0001.xml",
+            "type": "Text",
+            "format": "application/xml",
+            "label": {"none": ["PAGE"]},
+        },
+    ]
+
+
 def _p2_viewer_manifest(cfg, p2_manifest) -> dict:
     pages = pages_from_manifest(p2_manifest, width=2500)
     return build_viewer_manifest(cfg, p2_manifest, pages, {"0001": (2500, 3333)})

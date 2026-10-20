@@ -14,6 +14,7 @@ import boto3
 import urllib3
 from botocore.config import Config as BotoConfig
 
+from . import safexml
 from .config import Config
 from .quality import parse_alto_quality
 from .stream import MalformedOutput
@@ -195,7 +196,7 @@ class ResultStore:
         for fmt in PAGE_FORMATS:
             data = files[fmt].read_bytes()
             try:
-                roots[fmt] = ET.fromstring(data)
+                roots[fmt] = safexml.fromstring(data)
             except ET.ParseError as e:
                 raise MalformedOutput(
                     f"page {name}: {fmt} XML is not well-formed: {e}", files
@@ -213,7 +214,11 @@ class ResultStore:
             try:
                 self.delete_pages([name])
             except Exception:
-                pass
+                log.warning(
+                    "page %s: partial upload not deleted; the resume clears it",
+                    name,
+                    exc_info=True,
+                )
             raise
         try:
             self.page_dims[name] = parse_alto_dims(roots["alto"])

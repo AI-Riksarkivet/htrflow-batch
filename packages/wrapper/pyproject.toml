@@ -18,6 +18,9 @@ dependencies = [
     # (W14). The runtime image installs its own pin last (the `wrapper-image`
     # group), which is the one that survives there.
     "pillow>=10",
+    # safexml.py: every ALTO/PAGE parse refuses a DTD, whatever expat the
+    # image's Python links against.
+    "defusedxml>=0.7.1",
 ]
 
 [build-system]

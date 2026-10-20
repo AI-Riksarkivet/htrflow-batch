@@ -20,7 +20,7 @@ F = W + "docs/features/"
 def meta(path):
     t = open(path).read()
     fm = t.split("---")[1]
-    return dict(re.findall(r"^(\w+):\s*(.*)$", fm, re.M))
+    return dict(re.findall(r"^(\w+):[ \t]*(.*)$", fm, re.M))
 
 
 files = {}
@@ -167,7 +167,11 @@ allids = set(
 )
 missing = set(files) - allids
 extra = allids - set(files)
-assert not missing and not extra, (missing, extra)
+if missing or extra:
+    raise SystemExit(
+        f"story files without a list entry: {sorted(missing)}; "
+        f"list entries without a file: {sorted(extra)}"
+    )
 
 # batch feature page
 p = F + "batch-kueue-helm/feature.md"
