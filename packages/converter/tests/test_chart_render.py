@@ -2294,14 +2294,14 @@ def test_the_install_notes_say_whose_cluster_queue_the_queue_is_on(tmp_path: Pat
     """Created here, the ClusterQueue admits this namespace only; referenced
     from elsewhere, nothing in this release constrains it, and the notes
     must not claim it does."""
-    created = install_notes(DEFAULT_SETS, tmp_path)
+    created = install_notes(DEFAULT_SETS, tmp_path / "created")
     assert "ClusterQueue htr-batch-cq, created here, admits this namespace only" in (
         created
     )
     shared = install_notes(
         DEFAULT_SETS
         + ("queue.createClusterQueue=false", "queue.clusterQueueName=shared-cq"),
-        tmp_path,
+        tmp_path / "shared",
     )
     assert "ClusterQueue shared-cq, which this release did not create" in shared
     assert "admits this namespace only" not in shared
