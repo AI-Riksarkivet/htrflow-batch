@@ -2341,7 +2341,12 @@ def test_the_web_front_and_the_results_proxy_can_be_left_out():
     kinds = {o["kind"] for o in objs}
     assert not kinds & {"Deployment", "Service", "Ingress", "ServiceAccount", "Role"}
     policies = {o["metadata"]["name"] for o in objects(objs, "NetworkPolicy")}
-    assert policies == {"htr-default-deny", "htr-allow-dns", "htr-batch-job", "htr-warmup"}
+    assert policies == {
+        "htr-default-deny",
+        "htr-allow-dns",
+        "htr-batch-job",
+        "htr-warmup",
+    }
     assert {o["kind"] for o in objs} >= {"LocalQueue", "PersistentVolumeClaim"}
 
 
