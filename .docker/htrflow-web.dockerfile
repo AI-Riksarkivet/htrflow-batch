@@ -15,7 +15,7 @@
 # The mount is optional — without it the stock CA set is used.
 
 # ---- Stage 1: the campaign browser (SvelteKit, adapter-static -> dist/) ----
-FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS spa
+FROM oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS spa
 WORKDIR /app
 COPY frontend/package.json frontend/bun.lock ./
 # RA hosts sit behind a TLS-intercepting proxy; CI does not — only point bun
