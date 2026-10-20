@@ -52,7 +52,7 @@ from .bounded import (
     body_chunks,
     get,
 )
-from .iiif import PageRef, _int_or_none
+from .iiif import PageRef, _int_or_none, full_size
 
 if TYPE_CHECKING:
     from .imagecache import ImageCache
@@ -236,10 +236,10 @@ def _check_pixels(path: Path, max_pixels: int) -> None:
 
 
 #: A IIIF Image API request as ``iiif._sized`` writes it: ``/full/<w>,/``, or
-#: ``/full/max/`` (no ``width``) for a canvas within the cap. ``base`` may
+#: ``/full/max/`` or ``/full/full/`` (no ``width``) for an image within the cap. ``base`` may
 #: itself carry a query (IIPImage's ``?IIIF=``), ``query`` is one after it.
 _SIZED = re.compile(
-    r"^(?P<base>.+)/full/(?:(?P<width>\d+),|max)/"
+    r"^(?P<base>.+)/full/(?:(?P<width>\d+),|max|full)/"
     r"(?P<rest>[^/?#]+/[^/?#]+)(?P<query>[?#].*)?$"
 )
 
@@ -277,14 +277,16 @@ def _image_info(client: httpx.Client, url: str, deadline: float) -> dict:
 
 
 def _size_within(info: dict, cap: int) -> str:
-    """The IIIF size to ask for: the full size when it is within ``cap`` (no
-    upscale), else the largest listed ``sizes`` entry within it (all a Level
-    0 service offers, asked as ``w,h``), else a ``maxWidth`` below it (v3 on
-    the service, v2 in its profile), else ``max``, which only FETCH_MAX_BYTES
-    and MAX_IMAGE_PIXELS then bound."""
+    """The IIIF size to ask for: the whole image when it is within ``cap``
+    (no upscale), else the largest listed ``sizes`` entry within it (all a
+    Level 0 service offers, in the canonical form a static one has files
+    at: ``w,`` in v2, ``w,h`` in v3), else a ``maxWidth`` below it (v3 on
+    the service, v2 in its profile), else the whole image, which only
+    FETCH_MAX_BYTES and MAX_IMAGE_PIXELS then bound."""
+    whole = full_size(info)
     width = _int_or_none(info.get("width"))
     if width and width <= cap:
-        return "max"
+        return whole
     fits = [
         (w, h)
         for s in _list(info.get("sizes"))
@@ -294,10 +296,11 @@ def _size_within(info: dict, cap: int) -> str:
         and w <= cap
     ]
     if fits:
-        return "{},{}".format(*max(fits))
+        w, h = max(fits)
+        return f"{w}," if whole == "full" else f"{w},{h}"
     limits = [info] + [p for p in _list(info.get("profile")) if isinstance(p, dict)]
     widths = [w for d in limits if (w := _int_or_none(d.get("maxWidth")))]
-    return f"{min(widths)}," if widths and min(widths) <= cap else "max"
+    return f"{min(widths)}," if widths and min(widths) <= cap else whole
 
 
 def _list(value: object) -> list:

@@ -316,6 +316,32 @@ def test_the_400_fallback_asks_for_the_largest_size_within_the_cap(
     assert seen[-1] == f"https://img/iiif/full/{size}/0/default.jpg"
 
 
+@pytest.mark.parametrize(
+    "info",
+    [
+        {"@context": "http://iiif.io/api/image/2/context.json", "width": 1200},
+        {"@context": "http://iiif.io/api/image/2/context.json", "width": 9000},
+    ],
+    ids=["narrow", "nothing-advertised"],
+)
+def test_the_400_fallback_asks_a_v2_service_for_full(tmp_path, info):
+    """`max` is optional at every Image API 2.1 level; `full` is required."""
+    seen = _after_a_400(tmp_path, info)
+    assert seen[-1] == "https://img/iiif/full/full/0/default.jpg"
+
+
+def test_the_400_fallback_asks_a_v2_service_for_a_listed_size_as_w(tmp_path):
+    """A static Level 0 service has files only at canonical URIs, and the
+    canonical form of a size is `w,` in Image API 2.1 (`w,h` in 3.0)."""
+    info = {
+        "@context": "http://iiif.io/api/image/2/context.json",
+        "width": 9000,
+        "sizes": [{"width": 2250, "height": 3000}],
+    }
+    seen = _after_a_400(tmp_path, info)
+    assert seen[-1] == "https://img/iiif/full/2250,/0/default.jpg"
+
+
 def test_the_400_fallback_keeps_the_query_the_image_was_asked_with(tmp_path):
     """A token that authorises the image authorises its info.json too."""
     seen = _after_a_400(

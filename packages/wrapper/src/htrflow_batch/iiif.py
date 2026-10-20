@@ -233,10 +233,22 @@ def _service_id(service: object) -> str | None:
     return sid if isinstance(sid, str) else None
 
 
-def _sized(sid: str, image_width: int | None, width: int) -> str:
+_V1_OR_V2 = re.compile(r"ImageService[12]\b|/api/image/[12]/")
+
+
+def full_size(service: dict) -> str:
+    """The size that names the whole image, for a service or an info.json:
+    Image API 3 requires `max` at every level and drops `full`; 2 requires
+    `full` (2.1 made `max` optional, 2.0 has none). A service that names no
+    version is taken for 3."""
+    marks = [service.get(k) for k in ("type", "@type", "@context", "profile")]
+    return "full" if _V1_OR_V2.search(json.dumps(marks)) else "max"
+
+
+def _sized(sid: str, image_width: int | None, width: int, whole: str) -> str:
     # Some IIIF servers reject "!w,h" (501) but take "w,"; Level1 servers reject
-    # upscaling (400), so an image narrower than the cap must ask for max.
-    size = "max" if image_width and image_width <= width else f"{width},"
+    # upscaling (400), so an image narrower than the cap must ask for it whole.
+    size = whole if image_width and image_width <= width else f"{width},"
     return f"{sid.rstrip('/')}/full/{size}/0/default.jpg"
 
 
@@ -328,12 +340,13 @@ def _p2_body(res: dict) -> dict:
 def _fetch_url(body: dict, canvas: dict, width: int) -> str | None:
     """Where a body's image is downloaded from: its image service, sized, or
     the body itself when it has none."""
-    sid = _service_id(body.get("service"))
-    if sid:
+    service = _image_service(body.get("service")) or {}
+    sid = service.get("id") or service.get("@id")
+    if isinstance(sid, str) and sid:
         # The image's own width; the canvas is a coordinate space whose size
         # is often, not always, the image's -- the best guess without one.
         own = _int_or_none(body.get("width")) or _int_or_none(canvas.get("width"))
-        return _sized(sid, own, width)
+        return _sized(sid, own, width, full_size(service))
     return _body_id(body)
 
 
