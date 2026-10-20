@@ -46,6 +46,11 @@ QUARANTINE = "failed"
 #: The most keys one DeleteObjects call takes (the S3 API's own limit).
 DELETE_BATCH = 1000
 
+#: The viewer manifest's Content-Type: JSON-LD, profiled by its context.
+IIIF_JSON = (
+    'application/ld+json;profile="http://iiif.io/api/presentation/3/context.json"'
+)
+
 
 def _content_md5(params, **_) -> None:
     """DeleteObjects as the S3 API first defined it: a Content-MD5 and no
@@ -302,6 +307,10 @@ class ResultStore:
     def put_json(self, rel_key: str, obj: dict) -> None:
         self._put(self._key(rel_key), _json_bytes(obj), "application/json")
 
+    def put_viewer_manifest(self, obj: dict) -> None:
+        """``iiif.json`` as Presentation 3 (6.3) says a manifest is served."""
+        self._put(self._key("iiif.json"), _json_bytes(obj), IIIF_JSON)
+
     def put_progress(self, body: dict) -> None:
         """``progress.json`` beside the results (docs: s3-layout): a few
         hundred bytes, rewritten after every page. It goes through the run
@@ -314,12 +323,6 @@ class ResultStore:
             "application/json",
             self._log_client,
         )
-
-    def put_json_at(self, key: str, obj: dict) -> None:
-        """Write JSON at a bucket key outside the per-volume prefix, honoring
-        S3_PREFIX like everything else — used for the IMAGES synthetic
-        manifest under ``sources/`` (docs: wrapper, IMAGES)."""
-        self._put(self.cfg.root_key(key), _json_bytes(obj), "application/json")
 
     def put_text(self, rel_key: str, text: str, content_type: str) -> None:
         self._put(self._key(rel_key), text.encode(), content_type)

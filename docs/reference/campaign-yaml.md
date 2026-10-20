@@ -178,8 +178,8 @@ volumes:
   - id: loc-mal2459400
     manifest: https://www.loc.gov/item/mal2459400/manifest.json
 
-  # 3) Bare image URLs (http(s) only) — the wrapper builds and publishes
-  #    a synthetic IIIF manifest for them itself (see S3 Layout: sources/):
+  # 3) Bare image URLs (http(s) only) — no manifest; the wrapper makes
+  #    one canvas per URL and publishes the volume's iiif.json as usual:
   - id: htr-demo-examples
     images:
       - https://example.org/page1.jpg

@@ -53,10 +53,15 @@ def test_anything_else_is_refused(raw):
     assert allowed_key(raw, NS) is None
 
 
+#: How the wrapper stores iiif.json (Presentation 3 section 6.3).
+IIIF = 'application/ld+json;profile="http://iiif.io/api/presentation/3/context.json"'
+
+
 @pytest.mark.parametrize(
     "stored,served",
     [
         ("application/json", ("application/json", False)),
+        (IIIF, (IIIF, False)),
         ("application/xml", ("application/xml", False)),
         ("text/xml; charset=utf-8", ("text/xml; charset=utf-8", False)),
         ("text/plain; charset=utf-8", ("text/plain; charset=utf-8", False)),

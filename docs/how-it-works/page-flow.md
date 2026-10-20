@@ -12,9 +12,10 @@ The `setup` stage fetches the campaign's IIIF manifest: Presentation 2 or 3,
 http(s) only, at most 5 redirects, capped at `MANIFEST_MAX_BYTES`, and
 within `DOWNLOAD_DEADLINE_SECONDS`.
 
-An `images:` volume has no manifest, so the wrapper **builds one**: a minimal
-Presentation 3 document with one canvas per URL and the bare URL as the
-painting body. It publishes that manifest under `sources/`.
+An `images:` volume has no manifest, so the wrapper **makes the canvases**:
+one per URL, with the bare URL as the painting body. They stay in memory. A
+Presentation 3 canvas must have a size, and an image's is known only once it
+is fetched, so the only manifest published is the volume's `iiif.json`.
 
 Each canvas becomes a `PageRef` with three fields: a 1-based `index`, a
 zero-padded `name` (`0001`), and the URL to fetch.
@@ -29,19 +30,32 @@ still fetched and transcribed, but the viewer manifest shows no image for it.
 ## The width-capped GET
 
 For a canvas with an IIIF image service, the URL is
-`<service>/full/<MAX_IMAGE_WIDTH>,/0/default.jpg`. Three deliberate choices
-shape it:
+`<service>/full/<MAX_IMAGE_WIDTH>,/0/default.jpg`. The service is the first
+entry of the image's `service` list that is an image service, so an auth or
+search service listed ahead of it is passed over. Four deliberate choices
+shape the URL:
 
 - **`w,` rather than `!w,h`.** Some image servers answer 501 to the
-  best-fit form, and every compliant server supports the width form.
-- **`max` when the canvas is already narrower than the cap.** Level 1
-  servers refuse upscaling with a 400.
-- **A 400 anyway asks the image what it has** before the page fails: the
-  wrapper reads the image's `info.json` and asks once more, for the full
-  size if that is within the cap, else the largest size the service lists
-  within it (all a level 0 service offers), else its `maxWidth` when that is
-  below the cap, and `/full/max/` only when none of these is known. An
-  `info.json` over 1 MiB counts as none known.
+  best-fit form, and every server from level 1 up supports the width form.
+- **The whole image when it is already narrower than the cap.** Level 1
+  servers refuse upscaling. Both the canvas's width and the painting body's
+  must be within the cap, as neither is always the service image's: a
+  canvas is a coordinate space, and a body is often a sized derivative. A
+  wrong guess the other way costs one refused request and the fallback
+  below, never a full-resolution master.
+- **The whole image is `full` in Image API 2 and `max` in 3.** Version 2
+  requires `full` at every level and makes `max` optional; version 3 requires
+  `max` and drops `full`. The version comes from the service's type, context
+  or profile, and a service that names none is taken for version 3.
+- **A refusal asks the image what it has** before the page fails. A sized
+  request answered 400 (Image API 3), 404 or 501 (Image API 2), or 403 (a
+  static level 0 host with no file at that size) makes the wrapper read the
+  image's `info.json` and ask once more: for the whole image if that is
+  within the cap, else the largest size the service lists within it (all a
+  level 0 service offers, in its version's canonical form, `w,` or `w,h`),
+  else its `maxWidth` when that is below the cap, and the whole image only
+  when none of these is known. An `info.json` over 1 MiB counts as none
+  known.
 
 A canvas with **no** image service cannot be resized on the server. It is
 fetched at native size, bounded only by `FETCH_MAX_BYTES`.

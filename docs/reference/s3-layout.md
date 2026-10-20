@@ -34,20 +34,14 @@ beside its results as `progress.json`.
   pipeline.yaml              # the exact steps document the run used (wrapper)
   manifest.json              # completion marker — written LAST (wrapper)
 
-<namespace>/sources/<pipeline>/<volume>/
-  manifest.json              # synthetic IIIF manifest for IMAGES volumes, published
-                             # by the wrapper itself before processing; overwritten
-                             # every run
-
 <namespace>/status/
   logs/<pipeline>/<volume>.txt      # the run's own stdout/stderr, shipped live (wrapper)
 ```
 
 Writers: the **wrapper** is the only writer in the whole tree — its own
 `<namespace>/<pipeline>/<volume>/` prefix, its run-log key under
-`<namespace>/status/logs/`, and `sources/` (for `IMAGES` volumes).
-`S3_PREFIX` goes in *front* of every key, so the synthetic manifests sit at
-`<namespace>/sources/…` and the run logs at `<namespace>/status/logs/…`:
+`<namespace>/status/logs/`. `S3_PREFIX` goes in *front* of every key, so
+the run logs sit at `<namespace>/status/logs/…`:
 two namespaces sharing one bucket never share a key, and the results proxy
 serves nothing outside its own namespace. Nothing else in this system writes
 to S3 at all. The read API only
@@ -92,7 +86,7 @@ own publish writes both again at the end.
 | `page_sources` | `{"0001": <source image URL, userinfo/query stripped>, …}` — for a reader, not for the comparison |
 | `page_source_digests` | `{"0001": <sha256 hex>, …}` — what resume compares: the full source URL with its credentials removed (userinfo, the `X-Amz-*` presign parameters, `token`, `sig`, `signature`, `key`), hashed. The redacted URL above has lost its query, so on a host that selects the image with `?id=` every page of a volume looks the same; a digest keeps the query without publishing it |
 | `canvas_ids` | `{"0001": <source canvas id or null>, …}` |
-| `source_manifest` | the manifest URL the pod fetched (verbatim), or, for `IMAGES` volumes, the synthetic manifest id the wrapper published to `sources/` |
+| `source_manifest` | the manifest URL the pod fetched (verbatim), or `null` for `IMAGES` volumes, which have none |
 | `max_image_width`, `bytes_fetched`, `wall_seconds`, `gpu_stall_seconds`, `pages_per_second` | run metrics |
 | `viewer_url` | the `iiif.json` URL under the results URL |
 | `quality` | the volume's predicted-quality summary, present only with at least one scored page |

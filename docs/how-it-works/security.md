@@ -149,8 +149,9 @@ what, key by key, and listing is never offered.
 - **The content-type rule.** Result files are served from the campaign
   browser's own origin, and some of what lies in the bucket comes from
   outside (text htrflow printed into a run log, data copied from an IIIF
-  source). Only `application/json`, `application/xml`, `text/xml` and
-  `text/plain` pass as stored; anything else is sent as
+  source). Only `application/json`, `application/ld+json` (`iiif.json`, as
+  Presentation 3 asks a manifest be served), `application/xml`, `text/xml`
+  and `text/plain` pass as stored; anything else is sent as
   `application/octet-stream` with `Content-Disposition: attachment`, so it is
   never rendered as a page.
 - **Every file answer is sandboxed:** `Content-Security-Policy: default-src

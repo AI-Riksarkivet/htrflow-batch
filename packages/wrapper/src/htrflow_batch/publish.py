@@ -111,7 +111,7 @@ def run_manifest(
     cfg: Config,
     pages: list[PageRef],
     stats: StreamStats,
-    source_manifest_url: str,
+    source_manifest_url: str | None,
     pipeline_text: str,
     wall: float,
     bytes_fetched: int,
@@ -192,7 +192,7 @@ def run(
     cfg: Config,
     store: ResultStore,
     source_manifest: dict,
-    source_manifest_url: str,
+    source_manifest_url: str | None,
     pages: list[PageRef],
     stats: StreamStats,
     uploaded: set[str],
@@ -214,8 +214,7 @@ def run(
     canvases = [p.name for p in pages if p.name in dims]
     block = qp.summary(store.page_quality, pipeline_text, canvases)
     if dims:
-        store.put_json(
-            "iiif.json",
+        store.put_viewer_manifest(
             build_viewer_manifest(
                 cfg,
                 source_manifest,

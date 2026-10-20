@@ -57,14 +57,13 @@ def test_build_viewer_manifest(sample_manifest, cfg):
     assert "alto" in sa["profile"]
 
 
-def test_viewer_manifest_declares_search_service(sample_manifest, cfg):
-    """UV4 (RA fork) gates the ALTO text panel on getSearchService() —
-    without a search service entry the transcription panel never shows."""
+def test_viewer_manifest_advertises_no_search_service(sample_manifest, cfg):
+    """No search endpoint exists, so none is advertised: a viewer that
+    honoured the old stub got a 404. The text panel no longer needs one
+    (the UV patch's BaseExtension.ts hunk)."""
     pages = pages_from_manifest(sample_manifest, width=2500)
     m = build_viewer_manifest(cfg, sample_manifest, pages, {"0001": (2500, 3538)})
-    svc = m["service"][0]
-    assert svc["profile"] == "http://iiif.io/api/search/1/search"
-    assert svc["@id"] == "http://public/htr-results/demo-v1/SE-RA-1234/search"
+    assert "service" not in m
 
 
 def test_each_canvas_offers_its_xml_for_download(sample_manifest, cfg):
@@ -214,3 +213,145 @@ def test_viewer_manifest_publishes_no_javascript_body(cfg):
     )
     manifest = build_viewer_manifest(cfg, {}, [page], {"0001": (100, 200)})
     assert "javascript:" not in json.dumps(manifest)
+
+
+def _one_page(source, quality=None, summary=None, cfg=None):
+    from htrflow_batch.iiif import PageRef
+
+    canvas = (source.get("items") or [{}])[0]
+    pages = [PageRef(index=1, name="0001", image_url="https://i/1.jpg", canvas=canvas)]
+    return build_viewer_manifest(
+        cfg, source, pages, {"0001": (10, 10)}, quality=quality, summary=summary
+    )
+
+
+P3_RIGHTS = {
+    "requiredStatement": {
+        "label": {"en": ["Attribution"]},
+        "value": {"en": ["Provided by an archive"]},
+    },
+    "rights": "http://creativecommons.org/publicdomain/mark/1.0/",
+    "summary": {"en": ["A court book"]},
+    "metadata": [{"label": {"en": ["Date"]}, "value": {"none": ["1652"]}}],
+    "navDate": "1652-01-01T00:00:00Z",
+    "behavior": ["paged"],
+    "viewingDirection": "right-to-left",
+}
+
+
+def test_the_source_rights_and_reading_hints_are_published(cfg):
+    """Clients MUST render requiredStatement: dropping it republished an
+    archive's images under our domain without its credit line. behavior and
+    viewingDirection tell a viewer a book from a stack of sheets."""
+    m = _one_page(dict(P3_RIGHTS, items=[{"id": "c1"}]), cfg=cfg)
+    for key, value in P3_RIGHTS.items():
+        assert m[key] == value
+
+
+def test_the_quality_summary_follows_the_source_metadata(cfg):
+    summary = {"mean": 0.8, "min": 0.4, "scored": 1}
+    m = _one_page(dict(P3_RIGHTS, items=[{"id": "c1"}]), summary=summary, cfg=cfg)
+    assert m["metadata"][0] == P3_RIGHTS["metadata"][0]
+    assert m["metadata"][1]["label"] == {"en": ["Predicted quality"]}
+
+
+def test_p2_rights_and_reading_hints_are_published_in_p3_form(cfg, p2_manifest):
+    p2_manifest.update(
+        attribution="Provided by an archive",
+        license="http://creativecommons.org/publicdomain/mark/1.0/",
+        description={"@value": "En dombok", "@language": "sv"},
+        metadata=[{"label": "Date", "value": "1652"}],
+        viewingHint="paged",
+        viewingDirection="right-to-left",
+    )
+    m = _p2_viewer_manifest(cfg, p2_manifest)
+    assert m["requiredStatement"] == {
+        "label": {"en": ["Attribution"]},
+        "value": {"none": ["Provided by an archive"]},
+    }
+    assert m["rights"] == "http://creativecommons.org/publicdomain/mark/1.0/"
+    assert m["summary"] == {"sv": ["En dombok"]}
+    assert m["metadata"] == [{"label": {"none": ["Date"]}, "value": {"none": ["1652"]}}]
+    assert m["behavior"] == ["paged"]
+    assert m["viewingDirection"] == "right-to-left"
+
+
+@pytest.mark.parametrize(
+    "canvas",
+    [
+        {"id": "c1", "behavior": ["non-paged"]},
+        {"@id": "c1", "viewingHint": "non-paged"},
+    ],
+)
+def test_a_non_paged_canvas_stays_out_of_the_page_turning(cfg, canvas):
+    """A colour chart or a loose slip is marked non-paged; a viewer MUST NOT
+    put it in the page-turning view."""
+    m = _one_page({"items": [canvas]}, cfg=cfg)
+    assert m["items"][0]["behavior"] == ["non-paged"]
+
+
+def test_a_rights_value_that_is_not_a_web_uri_is_left_out(cfg):
+    """`rights` is a URI a viewer may link to; anything else is not one."""
+    m = _one_page({"rights": "javascript:alert(1)", "items": [{"id": "c1"}]}, cfg=cfg)
+    assert "rights" not in m
+
+
+def test_the_alto_link_uses_the_registered_profile_and_a_real_media_type(cfg):
+    """The IIIF registry of profiles names ALTO
+    `http://www.loc.gov/standards/alto`; `application/xml+alto` is no
+    registered media type. The viewer only needs "alto" in the profile of
+    the first seeAlso, which this keeps."""
+    sa = _one_page({"items": [{"id": "c1"}]}, cfg=cfg)["items"][0]["seeAlso"]
+    assert sa[0]["profile"] == "http://www.loc.gov/standards/alto"
+    assert sa[0]["format"] == "application/xml"
+
+
+def test_a_source_field_of_the_wrong_shape_is_normalised_or_left_out(cfg):
+    """Source content is untrusted: a dict where `metadata` belongs crashed
+    the final publish beside a quality summary, and a bare string `summary`
+    went out as invalid P3."""
+    source = {
+        "metadata": {"label": "not a list"},
+        "requiredStatement": {"value": {"en": ["Provided by an archive"]}},
+        "summary": "A court book",
+        "navDate": 1652,
+        "viewingDirection": "sideways",
+        "items": [{"id": "c1"}],
+    }
+    m = _one_page(source, summary={"mean": 0.8, "min": 0.4, "scored": 1}, cfg=cfg)
+    assert [e["label"] for e in m["metadata"]] == [{"en": ["Predicted quality"]}]
+    assert m["summary"] == {"none": ["A court book"]}
+    assert m["requiredStatement"] == {
+        "label": {"en": ["Attribution"]},
+        "value": {"en": ["Provided by an archive"]},
+    }
+    for key in ("navDate", "viewingDirection"):
+        assert key not in m
+
+
+def test_a_metadata_entry_without_a_label_or_value_is_left_out(cfg):
+    source = {
+        "metadata": [{"value": {"none": ["x"]}}, {"label": {"en": ["Empty"]}}],
+        "items": [{"id": "c1"}],
+    }
+    assert "metadata" not in _one_page(source, cfg=cfg)
+
+
+@pytest.mark.parametrize(
+    "licence, rights",
+    [
+        (
+            ["see the website", "http://rightsstatements.org/vocab/InC/1.0/"],
+            "http://rightsstatements.org/vocab/InC/1.0/",
+        ),
+        (
+            {"@id": "http://creativecommons.org/licenses/by/4.0/"},
+            "http://creativecommons.org/licenses/by/4.0/",
+        ),
+        ('http://x/"><img src=x>', None),
+    ],
+    ids=["list", "json-ld", "markup"],
+)
+def test_the_licence_is_the_first_plain_web_uri(cfg, p2_manifest, licence, rights):
+    p2_manifest["license"] = licence
+    assert _p2_viewer_manifest(cfg, p2_manifest).get("rights") == rights

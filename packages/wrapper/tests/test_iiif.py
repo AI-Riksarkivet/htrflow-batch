@@ -154,10 +154,34 @@ def test_p2_manifest_yields_pages(p2_manifest):
     assert pages[0].image_url == "http://ex/img/full/2500,/0/default.jpg"
 
 
-def test_p2_narrow_canvas_requests_max(p2_manifest):
+def test_p2_narrow_canvas_requests_full(p2_manifest):
+    """Image API 2 requires `full` at every level; `max` is optional in 2.1
+    and absent from 2.0 (3.0 requires `max` and drops `full`)."""
     p2_manifest["sequences"][0]["canvases"][0]["width"] = 1200
     pages = pages_from_manifest(p2_manifest, width=2500)
-    assert pages[0].image_url == "http://ex/img/full/max/0/default.jpg"
+    assert pages[0].image_url == "http://ex/img/full/full/0/default.jpg"
+
+
+@pytest.mark.parametrize(
+    "service",
+    [
+        {"id": "https://img/iiif/page-1", "type": "ImageService2"},
+        {
+            "@id": "https://img/iiif/page-1",
+            "@context": "http://iiif.io/api/image/2/context.json",
+        },
+        {
+            "@id": "https://img/iiif/page-1",
+            "profile": ["http://iiif.io/api/image/2/level1.json", {}],
+        },
+    ],
+    ids=["type", "context", "profile"],
+)
+def test_a_v2_service_in_a_p3_manifest_is_asked_for_full(service):
+    canvas = _canvas_with_service(1200, 1600)
+    canvas["items"][0]["items"][0]["body"]["service"] = [service]
+    pages = pages_from_manifest({"items": [canvas]}, width=2500)
+    assert pages[0].image_url == "https://img/iiif/page-1/full/full/0/default.jpg"
 
 
 def test_p2_resource_without_service_uses_direct_url(p2_manifest):
@@ -660,3 +684,92 @@ def test_fetch_manifest_slow_drip_is_cut_off_and_transient(drip_server):
     ):
         fetch_manifest(f"{drip_server('head')}/manifest", client, deadline=0.5)
     assert time.monotonic() - t0 < 5
+
+
+def test_the_image_service_is_found_behind_other_services():
+    """A P3 ``service`` list may lead with something that is not an image
+    service (an auth service, a search service), or offer the image under
+    two versions. The image is asked from the first IMAGE service, never
+    simply from ``service[0]``."""
+    canvas = _canvas_with_service(3000, 4000)
+    canvas["items"][0]["items"][0]["body"]["service"] = [
+        {"id": "https://auth/login", "type": "AuthAccessService2"},
+        {"id": "https://img/iiif/page-1", "type": "ImageService3"},
+    ]
+    pages = pages_from_manifest({"items": [canvas]}, width=2500)
+    assert pages[0].image_url == "https://img/iiif/page-1/full/2500,/0/default.jpg"
+
+
+def test_a_p2_image_is_published_with_its_own_level_and_size(p2_manifest):
+    """The P2 -> P3 body used to claim level 2 for every v2 service, telling
+    the viewer a level 0/1 server cuts any region at any size. The service
+    says what it is; the image (P3: SHOULD) carries its size."""
+    from htrflow_batch.iiif import painting_body
+
+    canvas = p2_manifest["sequences"][0]["canvases"][0]
+    canvas["images"][0]["resource"].update(width=6000, height=8000)
+    body = painting_body(canvas)
+    assert body["service"][0]["profile"] == "http://iiif.io/api/image/2/level1.json"
+    assert (body["width"], body["height"]) == (6000, 8000)
+
+
+def test_a_p2_service_that_names_no_level_is_published_as_level_0(p2_manifest):
+    """Level 0 asks the viewer for nothing the service did not offer."""
+    from htrflow_batch.iiif import painting_body
+
+    canvas = p2_manifest["sequences"][0]["canvases"][0]
+    del canvas["images"][0]["resource"]["service"]["profile"]
+    body = painting_body(canvas)
+    assert body["service"][0]["profile"] == "http://iiif.io/api/image/2/level0.json"
+
+
+@pytest.mark.parametrize(
+    "canvas_width, image_width, size",
+    [(1000, 6000, "2500,"), (6000, 768, "2500,"), (1200, 1000, "max")],
+    ids=["small-canvas-big-image", "painted-derivative", "both-within-the-cap"],
+)
+def test_the_whole_image_is_asked_for_only_when_every_known_width_fits(
+    canvas_width, image_width, size
+):
+    """A Canvas is a coordinate space, and a painting body is often a sized
+    derivative of a larger service image: neither width alone is the
+    service image's. Judged by the canvas, a small canvas over a large image
+    fetched the full master; judged by the body, a 768 px derivative did.
+    A wrong `w,` guess costs one refused request and the info.json fallback;
+    a wrong whole-image guess costs a master in the lookahead."""
+    canvas = _canvas_with_service(canvas_width, canvas_width)
+    canvas["items"][0]["items"][0]["body"]["width"] = image_width
+    pages = pages_from_manifest({"items": [canvas]}, width=2500)
+    assert pages[0].image_url == f"https://img/iiif/page-1/full/{size}/0/default.jpg"
+
+
+def test_a_p2_manifest_may_point_at_an_image_api_3_service(p2_manifest):
+    """Presentation 2 predates Image API 3, but manifests in the wild pair
+    them: the service keeps its version, so it is asked for `max`."""
+    from htrflow_batch.iiif import painting_body
+
+    canvas = p2_manifest["sequences"][0]["canvases"][0]
+    canvas["width"] = 1200
+    canvas["images"][0]["resource"]["service"] = {
+        "@id": "http://ex/img",
+        "@context": "http://iiif.io/api/image/3/context.json",
+        "profile": "level1",
+    }
+    pages = pages_from_manifest(p2_manifest, width=2500)
+    assert pages[0].image_url == "http://ex/img/full/max/0/default.jpg"
+    assert painting_body(canvas)["service"][0]["@type"] == "ImageService3"
+
+
+def test_an_untyped_p2_auth_service_is_passed_over(p2_manifest):
+    """P2 services rarely carry a type; one whose context names another IIIF
+    API is not the image service."""
+    p2_manifest["sequences"][0]["canvases"][0]["images"][0]["resource"]["service"] = [
+        {
+            "@id": "http://ex/login",
+            "@context": "http://iiif.io/api/auth/1/context.json",
+            "profile": "http://iiif.io/api/auth/1/login",
+        },
+        {"@id": "http://ex/img", "@context": "http://iiif.io/api/image/2/context.json"},
+    ]
+    pages = pages_from_manifest(p2_manifest, width=2500)
+    assert pages[0].image_url == "http://ex/img/full/2500,/0/default.jpg"

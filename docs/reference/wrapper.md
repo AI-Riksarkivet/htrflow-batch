@@ -48,8 +48,8 @@ below splits on it. The source half is one of two shapes:
   Whitespace is the separator because a URL can never contain it, while a
   comma is legal anywhere in one (a IIIF size such as `/full/2500,/`), so
   `validate` refuses a URL with whitespace in it rather than encoding it.
-  There is no manifest at all for these; the wrapper builds and publishes a
-  synthetic one itself.
+  There is no manifest at all for these; the wrapper makes one canvas per
+  URL in memory and publishes nothing for them but the volume's `iiif.json`.
 
 **How index *i* reads line *i*.** The campaign Job's container command
 (`manifests/campaign-job.yaml`) does the whole job in a few shell lines before
@@ -121,11 +121,11 @@ matches `KEY|TOKEN|PASSWORD|SECRET_ACCESS`.
 | Env var | Set by the Job from | Description |
 |---------|---------------------|-------------|
 | `VOLUME_REF` | the `volumes.txt` line | Volume id — last segment of the S3 result prefix |
-| `IIIF_MANIFEST_URL` or `IMAGES` | the `volumes.txt` line | Exactly one of the two: a source manifest (Presentation v2 or v3, must be `http(s)`) or a whitespace-separated list of `http(s)` image URLs. `IMAGES` volumes get a synthetic Presentation 3 manifest built by the wrapper and published to `sources/<pipeline>/<volume>/manifest.json` before processing |
+| `IIIF_MANIFEST_URL` or `IMAGES` | the `volumes.txt` line | Exactly one of the two: a source manifest (Presentation v2 or v3, must be `http(s)`) or a whitespace-separated list of `http(s)` image URLs. `IMAGES` volumes have no source manifest: the wrapper makes one canvas per URL in memory |
 | `PIPELINE_PATH` | fixed, `/config/pipeline.yaml` | Path to the mounted pipeline YAML |
 | `PIPELINE_ID` | the pipeline id | First segment of the S3 result prefix after `S3_PREFIX` |
 | `S3_BUCKET` | the S3 Secret's `S3_BUCKET` key | Results bucket |
-| `RESULTS_URL` | `converter.yaml`'s `results_url` | Browser-reachable base URL, used to build `iiif.json` ids, `viewer_url` and the `IMAGES` synthetic manifest id |
+| `RESULTS_URL` | `converter.yaml`'s `results_url` | Browser-reachable base URL, used to build `iiif.json` ids and `viewer_url` |
 
 **Optional:**
 
@@ -134,8 +134,8 @@ matches `KEY|TOKEN|PASSWORD|SECRET_ACCESS`.
 | `S3_ENDPOINT` | `""` | From the S3 Secret's optional `S3_ENDPOINT` key. Empty = the boto3 provider default chain |
 | `S3_VERIFY_TLS` | `true` | From the S3 Secret's optional `S3_VERIFY_TLS` key. `false` skips the certificate check on the S3 endpoint only (page images are always verified), and the run log says so once at start |
 | `AWS_SHARED_CREDENTIALS_FILE` | *(boto3 default)* | Read by boto3, not `Config`. Jobs set `/secrets/s3/credentials` — the mounted Secret file; credentials are never env |
-| `S3_PREFIX` | `""` | Extra prefix before `<pipeline>/<volume>/` (and before `sources/`); leading and trailing `/` are stripped. The converter always sets it to `<namespace>/`; empty only when the wrapper is run by hand |
-| `MAX_IMAGE_WIDTH` | `2500` | Width asked of the IIIF Image API (`/full/{w},/`). A 400 falls back to the largest size the image's `info.json` offers within the cap, and to `max` only when it offers none. Service-less canvases are fetched at native size |
+| `S3_PREFIX` | `""` | Extra prefix before `<pipeline>/<volume>/` (and before `status/logs/`); leading and trailing `/` are stripped. The converter always sets it to `<namespace>/`; empty only when the wrapper is run by hand |
+| `MAX_IMAGE_WIDTH` | `2500` | Width asked of the IIIF Image API (`/full/{w},/`). A size refused with 400, 403, 404 or 501 falls back to the largest size the image's `info.json` offers within the cap, and to the whole image (`full` in Image API 2, `max` in 3) only when it offers none. Service-less canvases are fetched at native size |
 | `RESUME` | `true` | Skip pages that already have **both** PAGE and ALTO in S3 and were made from the source they have now: the ALTO's `source-digest` object metadata, or for a page stored without it, its `page_source_digests` entry in the previous `manifest.json`. Every page not skipped loses its stored PAGE and ALTO before the run, after the previous `manifest.json` and then `iiif.json` are deleted; `false` therefore clears the whole volume's page files first. The run log says `[<volume>] resume: <n> done, <m> to process` |
 | `LOOKAHEAD_PAGES` | `64` | Prefetch depth of the download pipeline |
 | `LOOKAHEAD_BYTES` | `1073741824` | Byte bound on the same window: a page that has landed counts its size, one still downloading counts `FETCH_MAX_BYTES`, and no page is submitted past it (a page alone in the window always is) |
@@ -296,8 +296,8 @@ Source root: [`packages/wrapper/src/htrflow_batch/`](https://github.com/AI-Riksa
 | `progress.py` | `Progress` — writes `progress.json` after every page outcome and stage change, and republishes the interim `iiif.json` every 10 pages |
 | `provenance.py` | `stamp_alto` — appends the `htrflow-batch` `<Processing>` block (image digest, htrflow base revision, wrapper version) to an ALTO after Export, before upload |
 | `driver.py` | htrflow integration: build the pipeline from YAML (Export steps appended for `alto` and `page`), `process_page`, `htrflow_version` |
-| `store.py` | `ResultStore` — deterministic S3 keys, explicit content types, XML parsed before upload, `page` then `alto`, `done_pages()` (both formats), bounded boto timeouts, checksums only where an operation requires one and on DeleteObjects a Content-MD5 in place of the CRC32 botocore would send (what S3-compatible stores that predate flexible checksums accept), the run-log key, `put_json_at` (bucket-root keys, e.g. `sources/`) |
-| `synthetic.py` | `build_manifest` — the synthetic Presentation 3 manifest for `IMAGES` volumes |
+| `store.py` | `ResultStore` — deterministic S3 keys, explicit content types, XML parsed before upload, `page` then `alto`, `done_pages()` (both formats), bounded boto timeouts, checksums only where an operation requires one and on DeleteObjects a Content-MD5 in place of the CRC32 botocore would send (what S3-compatible stores that predate flexible checksums accept), the run-log key |
+| `synthetic.py` | `image_canvases` — the canvases of an `IMAGES` volume, one painting body per URL |
 | `viewer.py` | `build_viewer_manifest` — IIIF Presentation 3 manifest with ALTO annotation links (`iiif.json`) |
 | `logship.py` | `LogCapture` — tees stdout/stderr, redacts every URL appended to the buffer (`_append`) and every URL in the wrapper's own log records (`RedactingFormatter`), ships the buffer to S3 on an interval ([Events and signals](../how-it-works/signals.md)) |
 | `publish.py` | The publish stage: `alto_dims` (viewer dimensions from the ALTO), `run_manifest` (the `manifest.json` body), `run` (`iiif.json`, `pipeline.yaml`, `manifest.json` last) |
@@ -322,8 +322,8 @@ On any failure the wrapper writes the termination log before exiting
 non-zero, never a completion marker. Every URL in the shipped run log, in
 termination messages and in `page_sources` is redacted (no userinfo, no
 query string; the boundary rules are in `iiif.redact_urls`). `source_manifest` in `manifest.json` is
-written verbatim — the manifest URL the Job fetched, or, for `IMAGES`
-volumes, the synthetic manifest id the wrapper published to `sources/`.
+written verbatim — the manifest URL the Job fetched, or `null` for `IMAGES`
+volumes, which have none.
 
 ## Live run log
 
