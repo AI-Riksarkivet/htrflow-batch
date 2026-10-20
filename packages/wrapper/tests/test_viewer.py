@@ -304,3 +304,54 @@ def test_the_alto_link_uses_the_registered_profile_and_a_real_media_type(cfg):
     sa = _one_page({"items": [{"id": "c1"}]}, cfg=cfg)["items"][0]["seeAlso"]
     assert sa[0]["profile"] == "http://www.loc.gov/standards/alto"
     assert sa[0]["format"] == "application/xml"
+
+
+def test_a_source_field_of_the_wrong_shape_is_normalised_or_left_out(cfg):
+    """Source content is untrusted: a dict where `metadata` belongs crashed
+    the final publish beside a quality summary, and a bare string `summary`
+    went out as invalid P3."""
+    source = {
+        "metadata": {"label": "not a list"},
+        "requiredStatement": {"value": {"en": ["Provided by an archive"]}},
+        "summary": "A court book",
+        "navDate": 1652,
+        "viewingDirection": "sideways",
+        "items": [{"id": "c1"}],
+    }
+    m = _one_page(source, summary={"mean": 0.8, "min": 0.4, "scored": 1}, cfg=cfg)
+    assert [e["label"] for e in m["metadata"]] == [{"en": ["Predicted quality"]}]
+    assert m["summary"] == {"none": ["A court book"]}
+    assert m["requiredStatement"] == {
+        "label": {"en": ["Attribution"]},
+        "value": {"en": ["Provided by an archive"]},
+    }
+    for key in ("navDate", "viewingDirection"):
+        assert key not in m
+
+
+def test_a_metadata_entry_without_a_label_or_value_is_left_out(cfg):
+    source = {
+        "metadata": [{"value": {"none": ["x"]}}, {"label": {"en": ["Empty"]}}],
+        "items": [{"id": "c1"}],
+    }
+    assert "metadata" not in _one_page(source, cfg=cfg)
+
+
+@pytest.mark.parametrize(
+    "licence, rights",
+    [
+        (
+            ["see the website", "http://rightsstatements.org/vocab/InC/1.0/"],
+            "http://rightsstatements.org/vocab/InC/1.0/",
+        ),
+        (
+            {"@id": "http://creativecommons.org/licenses/by/4.0/"},
+            "http://creativecommons.org/licenses/by/4.0/",
+        ),
+        ('http://x/"><img src=x>', None),
+    ],
+    ids=["list", "json-ld", "markup"],
+)
+def test_the_licence_is_the_first_plain_web_uri(cfg, p2_manifest, licence, rights):
+    p2_manifest["license"] = licence
+    assert _p2_viewer_manifest(cfg, p2_manifest).get("rights") == rights

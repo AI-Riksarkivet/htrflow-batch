@@ -232,7 +232,9 @@ came out:
   which viewers must show), `rights`, `summary`, `metadata`, `navDate`,
   `behavior` and `viewingDirection`, with Presentation 2's `attribution`,
   `license`, `description` and `viewingHint` turned into them. A canvas
-  marked `non-paged` stays marked. The table of contents (`structures`) is
+  marked `non-paged` stays marked. Each value is untrusted, so it is
+  normalised to its Presentation 3 shape or left out: `rights` is the first
+  plain web URI the source names. The table of contents (`structures`) is
   not carried: its ranges name the source's canvases, not these.
 - **Dimensions.** The **width-capped dimensions actually processed**, so the
   Universal Viewer's line overlays line up without coordinate rewriting.
