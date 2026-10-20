@@ -370,7 +370,17 @@ def test_a_page_with_no_policy_of_its_own_gets_the_strictest(
     assert "frame-ancestors 'none'" in csp
 
 
-SPA_CSP = "frame-ancestors 'none'; connect-src 'self' https://results.example.org/"
+#: What the SPA's pages may load beyond the scripts their meta tag holds to
+#: hashes: the rest from this origin only, style attributes inline, forms
+#: only to here (2026-10-20 DAST), and fetches from the API and the bucket.
+SPA_PAGE = (
+    "frame-ancestors 'none'; img-src 'self'; style-src 'self'; "
+    "style-src-attr 'unsafe-inline'; font-src 'self'; frame-src 'self'; "
+    "media-src 'self'; manifest-src 'self'; form-action 'self'"
+)
+SPA_CSP = f"{SPA_PAGE}; connect-src 'self' https://results.example.org/"
+#: Site-only mode, or a base no source can name: fetches are not narrowed.
+SPA_OPEN = SPA_PAGE
 
 
 def test_a_policy_stated_in_the_body_is_not_the_pages_own(static_dir: Path):
@@ -411,7 +421,7 @@ def test_the_results_base_is_one_well_formed_source(static_dir, base, source):
     reader.cfg = SimpleNamespace(results_url=base)
     client = TestClient(create_app(reader, static_dir=static_dir))
     csp = client.get("/log").headers["Content-Security-Policy"]
-    assert csp == f"frame-ancestors 'none'; connect-src 'self' {source}"
+    assert csp == f"{SPA_PAGE}; connect-src 'self' {source}"
 
 
 @pytest.mark.parametrize(
@@ -429,13 +439,11 @@ def test_a_results_base_no_csp_source_can_name_does_not_narrow_the_spa(
 ):
     """A connect-src built from such a base would be malformed, and a
     browser drops a source it cannot parse -- leaving `'self'` alone, and
-    every result the page reads blocked. The page is left un-narrowed."""
+    every result the page reads blocked. Its fetches are left open."""
     reader = EmptyReader()
     reader.cfg = SimpleNamespace(results_url=base)
     client = TestClient(create_app(reader, static_dir=static_dir))
-    assert client.get("/log").headers["Content-Security-Policy"] == (
-        "frame-ancestors 'none'"
-    )
+    assert client.get("/log").headers["Content-Security-Policy"] == SPA_OPEN
 
 
 def test_with_no_results_base_the_spa_is_not_narrowed(static_dir: Path):
@@ -443,9 +451,7 @@ def test_with_no_results_base_the_spa_is_not_narrowed(static_dir: Path):
     URL, as it did before there was one -- a connect-src would break that."""
     client = TestClient(create_app(NoCluster(), static_dir=static_dir))
     for path in ("/", "/log"):
-        assert client.get(path).headers["Content-Security-Policy"] == (
-            "frame-ancestors 'none'"
-        )
+        assert client.get(path).headers["Content-Security-Policy"] == SPA_OPEN
 
 
 @pytest.mark.parametrize(
@@ -582,3 +588,33 @@ class TestSiteOnly:
         )
         create_app(NoCluster(), static_dir=static_dir)
         assert built == []
+
+
+def test_the_spas_pages_load_nothing_from_elsewhere_but_their_fetches(
+    client: TestClient,
+):
+    """The meta tag holds scripts to hashes and says nothing of the rest, so
+    images, styles, fonts and frames loaded from anywhere and a form posted
+    anywhere (ZAP, 2026-10-20). The header names each of them; style
+    attributes stay inline, as the progress bars and layout variables set
+    style="..."."""
+    directives = {
+        d.split()[0]: d.split()[1:]
+        for d in client.get("/").headers["Content-Security-Policy"].split("; ")
+    }
+    for name in ("img-src", "style-src", "font-src", "frame-src", "media-src"):
+        assert directives[name] == ["'self'"], name
+    assert directives["form-action"] == ["'self'"]
+    assert directives["style-src-attr"] == ["'unsafe-inline'"]
+
+
+def test_the_header_leaves_scripts_to_the_pages_meta_policy(client: TestClient):
+    """The browser enforces the header and the meta tag both, and only the
+    tag carries the hash of SvelteKit's inline start-up script. A default-src
+    in the header covered scripts too, and blocked that script: every page
+    rendered blank (found in a browser on k3s, 2026-10-20)."""
+    names = {
+        d.split()[0]
+        for d in client.get("/").headers["Content-Security-Policy"].split("; ")
+    }
+    assert not names & {"default-src", "script-src", "script-src-elem", "worker-src"}
