@@ -265,8 +265,7 @@ def create_results_app(
     limiter: LoginLimiter | None = None,
     max_probes: int = MAX_PROBES,
 ) -> FastAPI:
-    # No Swagger UI, ReDoc or OpenAPI schema: they answered without a login
-    # and nothing in the product reads them (ZAP, 2026-10-20).
+    # No /docs, /redoc or /openapi.json, as in app.py (ZAP, 2026-10-20).
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     clients = clients or ClientCache(cfg)
     limiter = limiter or LoginLimiter()
