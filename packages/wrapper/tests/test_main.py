@@ -1467,37 +1467,36 @@ def images_env(tmp_path, cfg, monkeypatch):
     }
 
 
-def test_images_publishes_the_synthetic_manifest_and_processes_both_pages(
+def test_images_processes_both_pages_and_publishes_no_source_manifest(
     images_env, cfg, s3
 ):
+    """An image list has no source manifest, and none is made up and
+    published: a Presentation 3 canvas must have a size, and an image's is
+    known only once it is fetched. iiif.json, written after, has them."""
     rc = main(images_env, process_page_factory=fake_factory)
     assert rc == EXIT_OK
     keys = _keys(s3, cfg)
     assert "demo-v1/SE-RA-1234/alto/0001.xml" in keys
     assert "demo-v1/SE-RA-1234/alto/0002.xml" in keys
-    src = json.loads(
-        s3.get_object(
-            Bucket=cfg.s3_bucket, Key="sources/demo-v1/SE-RA-1234/manifest.json"
-        )["Body"].read()
-    )
-    assert src["type"] == "Manifest" and len(src["items"]) == 2
+    assert not [k for k in keys if k.startswith("sources/")]
     manifest = json.loads(
         s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
             "Body"
         ].read()
     )
     assert manifest["pages"] == 2
-    assert manifest["source_manifest"] == (
-        "http://public/htr-results/sources/demo-v1/SE-RA-1234/manifest.json"
+    assert manifest["source_manifest"] is None
+    viewer = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/iiif.json")[
+            "Body"
+        ].read()
     )
-
-
-def test_images_honours_s3_prefix_for_the_sources_key(images_env, cfg, s3):
-    rc = main(dict(images_env, S3_PREFIX="batch"), process_page_factory=fake_factory)
-    assert rc == EXIT_OK
-    assert s3.get_object(
-        Bucket=cfg.s3_bucket, Key="batch/sources/demo-v1/SE-RA-1234/manifest.json"
-    )
+    bodies = [c["items"][0]["items"][0]["body"] for c in viewer["items"]]
+    assert [b["id"] for b in bodies] == [
+        "https://img.example/1.jpg",
+        "https://img.example/2.jpg",
+    ]
+    assert all(c["width"] and c["height"] for c in viewer["items"])
 
 
 def test_images_rejects_a_non_http_url(images_env, cfg, s3):

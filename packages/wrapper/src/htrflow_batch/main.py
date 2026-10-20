@@ -335,7 +335,7 @@ def _main(
         # the last stage that fetches anything is done, on every path out. The
         # publish stage below talks only to S3.
         with _http_client() as client:
-            source, source_url, pages = _setup(cfg, client, store, state)
+            source, source_url, pages = _setup(cfg, client, state)
             tracker.pages, tracker.source = pages, source
             todo, done = _resume(cfg, store, pages, state)
             stats, nbytes, cache_report = _stream(
@@ -434,13 +434,16 @@ def _transient(
 
 
 def _setup(
-    cfg: Config, client: httpx.Client, store: ResultStore, state: RunState
-) -> tuple[dict, str, list[PageRef]]:
-    """The source manifest — fetched, or synthesized from IMAGES and published
-    under sources/ — its URL, and the ordered pages it enumerates."""
+    cfg: Config, client: httpx.Client, state: RunState
+) -> tuple[dict, str | None, list[PageRef]]:
+    """The source manifest — fetched, or built from IMAGES, which has no URL
+    — its URL, and the ordered pages it enumerates."""
     state.stage = "setup"
+    url: str | None = None
     if cfg.images:
-        source, url = _synthetic_source(cfg, store)
+        for u in cfg.image_urls:
+            check_http_url(u, "IMAGES URL")
+        source = build_manifest(cfg.image_urls)
     else:
         source = fetch_manifest(
             cfg.manifest_url,
@@ -677,20 +680,6 @@ def _failure_detail(stats: StreamStats, failed: list[str]) -> str:
     )
     rest = len(failed) - FAILED_DETAIL_PAGES
     return f" errors: {shown}" + (f" (+{rest} more)" if rest > 0 else "")
-
-
-def _synthetic_source(cfg: Config, store: ResultStore) -> tuple[dict, str]:
-    """IMAGES: build and publish the synthetic P3 manifest to
-    sources/<pipeline>/<volume>/manifest.json (S3_PREFIX honoured, docs:
-    wrapper), then hand it back as if it had been fetched."""
-    urls = cfg.image_urls
-    for u in urls:
-        check_http_url(u, "IMAGES URL")
-    key = f"sources/{cfg.pipeline_id}/{cfg.volume_ref}/manifest.json"
-    manifest_id = f"{cfg.results_url.rstrip('/')}/{cfg.root_key(key)}"
-    doc = build_manifest(cfg.volume_ref, urls, manifest_id)
-    store.put_json_at(key, doc)
-    return doc, manifest_id
 
 
 def _changed_sources(store: ResultStore, pages, done: set[str]) -> set[str]:
