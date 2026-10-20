@@ -47,6 +47,17 @@ def test_every_container_is_restricted_and_uses_the_converter_image():
         assert sc["capabilities"] == {"drop": ["ALL"]}
 
 
+def test_every_scratch_volume_is_bounded():
+    """The root filesystems are read-only, so the emptyDirs are all the
+    node disk the hook can write: each one carries a sizeLimit, past which
+    the kubelet evicts the pod instead of letting it fill the node."""
+    volumes = job()["spec"]["template"]["spec"]["volumes"]
+    scratch = [v for v in volumes if "emptyDir" in v]
+    assert scratch
+    for v in scratch:
+        assert v["emptyDir"].get("sizeLimit"), v["name"]
+
+
 def test_the_token_comes_from_the_secret_never_the_command_line():
     spec = job()["spec"]["template"]["spec"]
     clone = spec["initContainers"][0]

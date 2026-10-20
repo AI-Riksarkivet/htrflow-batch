@@ -178,7 +178,7 @@ def image_env(dockerfile: str) -> set[str]:
     """The names an image's dockerfile sets with `ENV`."""
     text = (DOCKER / dockerfile).read_text(encoding="utf-8").replace("\\\n", " ")
     lines = re.findall(r"^ENV (.*)$", text, re.M)
-    return {name for line in lines for name in re.findall(r"(\w+)=", line)}
+    return {name for line in lines for name in re.findall(r"\b(\w+)=", line)}
 
 
 def compose_env(service: str) -> set[str]:

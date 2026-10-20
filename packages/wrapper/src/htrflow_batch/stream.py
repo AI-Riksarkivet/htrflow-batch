@@ -97,8 +97,10 @@ def discard(path: Path) -> None:
     and resume/verify list S3, never the workdir."""
     try:
         path.unlink(missing_ok=True)
-    except Exception:
-        pass  # the outcome is already recorded; a failed delete changes nothing
+    except OSError:
+        # The outcome is already recorded, so the run goes on; but the
+        # workdir is tmpfs, and deletes that keep failing fill it.
+        log.warning("workdir file %s not deleted", path, exc_info=True)
 
 
 class Unrecoverable(RuntimeError):

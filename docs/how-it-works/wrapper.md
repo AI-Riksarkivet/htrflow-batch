@@ -229,6 +229,9 @@ came out:
   Universal Viewer's line overlays line up without coordinate rewriting.
 - **Text.** A `seeAlso` per canvas pointing at its ALTO URL under the results URL (ALTO v4
   profile), the shape the viewer's text panel matches on.
+- **Downloads.** A `rendering` per canvas for its ALTO and its PAGE XML,
+  which the viewer's download dialog lists for the current page; that
+  dialog never reads `seeAlso`.
 - **Search service.** A stub `SearchService1` entry, because the viewer
   shows the text panel only when one is present.
 

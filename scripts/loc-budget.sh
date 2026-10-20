@@ -396,7 +396,14 @@ fail=0
 # dropping a redone page's copy. provenance.py +4. Most of it is the
 # docstrings saying why the copy is text, why nothing reads it back and why
 # keeping it can never change how the page came out.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 4988
+# 4988 -> 5049 (SonarQube findings): safexml.py +32 -- every ALTO/PAGE parse
+# through defusedxml with DTDs refused, raised as the ParseError the callers
+# already handle. driver.py +5, store.py +5, stream.py +2: the best-effort
+# cleanups that passed silently now log what they swallow. viewer.py +13: a
+# rendering per canvas for its ALTO and PAGE XML, the only thing UV's
+# download dialog lists. The rest is the explicit checks that replaced
+# asserts (gone under -O) and the safexml imports.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 5049
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
@@ -834,7 +841,9 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 4988
 # keys into one error, so converter.yaml's old public_results_base is
 # refused naming results_url instead of as a spelling mistake.
 # 5074 -> 5084 (audit 1001 review 1B): results_url must end in /results, as the chart's resultsUrl.
-check converter "$(count packages/converter/src -name '*.py')" 5084
+# 5084 -> 5085 (SonarQube findings): models.memory_bytes raises ValueError
+# where an assert guarded a quantity the regex refused.
+check converter "$(count packages/converter/src -name '*.py')" 5085
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
@@ -1516,7 +1525,9 @@ check web       "$(count packages/web/src -name '*.py')" 4027
 # 6213 -> 6259 (audit 1001 R14): the run log tells a retried attempt from a failed or finished run.
 # 6259 -> 6263 (audit 1001 review I2): a transient failure on the last attempt reads as failed.
 # 6263 -> 6317 (audit 1001 R26): login refusals and a down results proxy worded from the proxy's own detail.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 6317
+# 6317 -> 6319 (SonarQube findings): the comment on pipeline.ts's key regex
+# saying why the value is trimmed after the match, not inside it.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 6319
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

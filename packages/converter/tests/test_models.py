@@ -585,3 +585,11 @@ def test_an_unknown_image_cache_key_is_refused():
 
 def test_no_image_cache_by_default():
     assert ConverterConfig.model_validate(BASE).image_cache is None
+
+
+def test_memory_bytes_refuses_a_string_that_is_no_quantity():
+    """Size validates first; a caller that skipped it gets a ValueError,
+    which python -O keeps, not an assert it strips."""
+    assert models.memory_bytes("2Gi") == 2 * 1024**3
+    with pytest.raises(ValueError, match="not a memory quantity: 'lots'"):
+        models.memory_bytes("lots")
