@@ -302,19 +302,25 @@ def _body_candidates(body: object) -> list[dict]:
 def _p2_body(res: dict) -> dict:
     """A P2 image resource as a P3-style body. The service keeps v2-style
     keys (@id/@type/profile): UV silently shows no image otherwise (docs:
-    wrapper)."""
+    wrapper). Its profile is the service's own -- a level it does not
+    claim would have the viewer ask for sizes it 400s -- or level 0."""
     body = {
         "id": res.get("@id") or res.get("id"),
         "type": "Image",
         "format": res.get("format", "image/jpeg"),
     }
-    sid = _service_id(res.get("service"))
-    if sid:
+    for key in ("width", "height"):
+        if (value := _int_or_none(res.get(key))) is not None:
+            body[key] = value
+    service = _image_service(res.get("service")) or {}
+    sid = service.get("@id") or service.get("id")
+    if isinstance(sid, str) and sid:
+        profile = service.get("profile")
         body["service"] = [
             {
                 "@id": sid,
                 "@type": "ImageService2",
-                "profile": "http://iiif.io/api/image/2/level2.json",
+                "profile": profile or "http://iiif.io/api/image/2/level0.json",
             }
         ]
     return body
