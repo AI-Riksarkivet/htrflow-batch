@@ -43,12 +43,12 @@ from .progress import ProgressReader
 _LOG = logging.getLogger(__name__)
 
 #: Exactly what the retired nginx config sent (chart 0.3.0's viewer template).
-#: Script/style sources are governed by the SvelteKit build's own
-#: ``<meta http-equiv>`` CSP (kit.csp); a header must not be stricter than it,
-#: since the browser enforces the intersection — so this one only forbids
-#: framing, which a meta tag cannot express. The SPA's pages add the one
-#: source list the build cannot know, where they may fetch from
-#: (``spa_csp``); the viewer and every other document have their own.
+#: Script sources are governed by the SvelteKit build's own
+#: ``<meta http-equiv>`` CSP (kit.csp); a header must not narrow a directive
+#: it has, since the browser enforces the intersection — so this one only
+#: forbids framing, which a meta tag cannot express. The SPA's pages add what
+#: their tag leaves unsaid, and where they may fetch from (``spa_csp``); the
+#: viewer and every other document have their own.
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "strict-origin-when-cross-origin",
@@ -99,33 +99,43 @@ STRICT_CSP = "default-src 'none'; sandbox; frame-ancestors 'none'"
 _CSP_HOST = re.compile(r"[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*")
 
 
-def spa_csp(results_base: str) -> str | None:
-    """The header the SPA's own pages get beside their meta policy: where
-    they may fetch from -- this service (the API) and the results bucket
-    (run logs, manifest.json, ALTO) -- which the build cannot say, because
-    the bucket is not known until the service starts (2026-09-23 audit).
-    The browser enforces the header and the meta tag both, and this adds a
-    directive the meta tag does not have rather than narrowing one it does.
+#: What the SPA's pages may load beyond the scripts their meta tag holds to
+#: hashes, which the tag says nothing of: the rest from this origin only, so
+#: an injected image, stylesheet, font or frame cannot reach out, and a form
+#: may post only here (ZAP, 2026-10-20). Style attributes stay inline: the
+#: progress bars and layout variables are set as style="...". Directives the
+#: meta tag has are left to it -- the browser enforces both.
+SPA_PAGE_POLICY = (
+    "default-src 'self'; style-src-attr 'unsafe-inline'; form-action 'self'"
+)
 
-    ``None`` -- no narrowing at all -- when there is no base (site-only
+
+def spa_csp(results_base: str) -> str:
+    """The header the SPA's own pages get beside their meta policy:
+    ``SPA_PAGE_POLICY``, and where they may fetch from -- this service (the
+    API) and the results bucket (run logs, manifest.json, ALTO) -- which the
+    build cannot say, because the bucket is not known until the service
+    starts (2026-09-23 audit).
+
+    Fetches stay open to any http(s) URL when there is no base (site-only
     mode, where the run log reads any http(s) URL, as it did before there
-    was one) or when the base is not a URL a CSP source can express."""
+    was one) or when the base is not a URL a CSP source can express:
+    default-src would otherwise hold them to this origin."""
+    page = f"{SECURITY_HEADERS['Content-Security-Policy']}; {SPA_PAGE_POLICY}"
+    anywhere = f"{page}; connect-src 'self' http: https:"
     parts = urlsplit(results_base)
     try:
         port = parts.port
     except ValueError:
-        return None
+        return anywhere
     host = parts.hostname or ""
     if parts.scheme not in ("http", "https") or not _CSP_HOST.fullmatch(host):
-        return None
+        return anywhere
     # Percent-encoded where a CSP source cannot hold the character: `;` ends
     # a directive and `,` a policy. The browser compares paths decoded.
     path = quote(parts.path.rstrip("/"), safe="/-._~%!$&'()*+=:@")
     netloc = f"{host}:{port}" if port is not None else host
-    return (
-        f"{SECURITY_HEADERS['Content-Security-Policy']}; "
-        f"connect-src 'self' {parts.scheme}://{netloc}{path}/"
-    )
+    return f"{page}; connect-src 'self' {parts.scheme}://{netloc}{path}/"
 
 
 #: File suffixes a browser renders as a document that can run script
@@ -281,7 +291,7 @@ class BuiltSite(StaticFiles):
 
     Every other document gets ``STRICT_CSP`` unless its own head states a
     policy -- which the SPA's pages do (kit.csp); those get ``page_csp``
-    (``spa_csp``), which only adds what their meta tag cannot say.
+    (``spa_csp``), which adds only what their meta tag leaves unsaid.
     """
 
     def __init__(
