@@ -264,11 +264,11 @@ The chart values are in [Chart Values](chart.md#web-front-web).
 | Response | Policy |
 |---|---|
 | Every response | `frame-ancestors 'none'`, with `X-Content-Type-Options: nosniff` and `Referrer-Policy: strict-origin-when-cross-origin`. |
-| The SPA's pages | Their own meta CSP from the build (`script-src 'self'` plus the hash of SvelteKit's init script, `object-src 'none'`, `base-uri 'self'`), and a header adding `default-src 'self'; style-src-attr 'unsafe-inline'; form-action 'self'; connect-src 'self' <results base>/`. Everything but scripts loads from the page's own origin only, style attributes may be inline, a form posts only here, and the page fetches only from the API and the results URL. |
+| The SPA's pages | Their own meta CSP from the build (`script-src 'self'` plus the hash of SvelteKit's init script, `object-src 'none'`, `base-uri 'self'`), and a header adding `img-src`, `style-src`, `font-src`, `frame-src`, `media-src` and `manifest-src` as `'self'`, `style-src-attr 'unsafe-inline'`, `form-action 'self'` and `connect-src 'self' <results base>/`. Images, styles, fonts, frames and media load from the page's own origin only, style attributes may be inline, a form posts only here, and the page fetches only from the API and the results URL. The header names no `default-src` or `script-src`: scripts are the meta tag's alone, as only it carries the hash of SvelteKit's inline start-up script. |
 | `uv.html` | A policy of its own, chosen by the file served, whatever path reached it: hashed inline script, inline styles, images and manifests from anywhere. |
 | Any other HTML document in the site | `default-src 'none'; sandbox`. |
 
 The meta CSP is why configuration arrives as `/config.js` and never as an
 inline script. In site-only mode, or with a results base a CSP source
-cannot express, the SPA's `connect-src` is `'self' http: https:`: the run log
-may then fetch from any http(s) URL, and everything else stays on the origin.
+cannot express, the header has no `connect-src`: the run log may then fetch
+from any http(s) URL.

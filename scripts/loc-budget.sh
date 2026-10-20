@@ -1154,11 +1154,12 @@ check converter "$(count packages/converter/src -name '*.py')" 5085
 # /api/v1 answer is `private, no-store` and the lookup is wired; kube.py +2:
 # the internal base falls back to the proxy.
 # 3751 -> 4027 (audit 1001 round 1A): __Host- cookie module, login flood bounds, key-file reload, per-caller progress tallies.
-# 4027 -> 4037 (2026-10-20, ZAP DAST findings): app.py +12 -- the SPA's
-# pages get default-src/form-action/style-src-attr beside their meta policy,
-# with fetches left open to any http(s) URL where no results base can be
-# named; results.py +1: no /docs, /redoc or /openapi.json there either.
-check web       "$(count packages/web/src -name '*.py')" 4037
+# 4027 -> 4039 (2026-10-20, ZAP DAST findings): app.py +14 -- the SPA's
+# pages get img/style/font/frame/media/manifest-src 'self', form-action and
+# style-src-attr beside their meta policy, each named because a default-src
+# would cover scripts and block SvelteKit's hashed start-up script; and the
+# API publishes no /docs, /redoc or /openapi.json. results.py +1: nor there.
+check web       "$(count packages/web/src -name '*.py')" 4039
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
