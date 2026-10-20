@@ -2,12 +2,6 @@
 # default. Install into the SAME namespace as the htrflow-batch release (the
 # two charts share no Helm values — they wire together by naming
 # convention only, documented per key below) — see README.md.
-#
-# No git daemon here (there was one through B63 Task 5's first draft):
-# nothing in the platform reads git:// any more — campaigns are Indexed
-# Jobs rendered by packages/converter and applied by `htrflow-campaigns
-# apply` (or Argo CD), not fetched in-cluster by a CronJob controller — so
-# it had no consumer and was removed rather than kept as dead weight.
 
 # RustFS's root credentials are also the S3 credentials every batch Job and
 # the results bucket get. A value published in this repository is no secret
