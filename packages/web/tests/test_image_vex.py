@@ -61,14 +61,9 @@ RULES: dict[str, tuple[str, tuple[str, ...]]] = {
     "CVE-2025-69720": (ABSENT, ()),  # ncurses infocmp(1): not shipped
     "CVE-2026-82049": (ABSENT, ("tarfile",)),
     "CVE-2026-7210": (AFFECTED, EXPAT),  # web image parses S3 XML with botocore
-    "CVE-2026-66046": (AFFECTED, EXPAT),  # web image parses S3 XML with libexpat1
-    "CVE-2026-76956": (AFFECTED, EXPAT),  # web image parses S3 XML with libexpat1
-    "CVE-2026-76957": (AFFECTED, EXPAT),  # web image parses S3 XML with libexpat1
-    "CVE-2026-93990": (AFFECTED, EXPAT),  # web image parses S3 XML with libexpat1
     "CVE-2026-15308": (STATIC_ONLY, ("html.parser",)),
     "CVE-2026-19445": (AFFECTED, ("ssl",)),  # sni_callback servers; ours speak HTTP
     "CVE-2026-19553": (AFFECTED, ("ssl",)),  # wrap_bio without server_hostname
-    "CVE-2026-77214": (AFFECTED, EXPAT),  # web image parses S3 XML with libexpat1
 }
 JUSTIFICATIONS = {
     ABSENT: {"vulnerable_code_not_present", "vulnerable_code_not_in_execute_path"},

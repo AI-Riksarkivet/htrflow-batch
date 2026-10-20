@@ -2,8 +2,8 @@
   "@context": "https://openvex.dev/ns/v0.2.0",
   "@id": "https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/.docker/distroless.openvex.json",
   "author": "htrflow-batch maintainers",
-  "timestamp": "2026-10-15T00:00:00Z",
-  "version": 3,
+  "timestamp": "2026-10-20T00:00:00Z",
+  "version": 4,
   "statements": [
     {
       "vulnerability": {
@@ -141,58 +141,6 @@
     },
     {
       "vulnerability": {
-        "name": "CVE-2026-66046"
-      },
-      "products": [
-        {
-          "@id": "pkg:deb/debian/libexpat1@2.8.3-1~deb13u1"
-        }
-      ],
-      "status": "affected",
-      "impact_statement": "The web image's results proxy parses S3 store XML responses using libexpat. Keep S3 TLS verification on where possible.",
-      "action_statement": "Upgrade to fixed Debian libexpat1 when released. The converter image does not parse XML and is unaffected."
-    },
-    {
-      "vulnerability": {
-        "name": "CVE-2026-76956"
-      },
-      "products": [
-        {
-          "@id": "pkg:deb/debian/libexpat1@2.8.3-1~deb13u1"
-        }
-      ],
-      "status": "affected",
-      "impact_statement": "The web image's results proxy parses S3 store XML responses using libexpat. Keep S3 TLS verification on where possible.",
-      "action_statement": "Upgrade to fixed Debian libexpat1 when released. The converter image does not parse XML and is unaffected."
-    },
-    {
-      "vulnerability": {
-        "name": "CVE-2026-76957"
-      },
-      "products": [
-        {
-          "@id": "pkg:deb/debian/libexpat1@2.8.3-1~deb13u1"
-        }
-      ],
-      "status": "affected",
-      "impact_statement": "The web image's results proxy parses S3 store XML responses using libexpat. Keep S3 TLS verification on where possible.",
-      "action_statement": "Upgrade to fixed Debian libexpat1 when released. The converter image does not parse XML and is unaffected."
-    },
-    {
-      "vulnerability": {
-        "name": "CVE-2026-93990"
-      },
-      "products": [
-        {
-          "@id": "pkg:deb/debian/libexpat1@2.8.3-1~deb13u1"
-        }
-      ],
-      "status": "affected",
-      "impact_statement": "The web image's results proxy parses S3 store XML responses using libexpat. Keep S3 TLS verification on where possible.",
-      "action_statement": "Upgrade to fixed Debian libexpat1 when released. The converter image does not parse XML and is unaffected."
-    },
-    {
-      "vulnerability": {
         "name": "CVE-2026-19445"
       },
       "products": [
@@ -234,19 +182,6 @@
       "status": "affected",
       "impact_statement": "Only SSLContext.wrap_bio(), asyncio.create_connection() or loop.start_tls() called with check_hostname set and no server_hostname skip hostname verification. The images' TLS clients (httpx through httpcore and anyio, botocore through urllib3) pass the URL's host as server_hostname.",
       "action_statement": "Keep S3 TLS verification enabled where the store's certificate can be verified. Upgrade to fixed Debian libpython3.13 packages when released."
-    },
-    {
-      "vulnerability": {
-        "name": "CVE-2026-77214"
-      },
-      "products": [
-        {
-          "@id": "pkg:deb/debian/libexpat1@2.8.3-1~deb13u1"
-        }
-      ],
-      "status": "affected",
-      "impact_statement": "The web image's results proxy parses S3 store XML responses using libexpat (botocore through xml.etree.ElementTree). Keep S3 TLS verification on where possible.",
-      "action_statement": "Upgrade to fixed Debian libexpat1 when released. The converter image does not parse XML and is unaffected."
     }
   ]
 }
