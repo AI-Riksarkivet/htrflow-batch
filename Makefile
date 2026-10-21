@@ -362,19 +362,19 @@ lock-htrflow-base:
 # --no-deps. Rerun after editing the .in file and commit both.
 transformers-requirements:
 	docker run --rm --user $$(id -u):$$(id -g) -e HOME=/tmp -v $(CURDIR)/.docker:/w -w /w $(DOCKER_CA) \
-	  $(UV_LOCK_IMAGE) uv pip compile --quiet --no-deps --generate-hashes --universal --python-version 3.10 \
+	  $(UV_LOCK_IMAGE) uv pip compile --quiet --no-deps --generate-hashes --universal --python-version 3.12 \
 	    --custom-compile-command "make transformers-requirements" -o transformers.txt transformers.in
 
 # The build backend the images build their own packages with
 # (.docker/build-constraints.in), compiled with its whole dependency closure
 # into the pinned, hashed build-constraints.txt. The dockerfiles build with
 # `uv build --require-hashes`, so a build requirement missing from it fails
-# the image build. Universal: the wrapper builds on Python 3.10, web and
+# the image build. Universal: the wrapper builds on Python 3.12, web and
 # campaigns on 3.13. Rerun after editing the .in file and commit both.
 .PHONY: build-constraints
 build-constraints:
 	docker run --rm --user $$(id -u):$$(id -g) -e HOME=/tmp -v $(CURDIR)/.docker:/w -w /w $(DOCKER_CA) \
-	  $(UV_LOCK_IMAGE) uv pip compile --quiet --generate-hashes --universal --python-version 3.10 \
+	  $(UV_LOCK_IMAGE) uv pip compile --quiet --generate-hashes --universal --python-version 3.12 \
 	    --custom-compile-command "make build-constraints" -o build-constraints.txt build-constraints.in
 
 # The web image builds the SPA and the Universal Viewer inside itself, so
