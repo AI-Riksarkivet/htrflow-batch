@@ -26,10 +26,10 @@ import os
 import re
 import shlex
 import shutil
+import tomllib
 from pathlib import Path
 
 import pytest
-import tomllib
 import yaml
 
 REPO = Path(__file__).resolve().parents[3]

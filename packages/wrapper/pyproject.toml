@@ -4,7 +4,7 @@ version = "0.12.0"
 license = "EUPL-1.2"
 description = "Runs htrflow over IIIF volumes in Kubernetes and publishes ALTO and PAGE XML to S3"
 authors = [{ name = "Riksarkivet AI-labbet" }]
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.27",
     # bounded.Deadline reads the connections a request opens through
@@ -17,7 +17,7 @@ dependencies = [
     # fetch.py opens each downloaded image's header to bound its pixel count
     # (W14). The runtime image installs its own pin last (the `wrapper-image`
     # group), which is the one that survives there.
-    "pillow>=10",
+    "pillow>=13.0.0",
     # safexml.py: every ALTO/PAGE parse refuses a DTD, whatever expat the
     # image's Python links against.
     "defusedxml>=0.7.1",
@@ -38,7 +38,7 @@ markers = [
 
 [tool.ruff]
 line-length = 88
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
