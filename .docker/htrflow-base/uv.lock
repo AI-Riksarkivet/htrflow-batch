@@ -667,7 +667,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "huggingface-hub", extras = ["cli"], specifier = ">=0.28.1" },
+    { name = "huggingface-hub", specifier = ">=0.28.1" },
     { name = "jinja2", specifier = ">=3.1.5" },
     { name = "jiwer", specifier = ">=4.0" },
     { name = "mike", marker = "extra == 'docs'", specifier = ">=2.1.1" },
