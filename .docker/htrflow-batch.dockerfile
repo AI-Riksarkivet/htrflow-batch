@@ -42,12 +42,10 @@
 # `make lock-htrflow-base` after moving HTRFLOW_REF or the overlay.
 #
 # Build args:
-#   HTRFLOW_REPO           the GitHub repository htrflow is built from. The
-#                          quality-prediction step is not in
-#                          AI-Riksarkivet/htrflow yet, so the base is built
-#                          from the fork that carries it (htrflow 0.2.6 plus
-#                          the QualityPrediction step, quality-prediction
-#                          from PyPI); it moves back when upstream merges it.
+#   HTRFLOW_REPO           the GitHub repository htrflow is built from,
+#                          owner/name. AI-Riksarkivet/htrflow carries the
+#                          QualityPrediction step (quality-prediction from
+#                          PyPI) since 0.2.6.
 #   HTRFLOW_REF            the htrflow commit the base is built from, moved by
 #                          hand; a new one needs `make lock-htrflow-base`
 #                          in the same change, or the build refuses it.
@@ -57,8 +55,8 @@
 #                          package version, "0.2.6"). Defaults to
 #                          HTRFLOW_REF; `make build-wrapper HTRFLOW_SRC=…`
 #                          passes the checkout's `git describe --dirty`.
-ARG HTRFLOW_REPO=Sneriko/htrflow_qp
-ARG HTRFLOW_REF=ca7b339820bf1311bbd4e2a757bc3536c083f251
+ARG HTRFLOW_REPO=AI-Riksarkivet/htrflow
+ARG HTRFLOW_REF=34ebd90895a3d3cb45888b3b123bc59a719f7f81
 
 FROM scratch AS htrflow-src
 ARG HTRFLOW_REPO
