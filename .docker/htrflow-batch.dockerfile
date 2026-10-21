@@ -19,6 +19,9 @@
 #                    BuildKit. A local checkout replaces it with
 #                    `--build-context htrflow-src=<dir>` (`make build-wrapper
 #                    HTRFLOW_SRC=<dir>`).
+#   htrflow-patched  that source with .docker/htrflow-*.patch applied:
+#                    fixes htrflow's Azure Repos main has and GitHub's not
+#                    yet.
 #   htrflow-builder  the venv, `uv sync --locked` against
 #                    .docker/htrflow-base/: htrflow's own pyproject.toml plus
 #                    this repository's overlay (torch per architecture), and
@@ -53,7 +56,8 @@
 #                          `se.riksarkivet.htrflow.base.revision` label and
 #                          into every ALTO (manifest.json only knows the
 #                          package version, "0.2.6"). Defaults to
-#                          HTRFLOW_REF; `make build-wrapper HTRFLOW_SRC=…`
+#                          HTRFLOW_REF plus the patches the htrflow-patched
+#                          stage applies; `make build-wrapper HTRFLOW_SRC=…`
 #                          passes the checkout's `git describe --dirty`.
 ARG HTRFLOW_REPO=AI-Riksarkivet/htrflow
 ARG HTRFLOW_REF=34ebd90895a3d3cb45888b3b123bc59a719f7f81
@@ -62,6 +66,20 @@ FROM scratch AS htrflow-src
 ARG HTRFLOW_REPO
 ARG HTRFLOW_REF
 ADD https://github.com/${HTRFLOW_REPO}.git#${HTRFLOW_REF} /
+
+# htrflow's source with the fixes it has on its Azure Repos main but not yet
+# on GitHub, as patch files beside this dockerfile (each says where it comes
+# from). `git apply` refuses a patch that no longer matches, so a moved
+# HTRFLOW_REF fails here instead of building something else; a checkout that
+# already has a fix (`make build-wrapper HTRFLOW_SRC=…` on that main) skips it.
+# alpine/git 2.54.0 (multi-arch index digest)
+FROM alpine/git:v2.54.0@sha256:03228d7ded483b0b3e55e1de7fa660d70d3e1bb432fa7021d29e192640de11aa AS htrflow-patched
+COPY --from=htrflow-src / /src/
+COPY .docker/htrflow-reading-order.patch /tmp/patches/
+WORKDIR /src
+RUN for p in /tmp/patches/*.patch; do \
+        git apply --reverse --check "$p" 2>/dev/null || git apply "$p" || exit 1; \
+    done
 
 # nvidia/cuda:12.1.0-base-ubuntu22.04 (multi-arch index digest), the base the
 # upstream htrflow image uses.
@@ -95,7 +113,7 @@ RUN uv venv
 # made for different sources.
 COPY .docker/htrflow-base/pyproject.toml .docker/htrflow-base/uv.lock /app/
 COPY .docker/htrflow-base/overlay.toml /tmp/overlay.toml
-COPY --from=htrflow-src pyproject.toml /tmp/htrflow-pyproject.toml
+COPY --from=htrflow-patched /src/pyproject.toml /tmp/htrflow-pyproject.toml
 RUN cat /tmp/htrflow-pyproject.toml /tmp/overlay.toml | cmp -s - /app/pyproject.toml \
     || { echo "htrflow's pyproject.toml is not the one .docker/htrflow-base/uv.lock was made" \
               "for: run make lock-htrflow-base for this HTRFLOW_REF"; exit 1; }
@@ -109,8 +127,8 @@ RUN uv sync --locked --no-install-project --no-build
 # build requirement that is not pinned and hashed there (audit 0923 D-11).
 # A wheel, not an editable install: the image runs the installed package, so
 # the source tree stays in this stage.
-COPY --from=htrflow-src src/ /app/src/
-COPY --from=htrflow-src LICENSE README.md /app/
+COPY --from=htrflow-patched /src/src/ /app/src/
+COPY --from=htrflow-patched /src/LICENSE /src/README.md /app/
 RUN --mount=type=bind,source=.docker/build-constraints.txt,target=/tmp/build-constraints.txt \
     uv build --wheel --python /app/.venv/bin/python --require-hashes \
          --build-constraints /tmp/build-constraints.txt -o /tmp/dist . \
@@ -134,7 +152,7 @@ COPY --from=htrflow-builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 ARG HTRFLOW_REPO
 ARG HTRFLOW_REF
-ARG HTRFLOW_BASE_REVISION=${HTRFLOW_REF}
+ARG HTRFLOW_BASE_REVISION=${HTRFLOW_REF}+reading-order
 LABEL org.opencontainers.image.source.htrflow="https://github.com/${HTRFLOW_REPO}/tree/${HTRFLOW_REF}" \
       se.riksarkivet.htrflow.base.revision="${HTRFLOW_BASE_REVISION}"
 # Also as ENV: a label is invisible from inside the container, and the
