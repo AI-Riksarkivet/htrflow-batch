@@ -81,12 +81,13 @@ WORKDIR /app
 ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 UV_NO_CACHE=1 \
     UV_PYTHON_INSTALL_DIR=/opt/python \
     UV_PYTHON=3.12.15
-# Without the pip it comes with: the image installs nothing at run time, and
-# pip's vendored copies are packages a scanner rightly flags and nothing
-# updates.
+# Without the pip it comes with, installed or as ensurepip's bundled wheel:
+# the image installs nothing at run time, and pip's vendored copies (certifi,
+# urllib3, msgpack) are packages a scanner rightly flags and nothing updates.
 RUN uv python install --no-bin \
     && rm -rf /opt/python/cpython-*/lib/python3.*/site-packages/pip \
-         /opt/python/cpython-*/lib/python3.*/site-packages/pip-*.dist-info
+         /opt/python/cpython-*/lib/python3.*/site-packages/pip-*.dist-info \
+         /opt/python/cpython-*/lib/python3.*/ensurepip
 ENV UV_PYTHON_DOWNLOADS=never \
     UV_PYTHON_PREFERENCE=only-managed
 RUN uv venv

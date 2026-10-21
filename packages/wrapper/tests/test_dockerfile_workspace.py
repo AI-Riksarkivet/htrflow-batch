@@ -426,6 +426,7 @@ def test_one_python_for_the_wrapper_image() -> None:
     [python] = re.findall(r"\bUV_PYTHON=(3\.\d+\.\d+)\b", text)
     minor = python.rsplit(".", 1)[0]
     assert "uv python install --no-bin" in text
+    assert "/opt/python/cpython-*/lib/python3.*/ensurepip" in text
     assert "UV_PYTHON_DOWNLOADS=never" in text
     assert "COPY --from=htrflow-builder /opt/python /opt/python" in text
     for line in _logical_lines(text):
