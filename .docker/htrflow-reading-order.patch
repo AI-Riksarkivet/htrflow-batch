@@ -1,0 +1,32 @@
+htrflow's reading-order fix, carried here until AI-Riksarkivet/htrflow has it.
+
+Commit 7c586a7a8b8a2bb124e28deea825a1fd18e104ef "Fix reading order quirk"
+(2026-10-20) in htrflow's Azure Repos main; not on GitHub's main, which the
+image builds from. get_region_location tested the left and right margins
+before the top and bottom ones, so a region above the print space at its
+edge was read as a side margin and ReadingOrderMarginalia put it after the
+body text. The image build applies this to HTRFLOW_REF with `git apply`,
+which refuses it if it no longer matches; remove this file and the
+htrflow-patched stage when HTRFLOW_REF has the commit.
+
+diff --git a/src/htrflow/utils/layout.py b/src/htrflow/utils/layout.py
+index 11586b2..2240cfa 100644
+--- a/src/htrflow/utils/layout.py
++++ b/src/htrflow/utils/layout.py
+@@ -167,12 +167,12 @@ def get_region_location(printspace: Bbox, region: Bbox) -> RegionLocation:
+     overlap = printspace.intersection(region)
+     if overlap is not None and region.area > 0 and (overlap.area / region.area) > 0.5:
+         return RegionLocation.PRINTSPACE
+-    if region.xmax >= printspace.xmax:
+-        return RegionLocation.MARGIN_RIGHT
+-    if region.xmin <= printspace.xmin:
+-        return RegionLocation.MARGIN_LEFT
+     if region.ymin <= printspace.ymin:
+         return RegionLocation.MARGIN_TOP
+     if region.ymax >= printspace.ymax:
+         return RegionLocation.MARGIN_BOTTOM
++    if region.xmax >= printspace.xmax:
++        return RegionLocation.MARGIN_RIGHT
++    if region.xmin <= printspace.xmin:
++        return RegionLocation.MARGIN_LEFT
+     return RegionLocation.PRINTSPACE

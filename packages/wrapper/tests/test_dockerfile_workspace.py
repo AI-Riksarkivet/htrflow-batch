@@ -244,8 +244,29 @@ def test_the_base_stage_exports_the_htrflow_base_revision():
     stages = re.split(r"^FROM ", text, flags=re.M)
     base = [s for s in stages if re.match(r".* AS htrflow-base\n", s)]
     assert len(base) == 1
-    assert "ARG HTRFLOW_BASE_REVISION=${HTRFLOW_REF}" in base[0]
+    assert "ARG HTRFLOW_BASE_REVISION=${HTRFLOW_REF}+reading-order" in base[0]
     assert "ENV HTRFLOW_BASE_REVISION=${HTRFLOW_BASE_REVISION}" in base[0]
+
+
+def test_htrflow_patches_are_applied_and_named() -> None:
+    """Fixes htrflow has on Azure but not on GitHub ride along as patch files.
+    Every one is copied into the htrflow-patched stage, which every later
+    htrflow file comes from, is a real diff, and is named in the revision the
+    image stamps into its ALTO, so a patched build never passes as the bare
+    commit."""
+    text = WRAPPER_DOCKERFILE.read_text(encoding="utf-8")
+    patches = sorted((REPO / ".docker").glob("htrflow-*.patch"))
+    assert patches
+    for patch in patches:
+        assert f"COPY .docker/{patch.name} /tmp/patches/" in text
+        assert "\n--- a/src/htrflow/" in patch.read_text(encoding="utf-8")
+        name = patch.stem.removeprefix("htrflow-")
+        assert f"ARG HTRFLOW_BASE_REVISION=${{HTRFLOW_REF}}+{name}" in text
+    assert "git apply" in text
+    assert (
+        re.findall(r"COPY --from=(htrflow-(?:src|patched))\b", text)
+        == ["htrflow-src"] + ["htrflow-patched"] * 3
+    )
 
 
 def test_transformers_is_one_hashed_install_from_its_requirements_file() -> None:
