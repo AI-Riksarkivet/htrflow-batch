@@ -27,7 +27,7 @@ dependencies = [
     "jiwer >=4.0",
     "transformers >=4.47",
     "torch >= 2.6",
-    "huggingface-hub[cli] >=0.28.1",
+    "huggingface-hub >=0.28.1",
     "ultralytics >=8.3.74",
     "pydantic>=2.10.6",
     "quality-prediction[modeling]>=0.1.1"
@@ -135,8 +135,13 @@ lines-after-imports = 2
 # the image build checks that torchvision covers each architecture torch
 # does (.docker/check_cuda_archs.py). 2.13.0/0.28.0 is the release with no
 # open advisory.
+#
+# One interpreter, the one the image runs (UV_PYTHON in the wrapper
+# dockerfile): htrflow accepts 3.10 to 3.13, and a lock for all four keeps
+# older forks for the versions nothing installs, Pillow 12 for 3.10 among
+# them.
 [tool.uv]
-environments = ["sys_platform == 'linux'"]
+environments = ["sys_platform == 'linux' and python_full_version >= '3.12' and python_full_version < '3.13'"]
 constraint-dependencies = [
     "torch==2.13.0",
     "torchvision==0.28.0",

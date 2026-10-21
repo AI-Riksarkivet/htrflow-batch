@@ -669,7 +669,7 @@ def _flat_text(steps: list) -> str | None:
     )
 
 
-#: htrflow's QualityPrediction step (htrflow_qp, to be merged into htrflow):
+#: htrflow's QualityPrediction step:
 #: an XGBoost model scores the page from features of the tree htrflow built.
 #: Its model is a joblib pickle -- loading it runs code -- so it comes from a
 #: Hub repo at a commit, like every other model here, never from a path.

@@ -26,10 +26,10 @@ import os
 import re
 import shlex
 import shutil
+import tomllib
 from pathlib import Path
 
 import pytest
-import tomllib
 import yaml
 
 REPO = Path(__file__).resolve().parents[3]
@@ -413,6 +413,44 @@ def test_the_transformers_requirements_file_is_hashed_and_compiled() -> None:
     assert sorted(wanted) == sorted(f"{n}=={v}" for n, v in pins)
     assert "sentencepiece==0.2.2 ; platform_machine == 'aarch64'" in compiled
     assert not (docker / "transformers").exists()
+
+
+def test_one_python_for_the_wrapper_image() -> None:
+    """The image runs uv's CPython, at the version UV_PYTHON names, in both
+    stages: Ubuntu 22.04 packages 3.10 only, and Pillow 13 needs 3.11 or
+    newer. The base lock is made for that minor version alone, the workspace
+    accepts it, and the packages the `wrapper-image` group reinstalls on top
+    of the base (numpy and scipy, for xgboost-cpu) are the base's versions,
+    so that step moves only what it is there to move."""
+    text = WRAPPER_DOCKERFILE.read_text()
+    [python] = re.findall(r"\bUV_PYTHON=(3\.\d+\.\d+)\b", text)
+    minor = python.rsplit(".", 1)[0]
+    assert "uv python install --no-bin" in text
+    assert "/opt/python/cpython-*/lib/python3.*/ensurepip" in text
+    runtime = text[text.index("AS runtime") :]
+    assert "UV_PYTHON=/app/.venv/bin/python" in runtime
+    assert "UV_PYTHON_DOWNLOADS=never" in runtime
+    assert "UV_PYTHON_DOWNLOADS=never" in text
+    assert "COPY --from=htrflow-builder /opt/python /opt/python" in text
+    for line in _logical_lines(text):
+        if "apt-get install" in line:
+            assert not re.search(r"\bpython3", line), line
+    overlay = tomllib.loads((HTRFLOW_BASE / "overlay.toml").read_text())
+    [env] = overlay["tool"]["uv"]["environments"]
+    low, high = re.findall(r"python_full_version [<>]=? '(3\.\d+)'", env)
+    assert low == minor and int(high.split(".")[1]) == int(minor.split(".")[1]) + 1
+    for member in ("pyproject.toml", "packages/wrapper/pyproject.toml"):
+        floor = tomllib.loads((REPO / member).read_text())["project"]
+        assert floor["requires-python"] == f">={minor}", member
+
+    def versions(lock: Path) -> dict[str, str]:
+        packages = tomllib.loads(lock.read_text())["package"]
+        return {p["name"]: p["version"] for p in packages}
+
+    base = versions(HTRFLOW_BASE / "uv.lock")
+    workspace = versions(REPO / "uv.lock")
+    for name in ("numpy", "scipy", "pillow"):
+        assert base[name] == workspace[name], name
 
 
 def test_the_htrflow_base_is_built_from_pinned_inputs() -> None:

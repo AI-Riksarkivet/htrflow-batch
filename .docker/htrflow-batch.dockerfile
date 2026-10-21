@@ -42,12 +42,10 @@
 # `make lock-htrflow-base` after moving HTRFLOW_REF or the overlay.
 #
 # Build args:
-#   HTRFLOW_REPO           the GitHub repository htrflow is built from. The
-#                          quality-prediction step is not in
-#                          AI-Riksarkivet/htrflow yet, so the base is built
-#                          from the fork that carries it (htrflow 0.2.6 plus
-#                          the QualityPrediction step, quality-prediction
-#                          from PyPI); it moves back when upstream merges it.
+#   HTRFLOW_REPO           the GitHub repository htrflow is built from,
+#                          owner/name. AI-Riksarkivet/htrflow carries the
+#                          QualityPrediction step (quality-prediction from
+#                          PyPI) since 0.2.6.
 #   HTRFLOW_REF            the htrflow commit the base is built from, moved by
 #                          hand; a new one needs `make lock-htrflow-base`
 #                          in the same change, or the build refuses it.
@@ -57,8 +55,8 @@
 #                          package version, "0.2.6"). Defaults to
 #                          HTRFLOW_REF; `make build-wrapper HTRFLOW_SRC=…`
 #                          passes the checkout's `git describe --dirty`.
-ARG HTRFLOW_REPO=Sneriko/htrflow_qp
-ARG HTRFLOW_REF=ca7b339820bf1311bbd4e2a757bc3536c083f251
+ARG HTRFLOW_REPO=AI-Riksarkivet/htrflow
+ARG HTRFLOW_REF=34ebd90895a3d3cb45888b3b123bc59a719f7f81
 
 FROM scratch AS htrflow-src
 ARG HTRFLOW_REPO
@@ -68,15 +66,29 @@ ADD https://github.com/${HTRFLOW_REPO}.git#${HTRFLOW_REF} /
 # nvidia/cuda:12.1.0-base-ubuntu22.04 (multi-arch index digest), the base the
 # upstream htrflow image uses.
 FROM nvidia/cuda:12.1.1-base-ubuntu22.04@sha256:457a4076c56025f51217bff647ca631c7880ad3dbf546b03728ba98297ebbc22 AS htrflow-builder
-ARG DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.10 python3-pip python3-dev build-essential \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-COPY --from=ghcr.io/astral-sh/uv:0.12.6@sha256:88bc6eb1ccd4b82efd0e1b530caffabddf50dc2bf612e66c14ea25b8ee8a4d3d /uv /bin/uv
+# uv 0.13.4 (multi-arch index digest). uv picks the interpreter build, so
+# it moves with UV_PYTHON.
+COPY --from=ghcr.io/astral-sh/uv:0.13.4@sha256:9f130421e930bfbdc563c00740466603f8723158e90297d07957c2294640262b /uv /bin/uv
 WORKDIR /app
-ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 UV_NO_CACHE=1
-RUN uv venv --python 3.10
+# The interpreter is uv's CPython build (python-build-standalone), not
+# Ubuntu's: jammy packages Python 3.10 only, and Pillow 13 and later need
+# 3.11 or newer. Its OpenSSL, expat and sqlite are linked into it, so moving
+# UV_PYTHON to the next patch release is what picks up their fixes. It is
+# the one download, checked against the SHA-256 uv carries for that build;
+# the venv and every sync after it must then find it, not fetch one.
+ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 UV_NO_CACHE=1 \
+    UV_PYTHON_INSTALL_DIR=/opt/python \
+    UV_PYTHON=3.12.15
+# Without the pip it comes with, installed or as ensurepip's bundled wheel:
+# the image installs nothing at run time, and pip's vendored copies (certifi,
+# urllib3, msgpack) are packages a scanner rightly flags and nothing updates.
+RUN uv python install --no-bin \
+    && rm -rf /opt/python/cpython-*/lib/python3.*/site-packages/pip \
+         /opt/python/cpython-*/lib/python3.*/site-packages/pip-*.dist-info \
+         /opt/python/cpython-*/lib/python3.*/ensurepip
+ENV UV_PYTHON_DOWNLOADS=never \
+    UV_PYTHON_PREFERENCE=only-managed
+RUN uv venv
 # The lock belongs to htrflow's pyproject.toml plus the overlay, so the
 # pyproject.toml it is synced with must be exactly that: a checkout at any
 # other commit is refused here instead of being installed against a lock
@@ -108,10 +120,13 @@ RUN --mount=type=bind,source=.docker/build-constraints.txt,target=/tmp/build-con
 FROM nvidia/cuda:12.1.1-base-ubuntu22.04@sha256:457a4076c56025f51217bff647ca631c7880ad3dbf546b03728ba98297ebbc22 AS htrflow-base
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.10 libgl1 libglib2.0-0 \
+    libgl1 libglib2.0-0 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
+# The venv's interpreter links to the managed CPython, so both go across to
+# the same paths.
+COPY --from=htrflow-builder /opt/python /opt/python
 COPY --from=htrflow-builder /app/.venv /app/.venv
 # No PYTHONPATH: htrflow is an installed wheel in the venv, and /app holds
 # nothing but the venv (an empty entry would also put the working directory
@@ -129,8 +144,14 @@ ENV HTRFLOW_BASE_REVISION=${HTRFLOW_BASE_REVISION}
 FROM htrflow-base AS runtime
 LABEL org.opencontainers.image.licenses="EUPL-1.2"
 
-# uv 0.12.6 (multi-arch index digest)
-COPY --from=ghcr.io/astral-sh/uv:0.12.6@sha256:88bc6eb1ccd4b82efd0e1b530caffabddf50dc2bf612e66c14ea25b8ee8a4d3d /uv /bin/uv
+# uv 0.13.4 (multi-arch index digest)
+COPY --from=ghcr.io/astral-sh/uv:0.13.4@sha256:9f130421e930bfbdc563c00740466603f8723158e90297d07957c2294640262b /uv /bin/uv
+# The venv's interpreter is the only one uv may use here. There is no system
+# Python, so `uv export` would otherwise download the newest CPython (with
+# its pip and that pip's vendored packages) into /root and leave it in the
+# image.
+ENV UV_PYTHON=/app/.venv/bin/python \
+    UV_PYTHON_DOWNLOADS=never
 
 # The CUDA image's Ubuntu packages lag behind jammy-security (gnupg and
 # openssl carry Trivy HIGH findings that Ubuntu has already fixed). Upgrade
