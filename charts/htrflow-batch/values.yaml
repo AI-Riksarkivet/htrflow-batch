@@ -137,9 +137,9 @@ web:
   # nothing serves a browser.
   enabled: true
   # Digest-pinned (…@sha256:…) unless security.allowTagImages is true. The
-  # default is the published v0.12.0 web image; for a locally built one set
+  # default is the published v0.13.0 web image; for a locally built one set
   # the digest `make poc-push` prints.
-  image: docker.io/riksarkivet/htrflow-web@sha256:b7f204e22d300e920ca7b7b01b0d196a34c7b9acd21886b776a2588ee3df7657
+  image: docker.io/riksarkivet/htrflow-web@sha256:5cb2c589e0797d10e2e3ec91d9459f312567542cad724d88d0b4e48098243731
   nodePort: 30800
   resources:
     requests: { cpu: 50m, memory: 128Mi }
