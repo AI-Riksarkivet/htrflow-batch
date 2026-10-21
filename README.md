@@ -4,7 +4,7 @@
 [![Documentation](https://github.com/AI-Riksarkivet/htrflow-batch/actions/workflows/docs.yml/badge.svg)](https://ai-riksarkivet.github.io/htrflow-batch/)
 [![Publish](https://github.com/AI-Riksarkivet/htrflow-batch/actions/workflows/publish.yml/badge.svg)](https://github.com/AI-Riksarkivet/htrflow-batch/actions/workflows/publish.yml)
 [![Docker](https://img.shields.io/docker/v/riksarkivet/htrflow-batch?sort=semver&label=docker)](https://hub.docker.com/r/riksarkivet/htrflow-batch)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
 [![License EUPL-1.2](https://img.shields.io/badge/license-EUPL--1.2-blue.svg)](LICENSE)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
