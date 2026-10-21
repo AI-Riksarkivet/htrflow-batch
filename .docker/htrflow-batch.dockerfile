@@ -148,6 +148,12 @@ LABEL org.opencontainers.image.licenses="EUPL-1.2"
 
 # uv 0.13.4 (multi-arch index digest)
 COPY --from=ghcr.io/astral-sh/uv:0.13.4@sha256:9f130421e930bfbdc563c00740466603f8723158e90297d07957c2294640262b /uv /bin/uv
+# The venv's interpreter is the only one uv may use here. There is no system
+# Python, so `uv export` would otherwise download the newest CPython (with
+# its pip and that pip's vendored packages) into /root and leave it in the
+# image.
+ENV UV_PYTHON=/app/.venv/bin/python \
+    UV_PYTHON_DOWNLOADS=never
 
 # The CUDA image's Ubuntu packages lag behind jammy-security (gnupg and
 # openssl carry Trivy HIGH findings that Ubuntu has already fixed). Upgrade

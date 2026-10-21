@@ -427,6 +427,9 @@ def test_one_python_for_the_wrapper_image() -> None:
     minor = python.rsplit(".", 1)[0]
     assert "uv python install --no-bin" in text
     assert "/opt/python/cpython-*/lib/python3.*/ensurepip" in text
+    runtime = text[text.index("AS runtime") :]
+    assert "UV_PYTHON=/app/.venv/bin/python" in runtime
+    assert "UV_PYTHON_DOWNLOADS=never" in runtime
     assert "UV_PYTHON_DOWNLOADS=never" in text
     assert "COPY --from=htrflow-builder /opt/python /opt/python" in text
     for line in _logical_lines(text):
