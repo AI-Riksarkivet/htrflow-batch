@@ -94,7 +94,7 @@ The `nvidia` RuntimeClass and the device-plugin DaemonSet belong to
 
 ## Changelog
 
-### 0.19.0 — 2026-10-20
+### 0.19.0 — 2026-10-21 (v0.13.0: Python 3.12 wrapper image, htrflow with QualityPrediction from AI-Riksarkivet/htrflow)
 
 Added:
 - **`web.enabled`** (`true`): `false` renders neither the web front nor the
