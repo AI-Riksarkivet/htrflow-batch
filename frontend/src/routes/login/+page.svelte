@@ -38,10 +38,6 @@
       <span class="wordmark">HTR Campaigns</span>
     </div>
     <h1>Log in</h1>
-    <p class="subtitle">
-      Use your result-store account — the proxy reads results with your own
-      keys.
-    </p>
     <form onsubmit={submit}>
       <label
         >User name
@@ -95,10 +91,8 @@
     letter-spacing: 0.01em;
   }
 
-  .subtitle {
-    margin: 0.35rem 0 1.25rem;
-    font-size: 0.85rem;
-    color: var(--muted-foreground);
+  h1 {
+    margin-bottom: 1.25rem;
   }
 
   form,
