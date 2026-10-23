@@ -38,6 +38,7 @@ from .cookie import session_token
 from .kube import ApplyConflict, ClusterUnavailable, is_campaign
 from .login_check import Session, SessionChecker, SessionsUnavailable
 from .passthrough import results_route
+from .search import search_route
 from .progress import ProgressReader
 
 _LOG = logging.getLogger(__name__)
@@ -778,6 +779,12 @@ def create_app(
     proxy = getattr(reader.cfg, "results_proxy", "") or results_proxy
     if proxy:
         results_route(app, proxy)
+
+    # /search only when a Solr core is configured: an unset HTRFLOW_SOLR_URL
+    # is a deployment without search, and a 404 says so better than a 502.
+    solr = getattr(reader.cfg, "solr_url", "") if not site_only else ""
+    if solr:
+        search_route(app, solr, current_session)
 
     # Last, so the routes above win over any file of the same name. Absent
     # outside the image (a local `uv run htrflow-web` builds no site), which

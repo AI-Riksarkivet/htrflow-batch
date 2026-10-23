@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { goto } from "$app/navigation";
   import CampaignCard from "#lib/components/CampaignCard.svelte";
   import LogoutButton from "#lib/components/LogoutButton.svelte";
   import ThemeToggle from "#lib/components/ThemeToggle.svelte";
@@ -24,6 +25,9 @@
   // banner on top of it, never a replacement for it.
   let jobs = $state<JobSummary[] | null>(null);
   let unreadable = $state(0);
+  // The header's search field: it only navigates to /search, which owns
+  // the searching itself.
+  let headerQuery = $state("");
   // The count the reader put its banner away at: it stays away until the
   // count changes, since the rows can stay unreadable for good.
   let putAway = $state(0);
@@ -159,6 +163,25 @@
       <h1>HTR Campaigns</h1>
     </div>
     <div class="header-right">
+      <!-- Full-text search over the indexed demo pages (Solr, solr-search
+           branch) lives on /search; this field just takes the reader there
+           with the words they typed. -->
+      <form
+        class="header-search"
+        onsubmit={(e) => {
+          e.preventDefault();
+          const words = headerQuery.trim();
+          if (words !== "") void goto(`/search?q=${encodeURIComponent(words)}`);
+          else void goto("/search");
+        }}
+      >
+        <input
+          type="search"
+          bind:value={headerQuery}
+          placeholder="Search pages…"
+          aria-label="Search the transcribed pages"
+        />
+      </form>
       <!-- Always there, empty until the version is read: it arrives after
            the list, and taking room only then widened this half of the
            header -- on a phone, onto a second line that pushed every card
@@ -284,6 +307,16 @@
     color: var(--muted-foreground);
     font-size: 0.8rem;
     font-variant-numeric: tabular-nums;
+  }
+
+  .header-search input {
+    padding: 0.3rem 0.6rem;
+    font-size: 0.9rem;
+    width: 11rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--card);
+    color: inherit;
   }
 
   .repo {

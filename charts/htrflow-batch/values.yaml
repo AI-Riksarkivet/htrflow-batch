@@ -141,6 +141,10 @@ web:
   # the digest `make poc-push` prints.
   image: docker.io/riksarkivet/htrflow-web@sha256:b7f204e22d300e920ca7b7b01b0d196a34c7b9acd21886b776a2588ee3df7657
   nodePort: 30800
+  # The Solr core a /search route on the web front proxies to (Service
+  # address, e.g. http://solr.htr-search:8983/solr/htr). Empty: no /search
+  # route at all — a deployment without an index changes in no other way.
+  solrUrl: ""
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: 500m, memory: 256Mi }
