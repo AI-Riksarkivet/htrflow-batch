@@ -2,6 +2,14 @@ import { fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import AltoPage from "./+page.svelte";
 
+// The shared header (AppHeader) asks /api/v1/version once on every page;
+// "refused before any fetch" means the ALTO URL is never asked for.
+function altoCalls(mock: unknown): number {
+  return (mock as { mock: { calls: unknown[][] } }).mock.calls.filter(
+    (c) => !String(c[0]).endsWith("/version"),
+  ).length;
+}
+
 const XML = `<?xml version="1.0" encoding="UTF-8"?>
 <alto xmlns="http://www.loc.gov/standards/alto/ns-v4#">
   <Layout>
@@ -49,10 +57,10 @@ afterEach(() => {
 });
 
 describe("/alto", () => {
-  test("the header links back to the campaign list, as /log's does", () => {
+  test("the shared header's title links back to the campaign list", () => {
     vi.stubGlobal("fetch", fetchOk(XML));
     render(AltoPage);
-    expect(screen.getByRole("link", { name: "← campaigns" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /HTR Campaigns/ })).toHaveAttribute(
       "href",
       "/",
     );
@@ -66,7 +74,9 @@ describe("/alto", () => {
     const shaky = await screen.findByText("Shaky");
     expect(confident.className).toContain("high"); // WC 0.97
     expect(shaky.className).toContain("low"); // WC 0.4
-    expect(screen.getByRole("heading")).toHaveTextContent("ALTO · 0001");
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(
+      "ALTO · 0001",
+    );
   });
 
   test("the legend names the confidence buckets, and each line lands in the one it names", async () => {
@@ -176,7 +186,7 @@ describe("/alto", () => {
     const fetchMock = fetchOk(XML);
     vi.stubGlobal("fetch", fetchMock);
     render(AltoPage);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(altoCalls(fetchMock)).toBe(0);
     expect(screen.getByRole("alert")).toHaveTextContent(
       "must be an absolute http(s) URL",
     );
@@ -191,7 +201,7 @@ describe("/alto", () => {
     const fetchMock = fetchOk(XML);
     vi.stubGlobal("fetch", fetchMock);
     render(AltoPage);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(altoCalls(fetchMock)).toBe(0);
     expect(screen.getByRole("alert")).toHaveTextContent(
       "in the results bucket",
     );

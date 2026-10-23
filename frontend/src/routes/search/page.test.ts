@@ -55,10 +55,12 @@ describe("/search", () => {
       },
     );
     await fireEvent.submit(
-      screen.getByRole("button", { name: /^search$/i }).closest("form")!,
+      screen.getByLabelText(/search the transcribed pages/i).closest("form")!,
     );
     await screen.findByText("451511_1512_01");
-    const call = (f as ReturnType<typeof vi.fn>).mock.calls[0];
+    const call = (f as ReturnType<typeof vi.fn>).mock.calls.find((c) =>
+      String(c[0]).includes("/search/select?"),
+    );
     expect(call).toBeDefined();
     const url = call![0] as string;
     expect(url).toContain("/search/select?");
@@ -79,7 +81,7 @@ describe("/search", () => {
       },
     );
     await fireEvent.submit(
-      screen.getByRole("button", { name: /^search$/i }).closest("form")!,
+      screen.getByLabelText(/search the transcribed pages/i).closest("form")!,
     );
     await waitFor(() => expect(window.location.search).toBe("?q=bref"));
   });
@@ -95,7 +97,7 @@ describe("/search", () => {
       },
     );
     await fireEvent.submit(
-      screen.getByRole("button", { name: /^search$/i }).closest("form")!,
+      screen.getByLabelText(/search the transcribed pages/i).closest("form")!,
     );
     await screen.findAllByText("htrdemo-swe-single-v2");
     await fireEvent.click(
@@ -123,7 +125,7 @@ describe("/search", () => {
       },
     );
     await fireEvent.submit(
-      screen.getByRole("button", { name: /^search$/i }).closest("form")!,
+      screen.getByLabelText(/search the transcribed pages/i).closest("form")!,
     );
     await screen.findByRole("alert");
     expect(screen.getByRole("alert").textContent).toMatch(
@@ -147,7 +149,7 @@ describe("/search", () => {
       },
     );
     await fireEvent.submit(
-      screen.getByRole("button", { name: /^search$/i }).closest("form")!,
+      screen.getByLabelText(/search the transcribed pages/i).closest("form")!,
     );
     await screen.findByRole("alert");
     expect(screen.getByRole("alert").textContent).toContain(
@@ -165,7 +167,7 @@ describe("/search", () => {
       },
     );
     await fireEvent.submit(
-      screen.getByRole("button", { name: /^search$/i }).closest("form")!,
+      screen.getByLabelText(/search the transcribed pages/i).closest("form")!,
     );
     await screen.findByRole("alert");
     expect(screen.getByRole("alert").textContent).toMatch(/no search index/);

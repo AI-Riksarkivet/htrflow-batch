@@ -118,6 +118,15 @@ main {
   border-bottom: 1px solid var(--border);
 }
 
+/* A page's own name, under the shared header (AppHeader carries the title
+   and logo on every page): what the page is about, in content, not chrome. */
+.page-name {
+  margin: -0.5rem 0 1rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+
 /* The way back to the campaign list, above the title of every page below
    it (/log, /alto). */
 .title-block {
