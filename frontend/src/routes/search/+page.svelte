@@ -281,6 +281,9 @@
 </main>
 
 <style>
+  /* app.css's tokens and the campaign card's idiom, never local values:
+     the same oklch set drives the dark theme, and a hit is one more card
+     in the list the reader already knows. */
   .home {
     color: inherit;
     text-decoration: none;
@@ -296,24 +299,44 @@
   .search-row input {
     flex: 1;
     padding: 0.5rem 0.75rem;
-    font-size: 1rem;
-    border: 1px solid var(--border, #999);
-    border-radius: 4px;
-    background: var(--card, inherit);
-    color: inherit;
+    font: inherit;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--card);
+    color: var(--foreground);
   }
+  .search-row input:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 1px;
+  }
+
+  /* The same quiet pill as "show older campaigns" and LogoutButton. */
   .search-row button,
   .pager button {
-    padding: 0.5rem 1.25rem;
-    font-size: 1rem;
-    border-radius: 4px;
+    font: inherit;
+    color: var(--foreground);
+    background: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.3rem 1rem;
     cursor: pointer;
+  }
+  .search-row button:hover:not(:disabled),
+  .pager button:hover:not(:disabled) {
+    border-color: var(--primary);
+    color: var(--primary);
+  }
+  .search-row button:focus-visible,
+  .pager button:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
   }
   .search-row button:disabled,
   .pager button:disabled {
     opacity: 0.5;
     cursor: default;
   }
+
   .facets {
     display: flex;
     flex-wrap: wrap;
@@ -337,23 +360,37 @@
   .facets label.checked {
     font-weight: 600;
   }
+  .facets input:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
   .facets .n {
     color: var(--muted-foreground);
   }
+
   .count {
     color: var(--muted-foreground);
     margin: 0.5rem 0;
   }
+
   .hits {
     list-style: none;
     padding: 0;
-    display: grid;
-    gap: 1rem;
   }
+
+  /* One card in the campaign list's shape: --card fill, a 3px left edge
+     that carries the accent. A hit has no health to show, so the edge
+     stays the muted default until the pointer asks for it. */
   .hit {
-    border: 1px solid var(--border, #999);
-    border-radius: 6px;
-    padding: 0.75rem 1rem;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--muted-foreground);
+    border-radius: var(--radius);
+    padding: 0.6rem 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+  .hit:hover {
+    border-left-color: var(--primary);
   }
   .where {
     display: flex;
@@ -371,11 +408,13 @@
     white-space: pre-line;
     line-height: 1.5;
   }
+  /* The match, marked in a soft token so both themes keep the contrast —
+     never a hard-coded yellow that dark mode turns into a glare. */
   .snippet :global(em) {
     font-style: normal;
     font-weight: 700;
-    background: var(--mark, #ffe08a);
-    color: inherit;
+    background: var(--warning-soft);
+    color: var(--foreground);
     padding: 0 0.1em;
     border-radius: 2px;
   }
@@ -384,6 +423,12 @@
     gap: 1rem;
     font-size: 0.9em;
   }
+  .links a:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
   .pager {
     display: flex;
     align-items: center;
