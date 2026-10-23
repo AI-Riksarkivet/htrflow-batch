@@ -738,6 +738,19 @@
     );
   }
 
+  // The source chip's face: a library's name, not its dotted host. The
+  // full host (and the source URL when there is one) stays in the chip's
+  // tooltip; an unknown host shows as itself, minus a "www.".
+  function sourceLabel(host: string): string {
+    const known: Record<string, string> = {
+      "digi.ub.uni-heidelberg.de": "Heidelberg",
+      "iiif.onb.ac.at": "ONB",
+      "cudl.lib.cam.ac.uk": "CUDL",
+      "huggingface.co": "Hugging Face",
+    };
+    return known[host] ?? host.replace(/^www\./, "");
+  }
+
   // The notice's own link: the log of the volume the error came from, which
   // is usually not one of the rows loaded here, so it is built from the URL
   // the API sent rather than from a row. Live, because a campaign showing a
@@ -827,7 +840,7 @@
       class="vsrc"
       title={v.sourceUrl !== null
         ? `source: ${v.sourceUrl}`
-        : `images from ${v.sourceHost}`}>{v.sourceHost}</span
+        : `images from ${v.sourceHost}`}>{sourceLabel(v.sourceHost)}</span
     >{/if}
 {/snippet}
 
@@ -1929,22 +1942,28 @@
 
   .vid-name {
     display: block;
+    /* A flex item that may shrink past its content, or the ellipsis never
+       engages and the source chip is pushed out of the clipped line. */
+    min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
-  /* The volume's origin host beside its id: quieter than the id, since the
-     id is what a reader opens — but always visible, so an external-IIIF
-     volume names its library without a hover (the `{}` glyph only said so
-     for manifest volumes). */
+  /* The volume's origin after its id, one quiet "· Library" suffix: the id
+     is what a reader opens, so it keeps the width and the ellipsis; the
+     chip never wraps or clips, and an external-IIIF volume names its
+     library without a hover (the `{}` glyph only said so for manifest
+     volumes). */
   .vsrc {
-    display: block;
+    flex-shrink: 0;
     font-size: 11px;
     color: var(--muted-foreground);
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  }
+
+  .vsrc::before {
+    content: "· ";
   }
 
   /* The wrapper's own termination message for this index, or the reason
