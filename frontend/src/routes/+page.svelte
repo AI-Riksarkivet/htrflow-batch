@@ -309,14 +309,26 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* Matches the header's pill buttons in height and tone. */
   .header-search input {
-    padding: 0.3rem 0.6rem;
-    font-size: 0.9rem;
+    height: 1.8rem;
+    padding: 0 0.7rem;
+    font: inherit;
+    font-size: 0.8rem;
     width: 11rem;
     border: 1px solid var(--border);
-    border-radius: 4px;
-    background: var(--card);
-    color: inherit;
+    border-radius: 999px;
+    background: var(--muted);
+    color: var(--foreground);
+  }
+
+  .header-search input:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+
+  .header-search input::placeholder {
+    color: var(--muted-foreground);
   }
 
   .repo {
