@@ -33,18 +33,18 @@
     /* VS Code's Dark+ palette, hex converted to oklch (2026-10-23):
        the editor's own blue/green/amber/coral accents. */
     --background: oklch(0.235 0 90); /* editor #1e1e1e */
-    --foreground: oklch(0.845 0 90); /* #cccccc */
+    --foreground: oklch(0.9 0 90); /* #dedede, brightened */
     --card: oklch(0.265 0.002 286); /* sidebar #252526 */
     --muted: oklch(0.298 0.005 286); /* input #2d2d30 */
     --muted-foreground: oklch(0.696 0 90); /* #9d9d9d */
     --border: oklch(0.356 0 90); /* #3c3c3c */
-    --primary: oklch(0.671 0.112 246); /* keyword blue #569cd6 */
+    --primary: oklch(0.74 0.155 246); /* #48b2ff — the hue, made to pop */
     --primary-soft: oklch(0.27 0.039 246);
-    --success: oklch(0.632 0.109 137); /* comment green #6a9955 */
+    --success: oklch(0.74 0.18 137); /* #70c447, brightened */
     --success-soft: oklch(0.27 0.038 137);
-    --warning: oklch(0.825 0.097 82); /* #e5c07b */
+    --warning: oklch(0.87 0.14 82); /* #ffcb5d, brightened */
     --warning-soft: oklch(0.27 0.034 82);
-    --destructive: oklch(0.738 0.138 33); /* #f48771 */
+    --destructive: oklch(0.74 0.2 33); /* #ff7050, brightened */
     --destructive-soft: oklch(0.27 0.048 33);
     --on-strong: oklch(0.235 0 90);
     color-scheme: dark;
@@ -56,18 +56,18 @@
 :root[data-theme="dark"] {
   /* VS Code's Dark+ palette, hex converted to oklch (2026-10-23). */
   --background: oklch(0.235 0 90); /* editor #1e1e1e */
-  --foreground: oklch(0.845 0 90); /* #cccccc */
+  --foreground: oklch(0.9 0 90); /* #dedede, brightened */
   --card: oklch(0.265 0.002 286); /* sidebar #252526 */
   --muted: oklch(0.298 0.005 286); /* input #2d2d30 */
   --muted-foreground: oklch(0.696 0 90); /* #9d9d9d */
   --border: oklch(0.356 0 90); /* #3c3c3c */
-  --primary: oklch(0.671 0.112 246); /* keyword blue #569cd6 */
+  --primary: oklch(0.74 0.155 246); /* #48b2ff — the hue, made to pop */
   --primary-soft: oklch(0.27 0.039 246);
-  --success: oklch(0.632 0.109 137); /* comment green #6a9955 */
+  --success: oklch(0.74 0.18 137); /* #70c447, brightened */
   --success-soft: oklch(0.27 0.038 137);
-  --warning: oklch(0.825 0.097 82); /* #e5c07b */
+  --warning: oklch(0.87 0.14 82); /* #ffcb5d, brightened */
   --warning-soft: oklch(0.27 0.034 82);
-  --destructive: oklch(0.738 0.138 33); /* #f48771 */
+  --destructive: oklch(0.74 0.2 33); /* #ff7050, brightened */
   --destructive-soft: oklch(0.27 0.048 33);
   --on-strong: oklch(0.235 0 90);
   color-scheme: dark;
