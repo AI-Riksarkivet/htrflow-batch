@@ -150,10 +150,13 @@
 </script>
 
 <main>
+  <!-- The sub-page chrome every secondary page wears (/alto, /log): a back
+       link and the page's own name — never a copy of the campaigns page's
+       header, whose different contents read as a jump on navigation. -->
   <header class="page">
-    <div class="title-row">
-      <img class="logo" src="/ra.svg" alt="Riksarkivet" />
-      <h1><a href="/" class="home">HTR Campaigns</a> — search</h1>
+    <div class="title-block">
+      <a class="back" href="/">← campaigns</a>
+      <h1>Search</h1>
     </div>
     <div class="header-right">
       <LogoutButton />
@@ -284,13 +287,6 @@
   /* app.css's tokens and the campaign card's idiom, never local values:
      the same oklch set drives the dark theme, and a hit is one more card
      in the list the reader already knows. */
-  .home {
-    color: inherit;
-    text-decoration: none;
-  }
-  .home:hover {
-    text-decoration: underline;
-  }
   .search-row {
     display: flex;
     gap: 0.5rem;
