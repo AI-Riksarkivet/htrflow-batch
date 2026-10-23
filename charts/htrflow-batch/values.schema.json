@@ -405,6 +405,10 @@
         "nodePort": {
           "$ref": "#/definitions/nodePort"
         },
+        "solrUrl": {
+          "type": "string",
+          "description": "The Solr core the web front's /search route proxies to (Service address). Empty: no /search route."
+        },
         "resources": {
           "$ref": "#/definitions/resources"
         },
