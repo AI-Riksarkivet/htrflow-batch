@@ -738,19 +738,6 @@
     );
   }
 
-  // The source chip's face: a library's name, not its dotted host. The
-  // full host (and the source URL when there is one) stays in the chip's
-  // tooltip; an unknown host shows as itself, minus a "www.".
-  function sourceLabel(host: string): string {
-    const known: Record<string, string> = {
-      "digi.ub.uni-heidelberg.de": "Heidelberg",
-      "iiif.onb.ac.at": "ONB",
-      "cudl.lib.cam.ac.uk": "CUDL",
-      "huggingface.co": "Hugging Face",
-    };
-    return known[host] ?? host.replace(/^www\./, "");
-  }
-
   // The notice's own link: the log of the volume the error came from, which
   // is usually not one of the rows loaded here, so it is built from the URL
   // the API sent rather than from a row. Live, because a campaign showing a
@@ -840,7 +827,7 @@
       class="vsrc"
       title={v.sourceUrl !== null
         ? `source: ${v.sourceUrl}`
-        : `images from ${v.sourceHost}`}>{sourceLabel(v.sourceHost)}</span
+        : `images from ${v.sourceHost}`}>{v.sourceHost}</span
     >{/if}
 {/snippet}
 
