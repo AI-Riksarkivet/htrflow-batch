@@ -700,6 +700,19 @@ def _source_url(line: str) -> str | None:
     return source if browser_http_url(source) else None
 
 
+def _source_host(line: str) -> str | None:
+    """Where a volume comes from, as a bare host for the card's source chip:
+    the first image URL's host on an ``images:`` line, the manifest's own
+    host otherwise — so an external-IIIF volume names its library even
+    though it has no manifest to link."""
+    source = line.partition("\t")[2]
+    if source.startswith("images:"):
+        source = source[len("images:") :].split(" ", 1)[0]
+    if not browser_http_url(source):
+        return None
+    return urlsplit(source).hostname
+
+
 #: A host label this API is sure every browser's URL parser takes as it is:
 #: letters, digits, `-` and `_`.
 _LABEL = re.compile(r"[A-Za-z0-9_-]+")
@@ -970,6 +983,7 @@ def _volume_row(
         "altoPrefix": f"{results_base}/{key}/alto/",
         "logUrl": f"{log_base}/{key}.txt",
         "sourceUrl": _source_url(line),
+        "sourceHost": _source_host(line),
         # The proxy refused this caller the volume's files (a 403): the card
         # says their account may not read it, in place of its results.
         "forbidden": False,
