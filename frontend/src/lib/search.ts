@@ -157,6 +157,18 @@ export function altoUrl(resultsBase: string, hit: Hit): string | null {
   return `${base}htr-batch/${hit.pipeline_s}/${hit.volume_s}/alto/${hit.page_s}.xml`;
 }
 
+// A hit's volume in the Universal Viewer, opened the way CampaignCard opens
+// it (uv.html#?manifest=): the manifest through THIS deployment's results
+// proxy — never the manifest.json's own viewer_url, which for older runs is
+// the raw bucket address a browser cannot read unsigned, and for any run is
+// just the bare JSON, not a viewer.
+export function viewerHref(resultsBase: string, hit: Hit): string | null {
+  if (!resultsBase || !hit.pipeline_s || !hit.volume_s) return null;
+  const base = resultsBase.endsWith("/") ? resultsBase : `${resultsBase}/`;
+  const iiif = `${base}htr-batch/${hit.pipeline_s}/${hit.volume_s}/iiif.json`;
+  return `uv.html#?manifest=${encodeURIComponent(iiif)}`;
+}
+
 export function pageCount(numFound: number): number {
   return Math.max(1, Math.ceil(numFound / PAGE_ROWS));
 }
