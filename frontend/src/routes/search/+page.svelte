@@ -227,11 +227,7 @@
                 {#if alto !== null}<a
                     href="/alto?src={encodeURIComponent(alto)}">text</a
                   >{/if}
-                {#if hit.viewer_url_s}<a
-                    href={hit.viewer_url_s}
-                    target="_blank"
-                    rel="noopener">viewer</a
-                  >{/if}
+                {#if viewer !== null}<a href={viewer}>viewer</a>{/if}
                 {#if hit.image_url_s}<a
                     href={hit.image_url_s}
                     target="_blank"
@@ -335,11 +331,11 @@
 
   /* One card in the campaign list's shape: --card fill, a 3px left edge
      that carries the accent. A hit has no health to show, so the edge
-     stays the muted default until the pointer asks for it. */
+     sits one notch down (primary-soft) until the pointer asks for it. */
   .hit {
     background: var(--card);
     border: 1px solid var(--border);
-    border-left: 3px solid var(--muted-foreground);
+    border-left: 3px solid var(--primary-soft);
     border-radius: var(--radius);
     padding: 0.6rem 0.75rem;
     margin-bottom: 0.5rem;
@@ -353,30 +349,46 @@
     align-items: baseline;
     flex-wrap: wrap;
   }
-  .page-id,
-  .pipeline {
+  .page-id {
     color: var(--muted-foreground);
     font-size: 0.9em;
+  }
+  /* The pipeline as a chip: soft accent surface, accent text — the same
+     badge idiom the tokens were picked for, and it scans like the facet
+     it mirrors. */
+  .pipeline {
+    background: var(--primary-soft);
+    color: var(--primary);
+    font-size: 0.78em;
+    font-weight: 600;
+    padding: 0.08em 0.55em;
+    border-radius: 999px;
   }
   .snippet {
     margin: 0.5rem 0;
     white-space: pre-line;
     line-height: 1.5;
   }
-  /* The match, marked in a soft token so both themes keep the contrast —
-     never a hard-coded yellow that dark mode turns into a glare. */
+  /* The match, marked the way an editor marks a find result: the strong
+     warning fill with --on-strong on top, so dark mode gets the bright
+     amber chip and light mode the deep one — never a washed-out soft
+     surface behind ordinary text. */
   .snippet :global(em) {
     font-style: normal;
-    font-weight: 700;
-    background: var(--warning-soft);
-    color: var(--foreground);
-    padding: 0 0.1em;
-    border-radius: 2px;
+    font-weight: 650;
+    background: var(--warning);
+    color: var(--on-strong);
+    padding: 0 0.15em;
+    border-radius: 3px;
   }
   .links {
     display: flex;
     gap: 1rem;
     font-size: 0.9em;
+  }
+  .links a {
+    color: var(--primary);
+    font-weight: 550;
   }
   .links a:focus-visible {
     outline: 2px solid var(--primary);
