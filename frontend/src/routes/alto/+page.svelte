@@ -4,8 +4,7 @@
   // directly): a prerendered, client-only page like /log, so the query
   // string is read from window.location, not a SvelteKit load function.
   import { browser } from "$app/env";
-  import LogoutButton from "#lib/components/LogoutButton.svelte";
-  import ThemeToggle from "#lib/components/ThemeToggle.svelte";
+  import AppHeader from "#lib/components/AppHeader.svelte";
   import { isResultUrl } from "#lib/api.js";
   import { FORBIDDEN_FILE, goToLogin } from "#lib/session.js";
   import { type AltoPage, parseAlto, prettyXml } from "#lib/alto.js";
@@ -96,12 +95,10 @@
 </script>
 
 <main>
-  <header class="page">
-    <div class="title-block">
-      <a class="back" href="/">← campaigns</a>
-      <h1>{pageName === null ? "ALTO" : `ALTO · ${pageName}`}</h1>
-    </div>
-    <div class="header-right">
+  <!-- The one header every page wears; this page's own controls ride
+       in its extras slot, the page name is the subtitle below. -->
+  <AppHeader>
+    {#snippet extras()}
       {#if src !== null}
         <a class="raw" href={src} target="_blank" rel="noopener">raw</a>
       {/if}
@@ -115,10 +112,10 @@
           {showRaw ? "text" : "raw XML"}
         </button>
       {/if}
-      <LogoutButton />
-      <ThemeToggle />
-    </div>
-  </header>
+    {/snippet}
+  </AppHeader>
+
+  <h2 class="page-name">{pageName === null ? "ALTO" : `ALTO · ${pageName}`}</h2>
 
   {#if showRaw && xmlText !== null}
     <pre class="code-block">{prettyXml(xmlText)}</pre>
@@ -145,7 +142,9 @@
 </main>
 
 <style>
-  h1 {
+  /* The page name can run long (an ALTO filename); app.css's .page-name has
+     no opinion on wrapping since most routes' names are short and fixed. */
+  .page-name {
     overflow-wrap: anywhere;
   }
 

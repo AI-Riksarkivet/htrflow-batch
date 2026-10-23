@@ -5,6 +5,14 @@ import { MAX_POLL_MS } from "#lib/poll.js";
 import { LOG_TAIL_BYTES } from "#lib/runlog.js";
 import LogPage from "./+page.svelte";
 
+// The shared header (AppHeader) asks /api/v1/version once on every page;
+// these tests count the run log's requests, never that one.
+function logCalls(mock: unknown): number {
+  return (mock as { mock: { calls: unknown[][] } }).mock.calls.filter(
+    (c) => !String(c[0]).endsWith("/version"),
+  ).length;
+}
+
 function fetch404(): typeof fetch {
   return vi.fn(
     async () => new Response("no such key", { status: 404 }),
@@ -17,11 +25,11 @@ describe("/log header", () => {
     window.history.replaceState(null, "", "/");
   });
 
-  test("links back to the campaign list", () => {
+  test("the shared header's title links back to the campaign list", () => {
     window.history.replaceState(null, "", "/log?log=http://bucket/logs/v1.txt");
     vi.stubGlobal("fetch", fetch404());
     render(LogPage);
-    expect(screen.getByRole("link", { name: "← campaigns" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /HTR Campaigns/ })).toHaveAttribute(
       "href",
       "/",
     );
@@ -64,7 +72,7 @@ describe("/log live mode", () => {
     );
     expect(screen.getByRole("status")).not.toHaveTextContent("live");
     await vi.advanceTimersByTimeAsync(LIVE_MS * 5);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(logCalls(fetchMock)).toBe(1);
   });
 
   test("a 403 says the account may not read the file, and stops polling", async () => {
@@ -97,12 +105,12 @@ describe("/log live mode", () => {
     // cadence for ever: nineteen live periods no longer buy nineteen
     // requests (2026-09-14 audit).
     await vi.advanceTimersByTimeAsync(LIVE_MS * (LIVE_MAX_FAILURES - 1));
-    expect(fetchMock.mock.calls.length).toBeLessThan(LIVE_MAX_FAILURES);
+    expect(logCalls(fetchMock)).toBeLessThan(LIVE_MAX_FAILURES);
     expect(screen.queryByRole("alert")).toBeNull();
 
     // Long enough for twenty attempts even at the backoff ceiling.
     await vi.advanceTimersByTimeAsync(MAX_POLL_MS * LIVE_MAX_FAILURES);
-    expect(fetchMock).toHaveBeenCalledTimes(LIVE_MAX_FAILURES);
+    expect(logCalls(fetchMock)).toBe(LIVE_MAX_FAILURES);
     expect(screen.getByRole("alert")).toHaveTextContent(
       `gave up after ${LIVE_MAX_FAILURES} failed polls (HTTP 404)`,
     );
@@ -111,7 +119,7 @@ describe("/log live mode", () => {
     // and the poll is gone: no further fetches, and no last read that
     // would overwrite the sentence above with a bare "HTTP 404".
     await vi.advanceTimersByTimeAsync(MAX_POLL_MS * 3);
-    expect(fetchMock).toHaveBeenCalledTimes(LIVE_MAX_FAILURES);
+    expect(logCalls(fetchMock)).toBe(LIVE_MAX_FAILURES);
   });
 
   test("the poll that sees the last line still reads the manifest (3077)", async () => {
@@ -147,7 +155,7 @@ describe("/log live mode", () => {
     render(LogPage);
     await vi.advanceTimersByTimeAsync(0);
     expect(
-      screen.getByRole("heading", { name: "Run log · v1" }),
+      screen.getByRole("heading", { level: 2, name: "Run log · v1" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("finished");
     // and it is over: nothing more is asked for.
@@ -218,7 +226,7 @@ describe("/log live mode", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(LogPage);
     await vi.advanceTimersByTimeAsync(0);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(logCalls(fetchMock)).toBe(0);
     expect(screen.getByRole("alert")).toHaveTextContent(
       "must be an absolute http(s) URL",
     );
@@ -352,7 +360,7 @@ describe("/log only opens this deployment's own results", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(LogPage);
     await vi.advanceTimersByTimeAsync(0);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(logCalls(fetchMock)).toBe(0);
     expect(screen.getByRole("alert")).toHaveTextContent(
       "in the results bucket",
     );

@@ -8,8 +8,7 @@
   // answer-reading lives in #lib/search, tested in #lib/search.test.
   import { browser } from "$app/env";
   import { onMount } from "svelte";
-  import LogoutButton from "#lib/components/LogoutButton.svelte";
-  import ThemeToggle from "#lib/components/ThemeToggle.svelte";
+  import AppHeader from "#lib/components/AppHeader.svelte";
   import { resolveResultsBase } from "#lib/config.js";
   import {
     altoUrl,
@@ -150,40 +149,17 @@
 </script>
 
 <main>
-  <!-- The sub-page chrome every secondary page wears (/alto, /log): a back
-       link and the page's own name — never a copy of the campaigns page's
-       header, whose different contents read as a jump on navigation. -->
-  <header class="page">
-    <div class="title-block">
-      <a class="back" href="/">← campaigns</a>
-      <h1>Search</h1>
-    </div>
-    <div class="header-right">
-      <LogoutButton />
-      <ThemeToggle />
-    </div>
-  </header>
-
-  <form
-    class="search-row"
-    onsubmit={(e) => {
-      e.preventDefault();
+  <!-- The one header every page wears; here its search field IS the
+       search box, in the same place it has on the campaigns page. -->
+  <AppHeader
+    bind:query={q}
+    onsearch={() => {
       clearTimeout(debounce);
       start = 0;
       void run();
     }}
-  >
-    <input
-      type="search"
-      bind:value={q}
-      oninput={onInput}
-      placeholder="Search the transcribed pages… (old spelling: helsa, bref)"
-      aria-label="Search the transcribed pages"
-    />
-    <button type="submit" disabled={searching || q.trim() === ""}>
-      {searching ? "Searching…" : "Search"}
-    </button>
-  </form>
+    oninput={onInput}
+  />
 
   {#if facetValues.length > 0}
     <fieldset class="facets">
@@ -215,10 +191,14 @@
   <div aria-live="polite">
     {#if answer !== null && error === null && !syntaxHint}
       <p class="count">
-        {answer.numFound}
-        {answer.numFound === 1 ? "page" : "pages"}{selected.length > 0
-          ? ` in ${selected.length === 1 ? "pipeline" : "pipelines"} ${selected.join(", ")}`
-          : ""}
+        {#if searching}
+          Searching…
+        {:else}
+          {answer.numFound}
+          {answer.numFound === 1 ? "page" : "pages"}{selected.length > 0
+            ? ` in ${selected.length === 1 ? "pipeline" : "pipelines"} ${selected.join(", ")}`
+            : ""}
+        {/if}
       </p>
       {#if answer.hits.length === 0}
         <p class="empty">
@@ -287,27 +267,7 @@
   /* app.css's tokens and the campaign card's idiom, never local values:
      the same oklch set drives the dark theme, and a hit is one more card
      in the list the reader already knows. */
-  .search-row {
-    display: flex;
-    gap: 0.5rem;
-    margin: 1rem 0 0.5rem;
-  }
-  .search-row input {
-    flex: 1;
-    padding: 0.5rem 0.75rem;
-    font: inherit;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--card);
-    color: var(--foreground);
-  }
-  .search-row input:focus-visible {
-    outline: 2px solid var(--primary);
-    outline-offset: 1px;
-  }
-
   /* The same quiet pill as "show older campaigns" and LogoutButton. */
-  .search-row button,
   .pager button {
     font: inherit;
     color: var(--foreground);
@@ -317,17 +277,14 @@
     padding: 0.3rem 1rem;
     cursor: pointer;
   }
-  .search-row button:hover:not(:disabled),
   .pager button:hover:not(:disabled) {
     border-color: var(--primary);
     color: var(--primary);
   }
-  .search-row button:focus-visible,
   .pager button:focus-visible {
     outline: 2px solid var(--primary);
     outline-offset: 2px;
   }
-  .search-row button:disabled,
   .pager button:disabled {
     opacity: 0.5;
     cursor: default;
