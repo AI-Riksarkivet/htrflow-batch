@@ -306,6 +306,10 @@ export const volumeViewSchema = z.object({
   // link, where it used to make the whole campaign unreadable, re-polled
   // for ever (2026-09-23 audit).
   sourceUrl: httpUrlSchema.nullable().catch(null),
+  // Where the volume comes from, as a bare host ("digi.ub.uni-heidelberg.de")
+  // — also set for `images:` volumes, which have no sourceUrl manifest to
+  // link, so an external-IIIF volume always names its library.
+  sourceHost: z.string().nullable().catch(null),
   reason: volumeReasonSchema.optional(),
   progress: volumeProgressSchema.nullable(),
   // The results proxy refused this user the volume's files (a 403): the

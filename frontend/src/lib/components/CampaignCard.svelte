@@ -823,6 +823,12 @@
       title="open {v.id} in the viewer">{v.id}</a
     >
   {/if}
+  {#if v.sourceHost !== null}<span
+      class="vsrc"
+      title={v.sourceUrl !== null
+        ? `source: ${v.sourceUrl}`
+        : `images from ${v.sourceHost}`}>{v.sourceHost}</span
+    >{/if}
 {/snippet}
 
 <!-- Two fixed slots in two tracks: the source manifest beside the id (where
@@ -1923,6 +1929,19 @@
 
   .vid-name {
     display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* The volume's origin host beside its id: quieter than the id, since the
+     id is what a reader opens — but always visible, so an external-IIIF
+     volume names its library without a hover (the `{}` glyph only said so
+     for manifest volumes). */
+  .vsrc {
+    display: block;
+    font-size: 11px;
+    color: var(--muted-foreground);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
