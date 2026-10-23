@@ -12,6 +12,7 @@
   import { resolveResultsBase } from "#lib/config.js";
   import {
     altoUrl,
+    viewerHref,
     buildParams,
     DEBOUNCE_MS,
     PAGE_ROWS,
@@ -209,6 +210,7 @@
         <ul class="hits">
           {#each answer.hits as hit (hit.id)}
             {@const alto = altoUrl(resolveResultsBase(), hit)}
+            {@const viewer = viewerHref(resolveResultsBase(), hit)}
             {@const snippet = snippetFor(hit, answer.highlighting)}
             <li class="hit">
               <div class="where">

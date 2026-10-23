@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   altoUrl,
+  viewerHref,
   buildParams,
   buildQ,
   escapeToken,
@@ -129,6 +130,25 @@ describe("altoUrl", () => {
   it("is nothing without the parts to build it from", () => {
     expect(altoUrl("", hit)).toBeNull();
     expect(altoUrl("http://front/results", { id: "x" })).toBeNull();
+  });
+});
+
+describe("viewerHref", () => {
+  const hit: Hit = {
+    id: "x",
+    pipeline_s: "p-v2",
+    volume_s: "v",
+    page_s: "0001",
+  };
+  it("opens the Universal Viewer at the manifest through the results proxy", () => {
+    expect(viewerHref("http://front/results", hit)).toBe(
+      "uv.html#?manifest=" +
+        encodeURIComponent("http://front/results/htr-batch/p-v2/v/iiif.json"),
+    );
+  });
+  it("is nothing without the parts to build it from", () => {
+    expect(viewerHref("", hit)).toBeNull();
+    expect(viewerHref("http://front/results", { id: "x" })).toBeNull();
   });
 });
 
