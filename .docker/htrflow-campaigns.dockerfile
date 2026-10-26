@@ -40,7 +40,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && uv pip install --python /app/.venv/bin/python --no-build --no-deps /tmp/dist/*.whl \
     && rm -rf /tmp/dist
 
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:b7e81cb1af38d9345680e68bcf564d388f96304e25222030fc8c051faf8565b3
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:3ee00291cf386ec52a552e6a858d555debd74776eb4bfa53fa3df2cd6677515e
 LABEL org.opencontainers.image.licenses="EUPL-1.2"
 COPY --from=venv /opt/python /opt/python
 COPY --from=venv /app/.venv /app/.venv
