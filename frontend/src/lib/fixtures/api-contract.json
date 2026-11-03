@@ -676,6 +676,7 @@
     }
   ],
   "version": {
+    "search": false,
     "version": "v0.0.0-contract",
     "web": "0.0.0"
   }

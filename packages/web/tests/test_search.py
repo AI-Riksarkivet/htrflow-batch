@@ -249,6 +249,20 @@ def test_no_solr_url_means_no_route():
     assert c.get("/search/select", params={"q": "x"}).status_code == 404
 
 
+def test_search_is_off_by_default_and_version_says_so():
+    """No HTRFLOW_SOLR_URL: no route, and /api/v1/version tells the page so
+    it shows no search field — search is something a deployment turns on."""
+    c = TestClient(create_app(FakeReader(), progress=FakeProgress()))
+    assert c.get("/api/v1/version").json()["search"] is False
+
+
+def test_a_configured_solr_turns_search_on_in_version():
+    c = TestClient(
+        create_app(FakeReader("http://solr:8983/solr/htr"), progress=FakeProgress())
+    )
+    assert c.get("/api/v1/version").json()["search"] is True
+
+
 def test_the_route_answers_through_the_app_behind_the_session():
     reader = FakeReader("http://solr:8983/solr/htr")
     c = TestClient(

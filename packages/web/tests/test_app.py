@@ -295,8 +295,9 @@ def test_version(client: TestClient):
     resp = client.get("/api/v1/version")
     assert resp.status_code == 200
     body = resp.json()
-    assert set(body) == {"version", "web"}
+    assert set(body) == {"version", "web", "search"}
     assert body["version"] == "dev"
+    assert body["search"] is False
     assert re.fullmatch(r"\d+\.\d+\.\d+.*", body["web"])
 
 
