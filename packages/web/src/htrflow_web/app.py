@@ -38,8 +38,8 @@ from .cookie import session_token
 from .kube import ApplyConflict, ClusterUnavailable, is_campaign
 from .login_check import Session, SessionChecker, SessionsUnavailable
 from .passthrough import results_route
-from .search import search_route
 from .progress import ProgressReader
+from .search import search_route
 
 _LOG = logging.getLogger(__name__)
 

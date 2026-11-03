@@ -3,7 +3,6 @@ handler only, a parameter whitelist, rows capped, wt forced to json, and
 the app's session gate in front of it all."""
 
 import httpx
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -74,7 +73,13 @@ def test_what_is_not_whitelisted_never_leaves():
 
     r = app_with(handler).get(
         "/search/select",
-        params={"q": "x", "echoParams": "all", "debug": "timing", "shards": "s1", "wt": "xml"},
+        params={
+            "q": "x",
+            "echoParams": "all",
+            "debug": "timing",
+            "shards": "s1",
+            "wt": "xml",
+        },
     )
     assert r.status_code == 200
 
@@ -98,9 +103,19 @@ def test_the_whitelist_includes_what_the_page_sends():
     faceting) must round-trip: a name dropped here is a feature silently
     off, with no error anywhere."""
     wanted = {
-        "q", "fq", "fl", "rows", "start", "sort",
-        "hl", "hl.fl", "hl.snippets", "hl.fragsize",
-        "facet", "facet.field", "facet.mincount",
+        "q",
+        "fq",
+        "fl",
+        "rows",
+        "start",
+        "sort",
+        "hl",
+        "hl.fl",
+        "hl.snippets",
+        "hl.fragsize",
+        "facet",
+        "facet.field",
+        "facet.mincount",
     }
 
     def handler(req):
@@ -118,7 +133,9 @@ def test_a_solr_error_status_comes_back_as_is():
     by the page, not swallowed into a 502 that says the service is down."""
 
     def handler(req):
-        return httpx.Response(400, json={"error": {"msg": "org.apache.solr.search.SyntaxError"}})
+        return httpx.Response(
+            400, json={"error": {"msg": "org.apache.solr.search.SyntaxError"}}
+        )
 
     r = app_with(handler).get("/search/select", params={"q": "content_txt:("})
     assert r.status_code == 400
@@ -235,7 +252,8 @@ def test_no_solr_url_means_no_route():
 def test_the_route_answers_through_the_app_behind_the_session():
     reader = FakeReader("http://solr:8983/solr/htr")
     c = TestClient(
-        create_app(reader, progress=FakeProgress(), sessions=FakeSessions()), base_url="https://site.example"
+        create_app(reader, progress=FakeProgress(), sessions=FakeSessions()),
+        base_url="https://site.example",
     )
     assert c.get("/search/select", params={"q": "x"}).status_code == 401
 
@@ -257,7 +275,8 @@ def test_the_route_with_a_session_reaches_solr(monkeypatch):
 
     monkeypatch.setattr("htrflow_web.search.httpx.AsyncClient", client_for)
     c = TestClient(
-        create_app(reader, progress=FakeProgress(), sessions=FakeSessions()), base_url="https://site.example"
+        create_app(reader, progress=FakeProgress(), sessions=FakeSessions()),
+        base_url="https://site.example",
     )
     c.cookies.set("__Host-htr_session", "tok")
     r = c.get("/search/select", params={"q": "content_txt:helsa"})
