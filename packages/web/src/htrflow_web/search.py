@@ -72,7 +72,7 @@ def search_route(
             params.append((key, value))
         params.append(("wt", "json"))
         try:
-            answer = await client.get(f"{base}/select", params=params)
+            answer = await client.get(f"{base}/select", params=tuple(params))
         except httpx.HTTPError as e:
             _LOG.warning("solr select failed: %s", e)
             raise HTTPException(
