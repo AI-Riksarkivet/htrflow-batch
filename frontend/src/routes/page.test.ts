@@ -108,6 +108,33 @@ describe("/ campaign page", () => {
     expect(link).toHaveAttribute("rel", "noopener");
   });
 
+  test("search is off by default: no search field without the server's say-so", async () => {
+    // routedFetch's /version carries no `search` — an older server, or one
+    // with no Solr core configured — so the header offers no search.
+    vi.stubGlobal("fetch", routedFetch([job]));
+    render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByText("htrflow-batch v0.2.0")).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/search the transcribed pages/i),
+    ).not.toBeInTheDocument();
+  });
+
+  test("a deployment with search turned on shows the header's search field", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.toString().endsWith("/version"))
+        return jsonResponse({ version: "v0.2.0", web: "0.1.0", search: true });
+      if (url.toString().includes("/jobs/")) return jsonResponse(detail);
+      return jsonResponse([job]);
+    }) as unknown as typeof fetch;
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(
+      screen.getByLabelText(/search the transcribed pages/i),
+    ).toBeInTheDocument();
+  });
+
   test("the header names the build answering the page, read once", async () => {
     let versionCalls = 0;
     const fetchMock = vi.fn(async (url: string) => {

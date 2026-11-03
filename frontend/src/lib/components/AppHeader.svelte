@@ -8,6 +8,8 @@
   // The search field: on the campaigns page it only navigates to /search
   // (the default `onsearch`); on /search it IS the search box, bound to
   // the page's query — submit and input are the page's to act on.
+  // Search is off by default: elsewhere the field appears only once
+  // /api/v1/version says this deployment serves /search.
   import { goto } from "$app/navigation";
   import type { Snippet } from "svelte";
   import LogoutButton from "#lib/components/LogoutButton.svelte";
@@ -32,12 +34,14 @@
   // footnote in the header, never a reason for an alert over the page.
   let version = $state<string | null>(null);
   let webVersion = $state("");
+  let searchOn = $state(false);
 
   $effect(() => {
     fetchVersion()
       .then((answer) => {
         version = `htrflow-batch ${answer.version}`;
         webVersion = answer.web;
+        searchOn = answer.search;
       })
       .catch(() => {
         // Nothing to name the build with; the header just has no version.
@@ -71,15 +75,17 @@
         ? undefined
         : `${version}, read API ${webVersion}`}>{version ?? ""}</span
     >
-    <form class="header-search" onsubmit={submit}>
-      <input
-        type="search"
-        bind:value={query}
-        oninput={() => oninput?.(query)}
-        placeholder="Search pages…"
-        aria-label="Search the transcribed pages"
-      />
-    </form>
+    {#if onsearch || searchOn}
+      <form class="header-search" onsubmit={submit}>
+        <input
+          type="search"
+          bind:value={query}
+          oninput={() => oninput?.(query)}
+          placeholder="Search pages…"
+          aria-label="Search the transcribed pages"
+        />
+      </form>
+    {/if}
     <!-- The GitHub mark, inline: the page loads nothing from a third
          origin (its CSP would not allow it anyway). -->
     <a
