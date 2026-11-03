@@ -823,6 +823,12 @@
       title="open {v.id} in the viewer">{v.id}</a
     >
   {/if}
+  {#if v.sourceHost !== null}<span
+      class="vsrc"
+      title={v.sourceUrl !== null
+        ? `source: ${v.sourceUrl}`
+        : `images from ${v.sourceHost}`}>{v.sourceHost}</span
+    >{/if}
 {/snippet}
 
 <!-- Two fixed slots in two tracks: the source manifest beside the id (where
@@ -1923,9 +1929,28 @@
 
   .vid-name {
     display: block;
+    /* A flex item that may shrink past its content, or the ellipsis never
+       engages and the source chip is pushed out of the clipped line. */
+    min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  /* The volume's origin after its id, one quiet "· Library" suffix: the id
+     is what a reader opens, so it keeps the width and the ellipsis; the
+     chip never wraps or clips, and an external-IIIF volume names its
+     library without a hover (the `{}` glyph only said so for manifest
+     volumes). */
+  .vsrc {
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--muted-foreground);
+    white-space: nowrap;
+  }
+
+  .vsrc::before {
+    content: "· ";
   }
 
   /* The wrapper's own termination message for this index, or the reason

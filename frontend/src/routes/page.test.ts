@@ -3,10 +3,12 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { clockTime } from "#lib/api.js";
 import { RELOAD_MS } from "#lib/config.js";
 import { cssOf, cssRules } from "#lib/fixtures/css.js";
+import AppHeaderSource from "#lib/components/AppHeader.svelte?raw";
 import CampaignsPage from "./+page.svelte";
 import pageSource from "./+page.svelte?raw";
 
 const pageRules = cssRules(pageSource);
+const headerRules = cssRules(AppHeaderSource);
 
 const job = {
   namespace: "htr-test",
@@ -104,6 +106,33 @@ describe("/ campaign page", () => {
     );
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", "noopener");
+  });
+
+  test("search is off by default: no search field without the server's say-so", async () => {
+    // routedFetch's /version carries no `search` — an older server, or one
+    // with no Solr core configured — so the header offers no search.
+    vi.stubGlobal("fetch", routedFetch([job]));
+    render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByText("htrflow-batch v0.2.0")).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/search the transcribed pages/i),
+    ).not.toBeInTheDocument();
+  });
+
+  test("a deployment with search turned on shows the header's search field", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.toString().endsWith("/version"))
+        return jsonResponse({ version: "v0.2.0", web: "0.1.0", search: true });
+      if (url.toString().includes("/jobs/")) return jsonResponse(detail);
+      return jsonResponse([job]);
+    }) as unknown as typeof fetch;
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(
+      screen.getByLabelText(/search the transcribed pages/i),
+    ).toBeInTheDocument();
   });
 
   test("the header names the build answering the page, read once", async () => {
@@ -397,7 +426,7 @@ describe("/ nothing moves as the page loads", () => {
     // this change: 10rem was not).
     // On the narrowest phone it gives way rather than push the toggle onto
     // a line of its own, cut short with the whole name in its title.
-    const version = cssOf(pageRules, ".version");
+    const version = cssOf(headerRules, ".version");
     const width = /^min\((\d+)ch, 100vw - [\d.]+rem\)$/.exec(
       version.get("min-width") ?? "",
     );
@@ -407,8 +436,8 @@ describe("/ nothing moves as the page loads", () => {
     expect(version.get("max-width")).toMatch(/^calc\(100vw - [\d.]+rem\)$/);
     expect(version.get("text-overflow")).toBe("ellipsis");
     // Grows away from the icons beside it, never into them.
-    expect(cssOf(pageRules, ".version").get("text-align")).toBe("right");
-    expect(cssOf(pageRules, ".header-right").get("margin-left")).toBe("auto");
+    expect(cssOf(headerRules, ".version").get("text-align")).toBe("right");
+    expect(cssOf(headerRules, ".header-right").get("margin-left")).toBe("auto");
   });
 
   // Before the first answer there is nothing to say yet: no empty state, no

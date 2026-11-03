@@ -1159,7 +1159,12 @@ check converter "$(count packages/converter/src -name '*.py')" 5085
 # style-src-attr beside their meta policy, each named because a default-src
 # would cover scripts and block SvelteKit's hashed start-up script; and the
 # API publishes no /docs, /redoc or /openapi.json. results.py +1: nor there.
-check web       "$(count packages/web/src -name '*.py')" 4039
+# 4039 -> 4154 (Solr search, off by default): search.py +85, the read-only
+# /search/select pass-through to a configured Solr core with its parameter
+# allow-list and row cap; projection.py +14, each volume's source host for the
+# card's chip; app.py +10, the route mounted and /api/v1/version's `search`
+# flag only when HTRFLOW_SOLR_URL is set; kube.py +6, that setting.
+check web       "$(count packages/web/src -name '*.py')" 4154
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
@@ -1547,7 +1552,14 @@ check web       "$(count packages/web/src -name '*.py')" 4039
 # 6263 -> 6317 (audit 1001 R26): login refusals and a down results proxy worded from the proxy's own detail.
 # 6317 -> 6319 (SonarQube findings): the comment on pipeline.ts's key regex
 # saying why the value is trimmed after the match, not inside it.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 6319
+# 6319 -> 7102 (Solr search, off by default): routes/search +407, the search
+# page (hits with highlights, pipeline facet, pager, its error sentences);
+# lib/search.ts +178, the select parameters and the answer parsed; AppHeader
+# +194, one header on every page with the search field shown only when the
+# deployment serves search, replacing ~126 lines of per-page headers (the
+# campaigns page -110, the run log -15, ALTO -1); the login page +97 in the
+# product's own design; CampaignCard +25, the source host chip; api.ts +8.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 7102
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
@@ -1747,5 +1759,7 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 6319
 # web.enabled wraps web.yaml and results.yaml (+4), gates rbac-scope's web
 # rule (+6) and the install notes (+5); network.yaml +2, IIIF ports from a
 # value; results.yaml -1, a duplicate digest check.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2215
+# 2215 -> 2221 (Solr search): web.yaml +6, HTRFLOW_SOLR_URL only when
+# web.solrUrl is set, so search stays off by default.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2221
 exit $fail

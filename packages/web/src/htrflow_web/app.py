@@ -39,6 +39,7 @@ from .kube import ApplyConflict, ClusterUnavailable, is_campaign
 from .login_check import Session, SessionChecker, SessionsUnavailable
 from .passthrough import results_route
 from .progress import ProgressReader
+from .search import search_route
 
 _LOG = logging.getLogger(__name__)
 
@@ -401,6 +402,10 @@ def create_app(
     # and nothing in the product reads them (ZAP, 2026-10-20).
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     site_only = reader.cfg is None
+    # Search is off unless a Solr core is configured (HTRFLOW_SOLR_URL):
+    # without one there is no /search route, and /api/v1/version says so,
+    # so the page shows no search field either.
+    solr = "" if site_only else getattr(reader.cfg, "solr_url", "")
     if progress is None and not site_only:
         progress = ProgressReader()
 
@@ -486,7 +491,7 @@ def create_app(
 
     @app.api_route("/api/v1/version", methods=GET_HEAD)
     def version(session: Session | None = Depends(current_session)) -> dict:
-        return {"version": batch_version, "web": WEB_VERSION}
+        return {"version": batch_version, "web": WEB_VERSION, "search": bool(solr)}
 
     # Namespaces whose last write was refused, and when. A denied RBAC grant
     # fails for every campaign on every poll -- a log nobody can read, and
@@ -778,6 +783,11 @@ def create_app(
     proxy = getattr(reader.cfg, "results_proxy", "") or results_proxy
     if proxy:
         results_route(app, proxy)
+
+    # /search only when a Solr core is configured: an unset HTRFLOW_SOLR_URL
+    # is a deployment without search, and a 404 says so better than a 502.
+    if solr:
+        search_route(app, solr, current_session)
 
     # Last, so the routes above win over any file of the same name. Absent
     # outside the image (a local `uv run htrflow-web` builds no site), which

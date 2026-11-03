@@ -96,6 +96,12 @@ spec:
             # passes /results through to it. It holds no bucket access itself.
             - name: HTRFLOW_RESULTS_PROXY
               value: http://htrflow-results:8082/results
+            {{- if .Values.web.solrUrl }}
+            # The Solr core the /search route proxies read-only selects to
+            # (search.py). Empty value: no env, no route.
+            - name: HTRFLOW_SOLR_URL
+              value: {{ .Values.web.solrUrl | quote }}
+            {{- end }}
             # The API acts on its own namespace; the downward API keeps it
             # correct whatever --namespace the release uses. Deliberately
             # single-valued today (one namespace, this release's) — the

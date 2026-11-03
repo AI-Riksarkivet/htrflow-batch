@@ -2,8 +2,7 @@
   import { browser } from "$app/env";
   import { untrack } from "svelte";
   import RunSummaryCard from "#lib/components/RunSummaryCard.svelte";
-  import LogoutButton from "#lib/components/LogoutButton.svelte";
-  import ThemeToggle from "#lib/components/ThemeToggle.svelte";
+  import AppHeader from "#lib/components/AppHeader.svelte";
   // LIVE_MS matches the wrapper's log-ship period (polling faster buys
   // nothing); LIVE_MAX_FAILURES stops a log that never appears from
   // spinning forever. Both documented in #lib/config.
@@ -215,15 +214,10 @@
 <svelte:window onscroll={onScroll} />
 
 <main>
-  <header class="page">
-    <div class="title-block">
-      <a class="back" href="/">← campaigns</a>
-      <div class="title-row">
-        <img class="logo" src="/ra.svg" alt="Riksarkivet" />
-        <h1>Run log{manifest !== null ? ` · ${manifest.volume}` : ""}</h1>
-      </div>
-    </div>
-    <div class="header-right">
+  <!-- The one header every page wears; the live badge and raw link ride
+       in its extras slot, the volume is the subtitle below. -->
+  <AppHeader>
+    {#snippet extras()}
       {#if startedLive}
         <!-- role=status: a polite live region, so the switch to "finished"
              and each update are announced without stealing focus. -->
@@ -264,10 +258,12 @@
       {#if logUrl !== null}
         <a class="raw" href={logUrl} target="_blank" rel="noopener">raw</a>
       {/if}
-      <LogoutButton />
-      <ThemeToggle />
-    </div>
-  </header>
+    {/snippet}
+  </AppHeader>
+
+  <h2 class="page-name">
+    Run log{manifest !== null ? ` · ${manifest.volume}` : ""}
+  </h2>
 
   {#if manifest !== null}
     <RunSummaryCard {manifest} />
@@ -341,21 +337,10 @@
 </main>
 
 <style>
-  /* The volume name appended to the title can run long; app.css's h1 has no
-     opinion on wrapping since most routes' titles are short and fixed. */
-  h1 {
+  /* The volume name can run long; app.css's .page-name has no opinion on
+     wrapping since most routes' names are short and fixed. */
+  .page-name {
     overflow-wrap: anywhere;
-  }
-
-  .title-row {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-  }
-
-  .logo {
-    height: 1.6rem;
-    width: auto;
   }
 
   .live-badge {

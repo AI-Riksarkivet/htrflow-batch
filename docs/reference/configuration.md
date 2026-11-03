@@ -139,6 +139,7 @@ Each key is an environment variable of the container.
 | `HTRFLOW_INTERNAL_RESULTS_BASE` | **a local run only**; no chart value | `HTRFLOW_RESULTS_PROXY` | — | no secret — nobody |
 | `HTRFLOW_RESULTS_PROXY` | the chart, fixed: `http://htrflow-results:8082/results` | required unless `HTRFLOW_WEB_SITE_ONLY` | — | no secret — nobody |
 | `HTRFLOW_NAMESPACES` | the chart, fixed: the release namespace (no value sets it) | the pod's own namespace, else `htr-batch` | — | no secret — nobody |
+| `HTRFLOW_SOLR_URL` | the chart: `web.solrUrl` | *(empty)* | — | no secret — nobody |
 | `HTRFLOW_WEB_STATIC` | the image build (`ENV`): where the image puts the site | `/app/static` | — | no secret — nobody |
 | `HTRFLOW_WEB_SITE_ONLY` | **a local run only** (the compose stack sets it); no chart value | `false` | — | no secret — nobody |
 | `HTRFLOW_BATCH_VERSION` | the image build (`ENV`): the tag the image is published under | `dev` | — | no secret — nobody |
@@ -212,6 +213,7 @@ Each key is a key of its `values.yaml`.
 | `web.enabled` | `values.yaml` | `true` | — | no secret — nobody |
 | `web.image` | `values.yaml` | `docker.io/riksarkivet/htrflow-web@sha256:5cb2c589e0797d10e2…` | — | digest-pinned unless `security.allowTagImages` — render |
 | `web.nodePort` | `values.yaml` | `30800` | — | no secret — nobody |
+| `web.solrUrl` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `web.resources.requests.cpu` | `values.yaml` | `50m` | — | no secret — nobody |
 | `web.resources.requests.memory` | `values.yaml` | `128Mi` | — | no secret — nobody |
 | `web.resources.limits.cpu` | `values.yaml` | `500m` | — | no secret — nobody |

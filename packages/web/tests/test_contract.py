@@ -54,7 +54,11 @@ def test_the_fixture_carries_what_the_routes_add_to_the_projection():
     (2026-09-23 test audit); built through the app, it has them all."""
     doc = build()
     assert doc["reapedTotal"] == "2"
-    assert doc["version"] == {"version": "v0.0.0-contract", "web": "0.0.0"}
+    assert doc["version"] == {
+        "version": "v0.0.0-contract",
+        "web": "0.0.0",
+        "search": False,
+    }
     assert [(e["status"], sorted(e["body"])) for e in doc["errors"]] == [
         (404, ["detail"]),
         (502, ["detail"]),

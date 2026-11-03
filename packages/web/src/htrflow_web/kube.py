@@ -112,6 +112,11 @@ class Config(BaseModel):
     #: site-only mode; in it, optional, and only /results uses it.
     results_proxy: str = Field("", alias="HTRFLOW_RESULTS_PROXY")
     namespaces: tuple[str, ...] = Field((), alias="HTRFLOW_NAMESPACES")
+    #: The Solr core the demo campaigns' pages are indexed in, as its Service
+    #: address (e.g. http://solr.htr-search:8983/solr/htr) — /search is only
+    #: served when this is set, so a deployment without one has no route at
+    #: all (htr-demo-campaigns, solr-search branch).
+    solr_url: str = Field("", alias="HTRFLOW_SOLR_URL")
     static_dir: str = Field("", alias="HTRFLOW_WEB_STATIC")
     site_only: bool = Field(False, alias="HTRFLOW_WEB_SITE_ONLY")
     #: The tag the image was published under, baked in by the dockerfile
@@ -136,6 +141,7 @@ class Config(BaseModel):
             HTRFLOW_INTERNAL_RESULTS_BASE=internal_base,
             HTRFLOW_RESULTS_PROXY=proxy,
             HTRFLOW_NAMESPACES=tuple(filter(None, names)) or (_own_namespace(),),
+            HTRFLOW_SOLR_URL=(get("HTRFLOW_SOLR_URL") or "").rstrip("/"),
             HTRFLOW_WEB_STATIC=get("HTRFLOW_WEB_STATIC") or "",
             HTRFLOW_WEB_SITE_ONLY=site_only,
             HTRFLOW_BATCH_VERSION=get("HTRFLOW_BATCH_VERSION") or "dev",

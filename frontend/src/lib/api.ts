@@ -306,6 +306,10 @@ export const volumeViewSchema = z.object({
   // link, where it used to make the whole campaign unreadable, re-polled
   // for ever (2026-09-23 audit).
   sourceUrl: httpUrlSchema.nullable().catch(null),
+  // Where the volume comes from, as a bare host ("digi.ub.uni-heidelberg.de")
+  // — also set for `images:` volumes, which have no sourceUrl manifest to
+  // link, so an external-IIIF volume always names its library.
+  sourceHost: z.string().nullable().catch(null),
   reason: volumeReasonSchema.optional(),
   progress: volumeProgressSchema.nullable(),
   // The results proxy refused this user the volume's files (a 403): the
@@ -458,11 +462,15 @@ export function reapedHidden(total: number, shown: number): number {
  * are published under, baked into the image at build time (`dev` for a local
  * build), and `web` is the read API package's own version beside it. The tag
  * is what an operator chose and what the header shows; the package versions
- * move independently of it.
+ * move independently of it. `search` says whether the header offers a search
+ * field at all.
  */
 export const versionSchema = z.object({
   version: z.string(),
   web: z.string(),
+  // Whether this deployment serves /search (a Solr core is configured).
+  // Off by default: an older server that does not send it has none.
+  search: z.boolean().catch(false),
 });
 
 export type Version = z.infer<typeof versionSchema>;
