@@ -183,9 +183,11 @@ def _export(
     if len(set(numbers.values())) != len(keys):
         return failed("page numbers are not unique")
     # The publishing side takes whole image series: 1..pages, no gap.
-    missing = sorted(set(range(1, expected + 1)) - set(numbers.values()))
-    if missing:
+    series, found = set(range(1, expected + 1)), set(numbers.values())
+    if missing := sorted(series - found):
         return failed(f"no page numbered {missing[0]} (the volume has {expected})")
+    if extra := sorted(found - series):
+        return failed(f"page number {extra[0]} is past the volume's {expected}")
 
     empty_keys = {k for k in keys if numbers[k] in opts.empty_pages}
     mean, counted = quality_mean(entries, empty_keys)

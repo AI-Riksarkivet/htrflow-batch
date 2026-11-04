@@ -167,7 +167,7 @@ htrflow-campaigns export <campaign-file> --to <target-dir>
    unreadable"). A null `source_manifest` fails it, "not a whole volume
    (images: source)", and so does a set of page numbers (from the source
    image ids) that is not exactly {1..`pages`}, naming the first missing
-   number.
+   number (or the first one past `pages`).
 2. **Quality filter.** Compute the mean as defined in Goals. Below the
    threshold: skip, reported with the mean.
 3. **Real page sizes.** For every page (ok and failed alike) read the scan's

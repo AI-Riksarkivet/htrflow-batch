@@ -436,3 +436,14 @@ def test_a_folder_that_vanishes_before_the_swap_still_exports(tmp_path, monkeypa
     assert run(Server(), tmp_path).outcome == "exported"
     assert len(list(final.glob("*.xml"))) == 3
     assert not list(tmp_path.glob(".*"))
+
+
+def test_a_page_number_past_the_volume_fails_naming_it(tmp_path):
+    man = manifest()
+    man["results"]["0004"] = {"status": "ok", "quality": 0.9}
+    man["page_sources"]["0004"] = source(4)
+    row = run(Server(man=man), tmp_path)
+    assert (row.outcome, row.reason) == (
+        "failed",
+        "page number 4 is past the volume's 3",
+    )
