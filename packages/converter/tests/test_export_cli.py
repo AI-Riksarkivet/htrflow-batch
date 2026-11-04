@@ -307,3 +307,79 @@ def test_a_dry_run_says_would_export_and_writes_only_the_report(repo, tmp_path, 
         rows = list(csv.DictReader(f))
     assert [r["outcome"] for r in rows] == ["would export", "not finished"]
     assert "1 would export" in capsys.readouterr().out
+
+
+def _no_prompts_and_no_client(monkeypatch):
+    def refuse(*a, **k):
+        raise AssertionError("asked or connected before the refusal")
+
+    monkeypatch.setattr("builtins.input", refuse)
+    monkeypatch.setattr("getpass.getpass", refuse)
+    monkeypatch.setattr(export_mod.httpx, "Client", refuse)
+    monkeypatch.delenv("HTRFLOW_USER", raising=False)
+    monkeypatch.delenv("HTRFLOW_PASSWORD", raising=False)
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["http://htr.example/results", "ftp://htr.example/results", "http://10.0.0.1/r"],
+)
+def test_a_results_url_without_tls_is_refused(repo, tmp_path, monkeypatch, capsys, url):
+    _no_prompts_and_no_client(monkeypatch)
+    (tmp_path / "t").mkdir()
+    code = main(
+        ["export", str(repo), "--to", str(tmp_path / "t"), "--results-url", url]
+    )
+    err = capsys.readouterr().err
+    assert code == 2 and len(err.strip().splitlines()) == 1 and "https" in err
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://localhost:8080/results",
+        "http://127.0.0.1/results",
+        "http://[::1]/results",
+    ],
+)
+def test_plain_http_to_this_machine_is_allowed(repo, tmp_path, monkeypatch, url):
+    monkeypatch.setattr("htrflow_converter.cli.run_export", lambda *a, **k: 0)
+    monkeypatch.setenv("HTRFLOW_USER", "ann")
+    monkeypatch.setenv("HTRFLOW_PASSWORD", "pw")
+    (tmp_path / "t").mkdir()
+    args = ["export", str(repo), "--to", str(tmp_path / "t"), "--results-url", url]
+    assert main(args) == 0
+
+
+def test_no_user_at_the_prompt_is_refused_with_2(repo, tmp_path, monkeypatch, capsys):
+    _no_prompts_and_no_client(monkeypatch)
+
+    def eof(*a, **k):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", eof)
+    (tmp_path / "t").mkdir()
+    assert main(["export", str(repo), "--to", str(tmp_path / "t")]) == 2
+    assert capsys.readouterr().err.strip() == (
+        "no user name: pass --user or set HTRFLOW_USER"
+    )
+
+
+def test_no_password_at_the_prompt_is_refused_with_2(repo, tmp_path, monkeypatch):
+    _no_prompts_and_no_client(monkeypatch)
+
+    def eof(*a, **k):
+        raise EOFError
+
+    monkeypatch.setattr("getpass.getpass", eof)
+    (tmp_path / "t").mkdir()
+    assert main(["export", str(repo), "--to", str(tmp_path / "t"), "--user", "a"]) == 2
+
+
+def test_a_report_in_a_missing_folder_is_refused(repo, tmp_path, monkeypatch):
+    _no_prompts_and_no_client(monkeypatch)
+    (tmp_path / "t").mkdir()
+    report = str(tmp_path / "no-such" / "r.csv")
+    code = main(["export", str(repo), "--to", str(tmp_path / "t"), "--report", report])
+    assert code == 2
+    assert not (tmp_path / "no-such").exists()

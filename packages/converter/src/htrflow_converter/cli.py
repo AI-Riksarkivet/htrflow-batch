@@ -1551,12 +1551,20 @@ def _export(args: argparse.Namespace) -> int:
     report = (
         Path(args.report) if args.report else Path(f"export-{campaign_file.stem}.csv")
     )
-    refused = check_inputs(campaign_file, target, report)
+    refused = check_inputs(campaign_file, target, report, args.results_url)
     if isinstance(refused, str):
         print(refused, file=sys.stderr)
         return 2
-    user = args.user or os.environ.get("HTRFLOW_USER") or input("User: ")
-    password = os.environ.get("HTRFLOW_PASSWORD") or getpass.getpass()
+    try:
+        user = args.user or os.environ.get("HTRFLOW_USER") or input("User: ")
+    except EOFError:
+        print("no user name: pass --user or set HTRFLOW_USER", file=sys.stderr)
+        return 2
+    try:
+        password = os.environ.get("HTRFLOW_PASSWORD") or getpass.getpass()
+    except EOFError:
+        print("no password: set HTRFLOW_PASSWORD", file=sys.stderr)
+        return 2
     opts = Options(target, None if args.no_quality_filter else args.min_quality, pages)
     return run_export(
         campaign_file,
@@ -1673,7 +1681,9 @@ def main(argv: list[str] | None = None) -> int:
         "--report", help="CSV report (default ./export-<campaign>.csv)"
     )
     export_p.add_argument(
-        "--dry-run", action="store_true", help="check and report, write no files"
+        "--dry-run",
+        action="store_true",
+        help="check and report; write nothing to the target",
     )
     args = parser.parse_args(argv)
     if args.command == "export":

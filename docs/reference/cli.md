@@ -80,7 +80,9 @@ more than one per cent fails instead of being published stretched.
 `results_url` from `converter.yaml` (`--results-url` replaces it, for
 example `https://<web front host>/results`). It logs in once with
 `--user` or `HTRFLOW_USER`, else a prompt, and the password from
-`HTRFLOW_PASSWORD` or a prompt without echo, never an argument. A volume the
+`HTRFLOW_PASSWORD` or a prompt without echo, never an argument. The results
+address must be `https`, except plain `http` to the workstation's own
+loopback address, so the password never crosses the network in clear. A volume the
 account may not read is skipped as `forbidden`; an expired session is
 renewed once, and then the run stops.
 
@@ -96,8 +98,10 @@ exported is reported as `would export`.
 
 **Exit status.** `2` when the run is refused before any request: the target
 is not an existing directory (it is never created, so an unmounted share
-cannot become a local folder), the repo does not validate, the file is not a
-campaign of the repo, or an option is out of range. `1` when any volume
+cannot become a local folder), the report's folder does not exist, the repo
+does not validate, the file is not a campaign of the repo, the results
+address is not `https`, no user name or password could be read, or an
+option is out of range. `1` when any volume
 `failed` or was `forbidden`, or the run stopped (the session was lost or the
 target became unusable); the report then still lists every volume, the
 unfinished ones as `failed`. Otherwise `0`: every volume was `exported`

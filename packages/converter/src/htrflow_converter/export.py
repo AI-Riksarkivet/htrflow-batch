@@ -15,7 +15,7 @@ import sys
 from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -316,7 +316,23 @@ _OUTCOMES = (
 )
 
 
-def check_inputs(campaign_file: Path, target: Path, report: Path | None = None):
+_LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
+
+
+def _plain_text_url(url: str) -> bool:
+    """The password would cross the network unencrypted to this URL."""
+    parts = urlsplit(url)
+    if parts.scheme == "https":
+        return False
+    return not (parts.scheme == "http" and parts.hostname in _LOCAL_HOSTS)
+
+
+def check_inputs(
+    campaign_file: Path,
+    target: Path,
+    report: Path | None = None,
+    results_url: str | None = None,
+):
     """``(campaign, config)`` for the campaign file, or the one-line reason
     the run is refused. Nothing is asked of the network and nothing is
     created: an unmounted share must not turn into a local folder."""
@@ -324,6 +340,8 @@ def check_inputs(campaign_file: Path, target: Path, report: Path | None = None):
         return f"{target} is not a directory (it is not created for you)"
     if report is not None and report.resolve().is_relative_to(target.resolve()):
         return f"the report {report} would be inside the target; put it elsewhere"
+    if report is not None and not report.parent.is_dir():
+        return f"the report's folder {report.parent} does not exist"
     repo = campaign_file.resolve().parent.parent
     try:
         campaigns, _, cfg = load(
@@ -331,6 +349,9 @@ def check_inputs(campaign_file: Path, target: Path, report: Path | None = None):
         )
     except ValidationError as exc:
         return f"the campaigns repo does not validate: {exc}"
+    url = results_url or cfg.results_url
+    if _plain_text_url(url):
+        return f"the results URL {url} is not https; the password would cross in clear"
     for campaign in campaigns:
         if campaign.name == campaign_file.stem:
             return campaign, cfg
@@ -380,7 +401,7 @@ def run_export(
     dry_run: bool,
     client: httpx.Client | None = None,
 ) -> int:
-    checked = check_inputs(campaign_file, target, report)
+    checked = check_inputs(campaign_file, target, report, results_url)
     if isinstance(checked, str):
         print(checked, file=sys.stderr)
         return 2
