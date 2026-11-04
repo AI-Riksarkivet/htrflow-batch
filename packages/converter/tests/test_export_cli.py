@@ -49,6 +49,7 @@ def manifest(vid, quality):
         "page_sources": {
             f"000{n}": f"{IMAGES}/{vid}_{n:05d}/full/max/0/default.jpg" for n in (1, 2)
         },
+        "source_manifest": f"{IMAGES}/{vid}/manifest",
     }
 
 

@@ -120,6 +120,32 @@ def export_volume(
         return Row(volume_id, "failed", reason=str(exc))
 
 
+_STATUSES = ("ok", "skipped", "failed")
+
+
+def _read_manifest(raw: bytes) -> tuple[int, dict[str, dict], dict[str, str], bool]:
+    """``(pages, results, page_sources, whole)``, each of the type the export
+    relies on; a ``ValueError`` names what is not. ``whole`` is False for a
+    volume made from an image list (``images: source``): with no source
+    manifest it may be any part of a series."""
+    manifest = json.loads(raw)
+    if not isinstance(manifest, dict):
+        raise ValueError("not a JSON object")
+    pages, entries = manifest.get("pages"), manifest.get("results")
+    sources = manifest.get("page_sources")
+    if not isinstance(pages, int) or isinstance(pages, bool) or pages < 1:
+        raise ValueError(f"pages is {pages!r}, not a page count")
+    if not isinstance(entries, dict) or not all(
+        isinstance(e, dict) for e in entries.values()
+    ):
+        raise ValueError("results is not an object of page objects")
+    if not isinstance(sources, dict) or not all(
+        isinstance(u, str) for u in sources.values()
+    ):
+        raise ValueError("page_sources is not an object of URLs")
+    return pages, entries, sources, isinstance(manifest.get("source_manifest"), str)
+
+
 def _export(
     results: Results,
     client: httpx.Client,
@@ -132,19 +158,22 @@ def _export(
     if raw is None:
         return Row(volume_id, "not finished")
     try:
-        manifest = json.loads(raw)
-        expected = int(manifest["pages"])
-        entries: dict[str, dict] = manifest["results"]
-        sources: dict[str, str] = manifest["page_sources"]
-    except (ValueError, KeyError, TypeError) as exc:
-        return Row(volume_id, "failed", reason=f"manifest unreadable: {exc!r}")
+        manifest = _read_manifest(raw)
+    except ValueError as exc:
+        return Row(volume_id, "failed", reason=f"manifest unreadable: {exc}")
+    expected, entries, sources, whole = manifest
 
     def failed(reason: str, **kw) -> Row:
         return Row(volume_id, "failed", pages=expected, reason=reason, **kw)
 
+    if not whole:
+        return failed("not a whole volume (images: source)")
+
     keys = sorted(entries)
     numbers: dict[str, int] = {}
     for key in keys:
+        if entries[key].get("status") not in _STATUSES:
+            return failed(f"page {key}: unknown status {entries[key].get('status')!r}")
         try:
             numbers[key] = page_number(sources[key], volume_id)
         except (PageRuleError, KeyError) as exc:
@@ -152,6 +181,10 @@ def _export(
 
     if len(set(numbers.values())) != len(keys):
         return failed("page numbers are not unique")
+    # The publishing side takes whole image series: 1..pages, no gap.
+    missing = sorted(set(range(1, expected + 1)) - set(numbers.values()))
+    if missing:
+        return failed(f"no page numbered {missing[0]} (the volume has {expected})")
 
     empty_keys = {k for k in keys if numbers[k] in opts.empty_pages}
     mean, counted = quality_mean(entries, empty_keys)

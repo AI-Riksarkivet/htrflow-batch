@@ -27,6 +27,7 @@ def manifest(**over):
             "0003": {"status": "failed", "error": "boom"},
         },
         "page_sources": {f"000{n}": source(n) for n in (1, 2, 3)},
+        "source_manifest": f"{IMAGES}/{VID}/manifest",
     }
     m.update(over)
     return m
@@ -333,3 +334,79 @@ def test_a_failed_cleanup_of_the_old_folder_keeps_the_export(tmp_path, monkeypat
     assert run(Server(), tmp_path).outcome == "exported"
     assert len(list((tmp_path / VID).glob("*.xml"))) == 3
     assert not (tmp_path / VID / "old.xml").exists()
+
+
+@pytest.mark.parametrize("over", [{"source_manifest": None}, {"source_manifest": 7}])
+def test_a_volume_from_an_image_list_is_not_a_whole_volume(tmp_path, over):
+    row = run(Server(man=manifest(**over)), tmp_path)
+    assert (row.outcome, row.reason) == (
+        "failed",
+        "not a whole volume (images: source)",
+    )
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_manifest_without_source_manifest_is_not_a_whole_volume(tmp_path):
+    man = manifest()
+    del man["source_manifest"]
+    row = run(Server(man=man), tmp_path)
+    assert row.outcome == "failed" and "not a whole volume" in row.reason
+
+
+def test_a_gap_in_the_page_numbers_fails_naming_the_first_missing(tmp_path):
+    man = manifest()
+    man["page_sources"]["0002"] = source(4)
+    row = run(Server(man=man), tmp_path)
+    assert (row.outcome, row.reason) == (
+        "failed",
+        "no page numbered 2 (the volume has 3)",
+    )
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_series_that_does_not_start_at_one_fails(tmp_path):
+    man = manifest()
+    man["page_sources"] = {f"000{n}": source(n + 1) for n in (1, 2, 3)}
+    row = run(Server(man=man), tmp_path)
+    assert (row.outcome, row.reason) == (
+        "failed",
+        "no page numbered 1 (the volume has 3)",
+    )
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"results": [{"status": "ok"}]},
+        {"results": {"0001": "ok", "0002": "ok", "0003": "ok"}},
+        {"page_sources": [source(1)]},
+        {"page_sources": {"0001": 1, "0002": 2, "0003": 3}},
+        {"pages": "3"},
+        {"pages": True},
+        {"pages": 0},
+    ],
+)
+def test_a_malformed_manifest_is_a_failed_row(tmp_path, over):
+    row = run(Server(man=manifest(**over)), tmp_path)
+    assert row.outcome == "failed" and row.reason.startswith("manifest unreadable")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_manifest_that_is_not_an_object_is_a_failed_row(tmp_path):
+    srv = Server()
+    inner = srv.__call__
+
+    def handler(request):
+        if request.url.path.endswith("/manifest.json"):
+            return httpx.Response(200, content=b"[1, 2]")
+        return inner(request)
+
+    row = run(handler, tmp_path)
+    assert row.outcome == "failed" and row.reason.startswith("manifest unreadable")
+
+
+def test_an_unknown_page_status_fails_rather_than_publishing_empty(tmp_path):
+    man = manifest()
+    man["results"]["0002"]["status"] = "pending"
+    row = run(Server(man=man), tmp_path)
+    assert row.outcome == "failed" and "0002" in row.reason
