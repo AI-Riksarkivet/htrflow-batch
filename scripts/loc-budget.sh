@@ -858,7 +858,12 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 5127
 # 5074 -> 5084 (audit 1001 review 1B): results_url must end in /results, as the chart's resultsUrl.
 # 5084 -> 5085 (SonarQube findings): models.memory_bytes raises ValueError
 # where an assert guarded a quantity the regex refused.
-check converter "$(count packages/converter/src -name '*.py')" 5085
+# 5085 -> 5809 (campaign export): export.py (one volume, the campaign loop,
+# the report), export_alto.py (scaling an ALTO to the scan, the empty ALTO),
+# export_http.py (the results proxy login and IIIF image sizes) and
+# export_pages.py (page sets, file numbers, the quality mean), plus the
+# `export` subcommand in cli.py.
+check converter "$(count packages/converter/src -name '*.py')" 5809
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
