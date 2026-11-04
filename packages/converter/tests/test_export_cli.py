@@ -53,16 +53,17 @@ def manifest(vid, quality):
 
 
 class Server:
-    def __init__(self, manifests, login=204):
+    def __init__(self, manifests, login=204, login_body=None):
         self.manifests = manifests  # volume -> dict | None | int (status)
         self.login = login
+        self.login_body = login_body or {"detail": "no"}
         self.requests = []
 
     def __call__(self, request):
         self.requests.append(request)
         path = request.url.path
         if path.endswith("/_login"):
-            return httpx.Response(self.login, json={"detail": "no"})
+            return httpx.Response(self.login, json=self.login_body)
         if path.endswith("/manifest.json"):
             vid = path.split("/")[-2]
             m = self.manifests[vid]
@@ -195,6 +196,16 @@ def test_a_refused_login_fails_every_volume(repo, tmp_path):
         rows = list(csv.DictReader(f))
     assert [r["outcome"] for r in rows] == ["failed", "failed"]
     assert rows[0]["reason"].startswith("run stopped: login refused")
+
+
+def test_a_422_login_leaks_the_password_nowhere(repo, tmp_path, capsys):
+    echo = [{"input": "username=ann&password=hunter2-secret"}]
+    server = Server({}, login=422, login_body={"detail": echo})
+    code, _ = go(repo, tmp_path, server, password="hunter2-secret")
+    assert code == 1
+    seen = capsys.readouterr()
+    for text in ((tmp_path / "r.csv").read_text(), seen.out, seen.err):
+        assert "hunter2-secret" not in text
 
 
 def test_an_unusable_target_stops_the_run(repo, tmp_path, monkeypatch):

@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -14,6 +16,24 @@ URL = "https://htr.example/results"
 COOKIE = "__Host-htr_session=abc; Path=/; Secure; HttpOnly"
 
 
+def strict_login(request):
+    """The proxy's contract: a JSON object of exactly username and password."""
+    try:
+        body = json.loads(request.content)
+    except ValueError:
+        body = None
+    if (
+        request.headers.get("content-type") != "application/json"
+        or not isinstance(body, dict)
+        or set(body) != {"username", "password"}
+        or not all(isinstance(v, str) for v in body.values())
+    ):
+        return httpx.Response(
+            422, json={"detail": [{"input": request.content.decode()}]}
+        )
+    return httpx.Response(204, headers={"set-cookie": COOKIE})
+
+
 def make(handler):
     seen: list[httpx.Request] = []
 
@@ -28,7 +48,7 @@ def make(handler):
 def test_login_posts_the_form_with_the_sites_origin():
     def handler(request):
         if request.url.path.endswith("/_login"):
-            return httpx.Response(204, headers={"set-cookie": COOKIE})
+            return strict_login(request)
         return httpx.Response(200, content=b"x")
 
     results, seen = make(handler)
@@ -37,7 +57,8 @@ def test_login_posts_the_form_with_the_sites_origin():
     login, get = seen
     assert (login.method, str(login.url)) == ("POST", f"{URL}/_login")
     assert login.headers["origin"] == "https://htr.example"
-    assert login.content == b"username=ann&password=s3cret"
+    assert json.loads(login.content) == {"username": "ann", "password": "s3cret"}
+    assert login.headers["content-type"] == "application/json"
     assert (get.method, str(get.url)) == ("GET", f"{URL}/ns/p/V1/manifest.json")
     assert "__Host-htr_session=abc" in get.headers["cookie"]
 
@@ -48,6 +69,31 @@ def test_login_failure_carries_the_proxys_detail():
     )
     with pytest.raises(SessionLost, match="too many attempts"):
         results.login()
+
+
+def test_a_422_never_echoes_the_request_body():
+    echo = [{"type": "dict_type", "input": "username=ann&password=s3cret"}]
+    results, _ = make(lambda r: httpx.Response(422, json={"detail": echo}))
+    with pytest.raises(SessionLost) as err:
+        results.login()
+    assert "s3cret" not in str(err.value)
+    assert "input" not in str(err.value)
+
+
+def test_a_non_string_detail_falls_back_to_the_reason_phrase():
+    results, _ = make(lambda r: httpx.Response(401, json={"detail": ["x", "y"]}))
+    with pytest.raises(SessionLost, match="Unauthorized") as err:
+        results.login()
+    assert "[" not in str(err.value)
+
+
+def test_the_password_is_scrubbed_from_any_message():
+    results, _ = make(
+        lambda r: httpx.Response(401, json={"detail": "bad s3cret for ann"})
+    )
+    with pytest.raises(SessionLost, match=r"bad \*\*\* for ann") as err:
+        results.login()
+    assert "s3cret" not in str(err.value)
 
 
 def test_get_maps_404_to_none_and_403_to_forbidden():
