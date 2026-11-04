@@ -113,7 +113,8 @@ A new subcommand of the existing person-facing CLI (my call):
 
 ```
 htrflow-campaigns export <campaign-file> --to <target-dir>
-    [--min-quality 0.75 | --no-quality-filter] [--empty-pages 1] [--dry-run]
+    [--min-quality 0.75 | --no-quality-filter] [--empty-pages 1]
+    [--results-url URL] [--user NAME] [--report FILE] [--dry-run]
 ```
 
 - `<campaign-file>` is `campaigns/<name>.yaml` in the person's campaigns
@@ -130,14 +131,15 @@ htrflow-campaigns export <campaign-file> --to <target-dir>
   ranges (`1-2`); `--empty-pages none` empties no page.
   Positions past a volume's end are ignored for that volume.
 - `--dry-run` reads everything and prints the report, writes nothing.
-- `--site <url>` is the campaign browser's address (the web front that
-  serves `/results`); an environment variable may supply it.
+- The results address is `results_url` in the same repo's `converter.yaml`
+  (required there, e.g. `https://<web front host>/results`);
+  `--results-url` overrides it.
 - **Results are read through the results proxy**, with the same login a
   person uses in the browser — no store keys on the workstation and no
   direct route to the bucket needed. The CLI logs in with
-  `POST /results/_login` (form fields `username`, `password`; the `Origin`
+  `POST {results_url}/_login` (form fields `username`, `password`; the `Origin`
   header set to the site's own origin, which the proxy requires), keeps the
-  `htr_session` cookie, and reads files with `GET /results/<key>`
+  `htr_session` cookie, and reads files with `GET {results_url}/<key>`
   ([results proxy login design](2026-09-30-results-proxy-login-design.md),
   sections 2–3). The password is asked for at the prompt (never echoed,
   never a command-line argument) or taken from an environment variable for
