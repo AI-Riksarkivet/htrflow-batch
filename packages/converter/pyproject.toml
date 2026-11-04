@@ -5,6 +5,9 @@ license = "EUPL-1.2"
 description = "Campaign/pipeline YAML -> manifests (docs: docs/superpowers/specs/2026-09-01-indexed-jobs-design.md)"
 requires-python = ">=3.12"
 dependencies = [
+    # `export` reads results through the web proxy and image sizes from IIIF
+    # info.json (the range packages/web uses).
+    "httpx>=0.27",
     # `apply` talks to the API server directly (server-side apply, our own
     # selector prune, the Kueue pause patch) -- one client library and one
     # auth path across the repo (packages/web pins the same range).
