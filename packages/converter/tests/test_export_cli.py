@@ -254,3 +254,34 @@ def test_write_report_rounds_and_prints_a_summary(tmp_path):
     lines = table.splitlines()
     assert len(lines) == 4 and "1 exported" in lines[-1]
     assert "1 below threshold" in lines[-1]
+
+
+def test_an_unreachable_host_stops_the_run_with_a_report(repo, tmp_path):
+    inner = Server({})
+
+    def handler(request):
+        if request.url.path.endswith("/_login"):
+            raise httpx.ConnectError("no route")
+        return inner(request)
+
+    code, _ = go(repo, tmp_path, handler)
+    assert code == 1
+    with (tmp_path / "r.csv").open() as f:
+        rows = list(csv.DictReader(f))
+    assert [r["outcome"] for r in rows] == ["failed", "failed"]
+    assert rows[0]["reason"].startswith("run stopped:")
+
+
+def test_a_timeout_fails_one_volume_and_the_run_continues(repo, tmp_path):
+    inner = Server({"V0000001": manifest("V0000001", 0.9), "V0000002": None})
+
+    def handler(request):
+        if request.url.path.endswith("/V0000002/manifest.json"):
+            raise httpx.ReadTimeout("slow")
+        return inner(request)
+
+    code, _ = go(repo, tmp_path, handler)
+    assert code == 1
+    with (tmp_path / "r.csv").open() as f:
+        rows = list(csv.DictReader(f))
+    assert [r["outcome"] for r in rows] == ["exported", "failed"]

@@ -862,8 +862,9 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 5127
 # the report), export_alto.py (scaling an ALTO to the scan, the empty ALTO),
 # export_http.py (the results proxy login and IIIF image sizes) and
 # export_pages.py (page sets, file numbers, the quality mean), plus the
-# `export` subcommand in cli.py.
-check converter "$(count packages/converter/src -name '*.py')" 5809
+# `export` subcommand in cli.py. 5809 -> 5820: transport errors of the results
+# host mapped to SessionLost (login) and ResultsUnavailable (a read).
+check converter "$(count packages/converter/src -name '*.py')" 5820
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

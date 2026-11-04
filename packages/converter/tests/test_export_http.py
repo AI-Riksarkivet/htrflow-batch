@@ -112,3 +112,25 @@ def test_image_size_reads_info_json():
     ):
         with pytest.raises(SizeUnreadable):
             image_size(sized(bad), "https://iiif.example/R1/info.json")
+
+
+def test_a_transport_error_on_login_is_session_lost():
+    def boom(request):
+        raise httpx.ConnectError("no route")
+
+    client = httpx.Client(transport=httpx.MockTransport(boom))
+    with pytest.raises(SessionLost, match="ConnectError"):
+        Results("https://htr.example/results", "ann", "pw", client).login()
+
+
+def test_a_transport_error_on_a_get_is_results_unavailable():
+    def handler(request):
+        if request.url.path.endswith("/_login"):
+            return httpx.Response(204)
+        raise httpx.ReadTimeout("slow")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    results = Results("https://htr.example/results", "ann", "pw", client)
+    results.login()
+    with pytest.raises(ResultsUnavailable, match="ReadTimeout"):
+        results.get("ns/p/V1/manifest.json")

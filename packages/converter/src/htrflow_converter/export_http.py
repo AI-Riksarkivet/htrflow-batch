@@ -43,21 +43,32 @@ class Results:
         self._client = client
 
     def login(self) -> None:
-        response = self._client.post(
-            f"{self._base}/_login",
-            data={"username": self._user, "password": self._password},
-            headers={"Origin": self._origin},
-        )
+        try:
+            response = self._client.post(
+                f"{self._base}/_login",
+                data={"username": self._user, "password": self._password},
+                headers={"Origin": self._origin},
+            )
+        except httpx.TransportError as exc:
+            raise SessionLost(
+                f"cannot reach {self._origin}: {type(exc).__name__}: {exc}"
+            ) from exc
         if response.status_code != 204:
             raise SessionLost(
                 f"login refused ({response.status_code}): {_detail(response)}"
             )
 
+    def _fetch(self, key: str) -> httpx.Response:
+        try:
+            return self._client.get(f"{self._base}/{key}")
+        except httpx.TransportError as exc:
+            raise ResultsUnavailable(f"{key}: {type(exc).__name__}: {exc}") from exc
+
     def get(self, key: str) -> bytes | None:
-        response = self._client.get(f"{self._base}/{key}")
+        response = self._fetch(key)
         if response.status_code == 401:
             self.login()
-            response = self._client.get(f"{self._base}/{key}")
+            response = self._fetch(key)
             if response.status_code == 401:
                 raise SessionLost(f"session rejected again: {_detail(response)}")
         match response.status_code:
