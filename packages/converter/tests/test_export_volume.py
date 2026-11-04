@@ -156,9 +156,52 @@ def test_a_reexport_replaces_the_folder(tmp_path):
     assert not list(tmp_path.glob(".*"))
 
 
-def test_an_ok_page_without_its_alto_is_filled(tmp_path):
+def test_an_ok_page_without_its_alto_fails_its_volume(tmp_path):
+    (tmp_path / VID).mkdir()
+    (tmp_path / VID / "old.xml").write_text("old")
     row = run(Server(alto_404={"0002"}), tmp_path)
-    assert (row.pages_empty_filled, row.pages_with_text) == (2, 0)
+    assert row.outcome == "failed"
+    assert row.reason == "page 0002: ALTO missing for an ok page"
+    assert (tmp_path / VID / "old.xml").read_text() == "old"
+    assert not list(tmp_path.glob(".*"))
+
+
+def changing_manifest(second):
+    """The manifest as first read, then ``second`` (bytes, or None for 404)."""
+    srv = Server()
+    inner = srv.__call__
+    reads = []
+
+    def handler(request):
+        if request.url.path.endswith("/manifest.json"):
+            reads.append(1)
+            if len(reads) > 1:
+                if second is None:
+                    return httpx.Response(404)
+                return httpx.Response(200, content=second)
+        return inner(request)
+
+    return handler, reads
+
+
+@pytest.mark.parametrize(
+    "second", [None, json.dumps(manifest(pages_ok=9)).encode()], ids=["gone", "new"]
+)
+def test_a_manifest_that_changes_during_the_export_fails(tmp_path, second):
+    (tmp_path / VID).mkdir()
+    (tmp_path / VID / "old.xml").write_text("old")
+    handler, reads = changing_manifest(second)
+    row = run(handler, tmp_path)
+    assert (row.outcome, row.reason) == ("failed", "volume changed during export")
+    assert len(reads) == 2
+    assert (tmp_path / VID / "old.xml").read_text() == "old"
+    assert not list(tmp_path.glob(".*"))
+
+
+def test_an_unchanged_manifest_is_read_twice_and_exports(tmp_path):
+    handler, reads = changing_manifest(json.dumps(manifest()).encode())
+    assert run(handler, tmp_path).outcome == "exported"
+    assert len(reads) == 2
 
 
 def test_a_leftover_temp_folder_is_cleared(tmp_path):

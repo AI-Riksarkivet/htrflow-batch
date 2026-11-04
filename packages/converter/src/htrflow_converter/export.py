@@ -189,7 +189,20 @@ def _export(
             tmp,
             dry_run,
         )
-        if row.outcome == "exported" and not dry_run:
+        if row.outcome != "exported":
+            return row
+        # A re-run of the volume deletes manifest.json before its stale
+        # pages: if the manifest is not what this export read, the pages
+        # just built may mix two runs.
+        if results.get(f"{base}/manifest.json") != raw:
+            return Row(
+                volume_id,
+                "failed",
+                pages=expected,
+                reason="volume changed during export",
+                **stats,
+            )
+        if not dry_run:
             swap_in(tmp, opts.target / volume_id)
         return row
     finally:
@@ -219,10 +232,16 @@ def _build(
         number, native = numbers[key], sizes[key]
         stem = f"{volume_id}_{number:05d}"
         alto = None
+        status = entries[key].get("status")
         if key in empty_keys:
             chosen += 1
-        elif entries[key].get("status") in ("ok", "skipped"):
+        elif status in ("ok", "skipped"):
+            # The wrapper keeps an ALTO for every ok or skipped page; none
+            # means the bucket changed under this export, not a blank page.
             alto = results.get(f"{base}/alto/{key}.xml")
+            if alto is None:
+                article = "an" if status == "ok" else "a"
+                return failed(f"page {key}: ALTO missing for {article} {status} page")
         if alto is None:
             if key not in empty_keys:
                 filled += 1
