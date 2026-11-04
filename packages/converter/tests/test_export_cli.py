@@ -383,3 +383,18 @@ def test_a_report_in_a_missing_folder_is_refused(repo, tmp_path, monkeypatch):
     code = main(["export", str(repo), "--to", str(tmp_path / "t"), "--report", report])
     assert code == 2
     assert not (tmp_path / "no-such").exists()
+
+
+def test_every_volume_not_finished_points_at_the_config(repo, tmp_path, capsys):
+    code, _ = go(repo, tmp_path, Server({"V0000001": None, "V0000002": None}))
+    out, err = capsys.readouterr()
+    assert code == 0
+    assert "every volume read as not finished" in err
+    assert "namespace" in err and "results_url" in err
+    assert "report:" in out
+
+
+def test_one_finished_volume_needs_no_config_note(repo, tmp_path, capsys):
+    server = Server({"V0000001": manifest("V0000001", 0.9), "V0000002": None})
+    go(repo, tmp_path, server)
+    assert "every volume" not in capsys.readouterr().err

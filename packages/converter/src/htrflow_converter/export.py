@@ -389,6 +389,12 @@ def write_report(rows: list[Row], path: Path) -> str:
     return "\n".join([*lines, ", ".join(counts)])
 
 
+_ALL_UNFINISHED = (
+    "every volume read as not finished: check that converter.yaml's namespace "
+    "and results_url point at the deployment that ran this campaign"
+)
+
+
 def run_export(
     campaign_file: Path,
     target: Path,
@@ -431,4 +437,6 @@ def run_export(
         rows += [Row(v, "failed", reason=stopped) for v in ids[len(rows) :]]
     print(write_report(rows, report))
     print(f"report: {report}")
+    if rows and all(r.outcome == "not finished" for r in rows):
+        print(_ALL_UNFINISHED, file=sys.stderr)
     return 1 if any(r.outcome in ("failed", "forbidden") for r in rows) else 0
