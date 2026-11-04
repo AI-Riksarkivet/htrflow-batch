@@ -1,4 +1,5 @@
 import json
+import shutil
 from pathlib import Path
 
 import httpx
@@ -410,3 +411,28 @@ def test_an_unknown_page_status_fails_rather_than_publishing_empty(tmp_path):
     man["results"]["0002"]["status"] = "pending"
     row = run(Server(man=man), tmp_path)
     assert row.outcome == "failed" and "0002" in row.reason
+
+
+def test_a_target_that_vanished_is_never_created_again(tmp_path):
+    gone = tmp_path / "share"
+    with pytest.raises(OSError):
+        run(Server(), gone)
+    assert not gone.exists()
+
+
+def test_a_folder_that_vanishes_before_the_swap_still_exports(tmp_path, monkeypatch):
+    final = tmp_path / VID
+    final.mkdir()
+    (final / "old.xml").write_text("old")
+    real = Path.rename
+
+    def rename(self, target):
+        if self == final and ".old-" in str(target):
+            shutil.rmtree(final)  # the publishing side ingested it just now
+            raise FileNotFoundError(str(self))
+        return real(self, target)
+
+    monkeypatch.setattr(Path, "rename", rename)
+    assert run(Server(), tmp_path).outcome == "exported"
+    assert len(list(final.glob("*.xml"))) == 3
+    assert not list(tmp_path.glob(".*"))

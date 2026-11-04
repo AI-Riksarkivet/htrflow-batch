@@ -69,10 +69,11 @@ class Options:
 
 def swap_in(built: Path, final: Path) -> None:
     """Make ``built`` the folder ``final``; an existing one goes aside first."""
-    old = None
-    if final.exists():
-        old = final.with_name(f".{final.name}.old-{secrets.token_hex(4)}")
+    old: Path | None = final.with_name(f".{final.name}.old-{secrets.token_hex(4)}")
+    try:
         final.rename(old)
+    except FileNotFoundError:  # none there, or ingested just now
+        old = None
     try:
         built.rename(final)
     except BaseException:
@@ -204,7 +205,8 @@ def _export(
 
     tmp = opts.target / f".{volume_id}.tmp-{secrets.token_hex(4)}"
     if not dry_run:
-        opts.target.mkdir(parents=True, exist_ok=True)
+        # No mkdir of the target: check_inputs saw it, and a share that has
+        # gone since must fail here, not turn into a local folder.
         _clear_leftovers(opts.target, volume_id)
         tmp.mkdir()
     try:

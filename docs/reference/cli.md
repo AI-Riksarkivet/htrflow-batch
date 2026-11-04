@@ -54,6 +54,9 @@ it is built beside the target and renamed into place only when every page is
 there, so the real folder name never holds a partial volume, and an earlier
 export of the same volume is replaced as a whole. The campaign is the file
 named, and the repo is the directory two levels up; the repo must validate.
+Point `--to` at a folder inside the share, not at the bare mount point: an
+unmounted share leaves the mount point as an empty local directory, while a
+folder inside it is then missing and the run is refused.
 
 **The quality rule.** A volume is exported only if the mean predicted quality
 of its pages reaches `--min-quality` (default `0.75`). The mean counts pages
