@@ -406,4 +406,4 @@ def run_export(
         rows += [Row(v, "failed", reason=stopped) for v in ids[len(rows) :]]
     print(write_report(rows, report))
     print(f"report: {report}")
-    return 1 if any(r.outcome == "failed" for r in rows) else 0
+    return 1 if any(r.outcome in ("failed", "forbidden") for r in rows) else 0

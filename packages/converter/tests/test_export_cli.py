@@ -174,7 +174,7 @@ def test_exit_status(repo, tmp_path):
     assert code == 0 and list(target.iterdir()) == []  # below threshold + not finished
 
     server = Server({"V0000001": manifest("V0000001", 0.9), "V0000002": 403})
-    assert go(repo, tmp_path, server)[0] == 0  # forbidden
+    assert go(repo, tmp_path, server)[0] == 1  # forbidden
 
     server = Server({"V0000001": manifest("V0000001", 0.9), "V0000002": 500})
     assert go(repo, tmp_path, server)[0] == 1  # failed

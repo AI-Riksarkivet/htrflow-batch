@@ -94,9 +94,10 @@ no files.
 is not an existing directory (it is never created, so an unmounted share
 cannot become a local folder), the repo does not validate, the file is not a
 campaign of the repo, or an option is out of range. `1` when any volume
-failed or the run stopped (the session was lost or the target became
-unusable); the report then still lists every volume, the unfinished ones as
-`failed`. Otherwise `0`, also when volumes were skipped.
+`failed` or was `forbidden`, or the run stopped (the session was lost or the
+target became unusable); the report then still lists every volume, the
+unfinished ones as `failed`. Otherwise `0`: every volume was `exported`,
+`below threshold`, `not finished` or had `no scores`.
 
 The design is in the campaign export spec among the
 [design specs](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/docs/superpowers/specs).
@@ -470,8 +471,8 @@ The codes are a precedence, highest first: `1` beats `3` beats `0`.
 | `0` | Everything was applied. |
 
 `export` has its own codes, set out [above](#export-publishing-a-finished-campaign):
-`0` when no volume failed, `1` when one failed or the run stopped, `2` when
-it was refused before any request.
+`0` when no volume failed or was forbidden, `1` when one was or the run
+stopped, `2` when it was refused before any request.
 
 `validate` and `render` exit non-zero on any problem, with one line per
 problem ([When something is wrong](campaign-yaml.md#when-something-is-wrong)).
