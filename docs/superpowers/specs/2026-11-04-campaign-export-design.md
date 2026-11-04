@@ -112,16 +112,18 @@ A new subcommand of the existing person-facing CLI (my call):
 
 ```
 htrflow-campaigns export <campaign-file> --to <target-dir>
-    [--min-quality 0.7] [--empty-pages 1,2] [--dry-run]
+    [--min-quality 0.75 | --no-quality-filter] [--empty-pages 1,2] [--dry-run]
 ```
 
 - `<campaign-file>` is `campaigns/<name>.yaml` in the person's campaigns
   repo checkout. Its `pipeline:` and `volumes:` say what to read; the
   namespace (the key prefix) is `namespace:` in the same repo's
   `converter.yaml`, as `render` reads it.
-- `--min-quality` is optional. Without it there is no quality filter. With
-  it, a volume with no scored pages at all is **skipped** and reported as
-  such (it cannot be shown to meet the threshold).
+- `--min-quality` defaults to **0.75**, so every export filters on quality
+  unless told otherwise. A volume with no scored pages at all is
+  **skipped** and reported as such (it cannot be shown to meet the
+  threshold). `--no-quality-filter` turns the filter off entirely, for a
+  campaign whose pipeline has no quality step.
 - `--empty-pages` takes 1-based page positions; ranges (`1-2`) are fine.
   Positions past a volume's end are ignored for that volume.
 - `--dry-run` reads everything and prints the report, writes nothing.
