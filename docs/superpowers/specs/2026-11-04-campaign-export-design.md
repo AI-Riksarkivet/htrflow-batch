@@ -163,14 +163,9 @@ htrflow-campaigns export <campaign-file> --to <target-dir>
 4. **Build every page** into a temporary folder beside the target
    (`<target>/.<bildid>.tmp-…`, same filesystem):
    - a page with an ALTO and not in `--empty-pages`: the ALTO **scaled**;
-   - a page with an ALTO and in `--empty-pages`: that ALTO scaled, then
-     emptied (all of `PrintSpace`'s content and the `ReadingOrder` removed;
-     `Description` and the `Page` element kept);
-   - a page with no ALTO: an **empty ALTO** built from scratch, with the
-     same `Description` as the volume's other pages (copied from any ALTO
-     of the volume; if the volume has none at all, a minimal
-     `Description` with `MeasurementUnit` pixel and the htrflow-batch
-     `Processing` entry).
+   - a page in `--empty-pages`, and a page with no ALTO: an **empty ALTO**
+     (below), built the same way for both — nothing of the page's own
+     ALTO, if it has one, is carried over.
    In every file, `sourceImageInformation/fileName` is set to the
    published file stem (`<bildid>_<00004>`).
 5. **Check** the temporary folder holds exactly `pages` files, one per
@@ -205,12 +200,40 @@ different image, and fails the volume like an unreadable size.
 
 ## Empty ALTO
 
-A valid ALTO v4 document: the `Description` above, and
+A valid ALTO v4 document that says nothing about processing: a
+`Description` with only `MeasurementUnit` (`pixel`) and
+`sourceImageInformation/fileName` (the published stem) — **no
+`Processing` entries**, since no model's output is on the page — and
 `Layout/Page` with `WIDTH`/`HEIGHT` = the scan's native size,
 `PHYSICAL_IMG_NR` = the page position, `ID` as htrflow writes it
 (`_<page key>`), and an empty `PrintSpace` covering the whole page
 (`HPOS=0 VPOS=0 WIDTH HEIGHT` = the page). No `PC`: an empty page carries no
-quality claim.
+quality claim. No `ReadingOrder`.
+
+For R0001203 page 1 (scan 3494 × 2472), checked valid against the official
+ALTO 4.4 schema:
+
+```xml
+<?xml version='1.0' encoding='UTF-8'?>
+<alto xmlns="http://www.loc.gov/standards/alto/ns-v4#"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.loc.gov/standards/alto/ns-v4# http://www.loc.gov/standards/alto/v4/alto-4-4.xsd">
+  <Description>
+    <MeasurementUnit>pixel</MeasurementUnit>
+    <sourceImageInformation>
+      <fileName>R0001203_00001</fileName>
+    </sourceImageInformation>
+  </Description>
+  <Layout>
+    <Page WIDTH="3494" HEIGHT="2472" PHYSICAL_IMG_NR="1" ID="_0001">
+      <PrintSpace HPOS="0" VPOS="0" WIDTH="3494" HEIGHT="2472"/>
+    </Page>
+  </Layout>
+</alto>
+```
+
+Pages with text keep htrflow's `Description` (its `Processing` entries
+included) and get `PHYSICAL_IMG_NR` = the page position as well.
 
 ## Report
 
@@ -247,4 +270,5 @@ finished / no scores / failed), `pages`, `pages_with_text`,
 - Image size comes from each page's `info.json`, for every page.
 - One failing volume does not stop the others.
 - The aspect-ratio guard, and dropping `PC` from empty pages.
+- `PHYSICAL_IMG_NR` set to the page position on every page (htrflow writes 0).
 - `fileName` rewritten to the published stem.
