@@ -73,3 +73,8 @@ def test_a_page_already_native_comes_out_unchanged_but_named():
 def test_a_different_shape_is_refused():
     with pytest.raises(AltoMismatch):
         scale_alto(FIXTURE.read_bytes(), (2472, 3494), "X_00001", 1)  # rotated
+
+
+def test_a_malformed_alto_is_a_mismatch_not_a_parse_crash():
+    with pytest.raises(AltoMismatch, match="not well-formed"):
+        scale_alto(b"<alto", (2500, 1769), "V0000001_00002", 2)

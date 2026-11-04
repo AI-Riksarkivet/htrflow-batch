@@ -41,7 +41,10 @@ def _scale_points(points: str, sx: float, sy: float) -> str:
 
 def scale_alto(xml: bytes, native: tuple[int, int], stem: str, number: int) -> bytes:
     """Scale every coordinate to the native scan size and name the page."""
-    root = ET.fromstring(xml)
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError as exc:
+        raise AltoMismatch(f"the ALTO is not well-formed XML: {exc}") from exc
     page = root.find(f".//{_q('Page')}")
     if page is None:
         raise AltoMismatch("the ALTO has no Page")

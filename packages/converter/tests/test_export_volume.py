@@ -4,7 +4,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from htrflow_converter.export import Options, export_volume
+from htrflow_converter.export import Options, export_volume, swap_in
 from htrflow_converter.export_http import Results, SessionLost
 
 FIXTURE = (Path(__file__).parent / "fixtures/export/alto-2500.xml").read_bytes()
@@ -239,3 +239,54 @@ def _lost(handler, tmp_path):
     export_volume(
         results, client, PREFIX, VID, Options(tmp_path, 0.75, frozenset()), False
     )
+
+
+def test_a_malformed_alto_fails_its_volume(tmp_path):
+    (tmp_path / VID).mkdir()
+    (tmp_path / VID / "old.xml").write_text("old")
+    srv = Server()
+    inner = srv.__call__
+
+    def handler(request):
+        if request.url.path.endswith("/alto/0002.xml"):
+            return httpx.Response(200, content=b"<alto")
+        return inner(request)
+
+    row = run(handler, tmp_path)
+    assert row.outcome == "failed" and "0002" in row.reason
+    assert not list(tmp_path.glob(".*"))
+    assert (tmp_path / VID / "old.xml").read_text() == "old"
+
+
+def test_a_failed_swap_puts_the_old_folder_back(tmp_path, monkeypatch):
+    final = tmp_path / VID
+    final.mkdir()
+    (final / "old.xml").write_text("old")
+    built = tmp_path / ".built"
+    built.mkdir()
+    real = Path.rename
+
+    def rename(self, target):
+        if self == built:
+            raise OSError("disk says no")
+        return real(self, target)
+
+    monkeypatch.setattr(Path, "rename", rename)
+    with pytest.raises(OSError, match="disk says no"):
+        swap_in(built, final)
+    assert (final / "old.xml").read_text() == "old"
+    assert not list(tmp_path.glob(".*old-*"))
+
+
+def test_a_failed_cleanup_of_the_old_folder_keeps_the_export(tmp_path, monkeypatch):
+    (tmp_path / VID).mkdir()
+    (tmp_path / VID / "old.xml").write_text("old")
+
+    def rmtree(path, ignore_errors=False, **kw):
+        if not ignore_errors:
+            raise OSError("cannot delete")
+
+    monkeypatch.setattr("htrflow_converter.export.shutil.rmtree", rmtree)
+    assert run(Server(), tmp_path).outcome == "exported"
+    assert len(list((tmp_path / VID).glob("*.xml"))) == 3
+    assert not (tmp_path / VID / "old.xml").exists()

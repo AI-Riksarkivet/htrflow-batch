@@ -61,9 +61,14 @@ def swap_in(built: Path, final: Path) -> None:
     if final.exists():
         old = final.with_name(f".{final.name}.old-{secrets.token_hex(4)}")
         final.rename(old)
-    built.rename(final)
+    try:
+        built.rename(final)
+    except BaseException:
+        if old is not None:
+            old.rename(final)
+        raise
     if old is not None:
-        shutil.rmtree(old)
+        shutil.rmtree(old, ignore_errors=True)
 
 
 def _clear_leftovers(target: Path, volume_id: str) -> None:
