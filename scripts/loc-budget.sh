@@ -863,9 +863,16 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 5127
 # export_http.py (the results proxy login and IIIF image sizes) and
 # export_pages.py (page sets, file numbers, the quality mean), plus the
 # `export` subcommand in cli.py. 5809 -> 5820: transport errors of the results
-# host mapped to SessionLost (login) and ResultsUnavailable (a read). 5820 -> 5840: one place (Results._fail) scrubs
-# the password from every error message, and a 422 detail is never passed on.
-check converter "$(count packages/converter/src -name '*.py')" 5840
+# host mapped to SessionLost (login) and ResultsUnavailable (a read).
+# 5820 -> 5840: one place (Results._fail) scrubs the password from every
+# error message, and a 422 detail is never passed on.
+# 5840 -> 5952 (final review of export): export.py +87 -- the manifest's
+# types checked, whole image series only, an ok page without its ALTO and a
+# manifest changed under the run fail the volume, a TLS-only results URL, a
+# missing report folder refused, `would export`, the not-finished note;
+# export_alto.py +20, a missing fileName created in ALTO order; cli.py +10,
+# a closed prompt is exit 2.
+check converter "$(count packages/converter/src -name '*.py')" 5952
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
