@@ -7,10 +7,12 @@ passed, so the real folder name never carries a partial volume.
 
 from __future__ import annotations
 
+import csv
 import json
 import secrets
 import shutil
-from dataclasses import dataclass
+import sys
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -22,6 +24,7 @@ from htrflow_converter.export_http import (
     Forbidden,
     Results,
     ResultsUnavailable,
+    SessionLost,
     SizeUnreadable,
     image_size,
 )
@@ -31,8 +34,17 @@ from htrflow_converter.export_pages import (
     page_number,
     quality_mean,
 )
+from htrflow_converter.parse import ValidationError, load
 
-__all__ = ["Options", "Row", "export_volume", "swap_in"]
+__all__ = [
+    "Options",
+    "Row",
+    "check_inputs",
+    "export_volume",
+    "run_export",
+    "swap_in",
+    "write_report",
+]
 
 
 @dataclass(frozen=True)
@@ -236,3 +248,110 @@ def _build(
         pages_empty_chosen=chosen,
         **stats,
     )
+
+
+_OUTCOMES = (
+    "exported",
+    "below threshold",
+    "not finished",
+    "no scores",
+    "forbidden",
+    "failed",
+)
+
+
+def check_inputs(campaign_file: Path, target: Path, report: Path | None = None):
+    """``(campaign, config)`` for the campaign file, or the one-line reason
+    the run is refused. Nothing is asked of the network and nothing is
+    created: an unmounted share must not turn into a local folder."""
+    if not target.is_dir():
+        return f"{target} is not a directory (it is not created for you)"
+    if report is not None and report.resolve().is_relative_to(target.resolve()):
+        return f"the report {report} would be inside the target; put it elsewhere"
+    repo = campaign_file.resolve().parent.parent
+    try:
+        campaigns, _, cfg = load(
+            repo / "campaigns", repo / "pipelines", repo / "converter.yaml"
+        )
+    except ValidationError as exc:
+        return f"the campaigns repo does not validate: {exc}"
+    for campaign in campaigns:
+        if campaign.name == campaign_file.stem:
+            return campaign, cfg
+    return f"{campaign_file} is not a campaign of the repo {repo}"
+
+
+def write_report(rows: list[Row], path: Path) -> str:
+    """The CSV at ``path``; the aligned table and a summary line, returned."""
+    names = [f.name for f in fields(Row)]
+
+    def cells(row: Row) -> list[str]:
+        out = []
+        for name in names:
+            value = getattr(row, name)
+            if name == "quality_mean":
+                value = "" if value is None else round(value, 3)
+            out.append(str(value))
+        return out
+
+    body = [cells(r) for r in rows]
+    with path.open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(names)
+        writer.writerows(body)
+    widths = [max(len(h), *(len(r[i]) for r in body)) for i, h in enumerate(names)]
+    lines = [
+        "  ".join(c.ljust(w) for c, w in zip(line, widths, strict=True)).rstrip()
+        for line in [names, *body]
+    ]
+    counts = [
+        f"{sum(r.outcome == o for r in rows)} {o}"
+        for o in _OUTCOMES
+        if any(r.outcome == o for r in rows)
+    ]
+    return "\n".join([*lines, ", ".join(counts)])
+
+
+def run_export(
+    campaign_file: Path,
+    target: Path,
+    *,
+    results_url: str | None,
+    user: str,
+    password: str,
+    opts: Options,
+    report: Path,
+    dry_run: bool,
+    client: httpx.Client | None = None,
+) -> int:
+    checked = check_inputs(campaign_file, target, report)
+    if isinstance(checked, str):
+        print(checked, file=sys.stderr)
+        return 2
+    campaign, cfg = checked
+    own = client is None
+    if client is None:
+        client = httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0))
+    results = Results(results_url or cfg.results_url, user, password, client)
+    prefix = f"{cfg.namespace}/{campaign.pipeline}"
+    ids = [v.id for v in campaign.volumes]
+    rows: list[Row] = []
+    stopped = ""
+    try:
+        try:
+            results.login()
+            for volume_id in ids:
+                rows.append(
+                    export_volume(results, client, prefix, volume_id, opts, dry_run)
+                )
+        except (SessionLost, OSError) as exc:
+            stopped = f"run stopped: {exc}"
+    finally:
+        if own:
+            client.close()
+    if stopped:
+        print(stopped, file=sys.stderr)
+        rows += [Row(v, "failed", reason=stopped) for v in ids[len(rows) :]]
+    print(write_report(rows, report))
+    print(f"report: {report}")
+    return 1 if any(r.outcome == "failed" for r in rows) else 0
