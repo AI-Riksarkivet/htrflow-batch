@@ -220,7 +220,7 @@ def test_a_leftover_temp_folder_is_cleared(tmp_path):
 def test_dry_run_writes_nothing(tmp_path):
     row = run(Server(), tmp_path, dry=True)
     assert (row.outcome, row.pages_with_text, row.pages_empty_filled) == (
-        "exported",
+        "would export",
         1,
         1,
     )

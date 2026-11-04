@@ -297,3 +297,13 @@ def test_a_timeout_fails_one_volume_and_the_run_continues(repo, tmp_path):
     with (tmp_path / "r.csv").open() as f:
         rows = list(csv.DictReader(f))
     assert [r["outcome"] for r in rows] == ["exported", "failed"]
+
+
+def test_a_dry_run_says_would_export_and_writes_only_the_report(repo, tmp_path, capsys):
+    server = Server({"V0000001": manifest("V0000001", 0.9), "V0000002": None})
+    code, target = go(repo, tmp_path, server, dry_run=True)
+    assert code == 0 and list(target.iterdir()) == []
+    with (tmp_path / "r.csv").open() as f:
+        rows = list(csv.DictReader(f))
+    assert [r["outcome"] for r in rows] == ["would export", "not finished"]
+    assert "1 would export" in capsys.readouterr().out

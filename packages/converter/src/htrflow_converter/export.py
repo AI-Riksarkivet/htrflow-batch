@@ -12,7 +12,7 @@ import json
 import secrets
 import shutil
 import sys
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -237,8 +237,9 @@ def _export(
                 reason="volume changed during export",
                 **stats,
             )
-        if not dry_run:
-            swap_in(tmp, opts.target / volume_id)
+        if dry_run:
+            return replace(row, outcome="would export")
+        swap_in(tmp, opts.target / volume_id)
         return row
     finally:
         if not dry_run:
@@ -306,6 +307,7 @@ def _build(
 
 _OUTCOMES = (
     "exported",
+    "would export",
     "below threshold",
     "not finished",
     "no scores",

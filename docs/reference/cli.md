@@ -90,8 +90,9 @@ current directory, never inside the target) with the columns `volume`,
 `outcome`, `pages`, `pages_with_text`, `pages_empty_filled`,
 `pages_empty_chosen`, `quality_mean`, `quality_pages` and `reason`. The
 outcomes are `exported`, `below threshold`, `not finished`, `no scores`,
-`forbidden` and `failed`. `--dry-run` reads and checks everything and writes
-no files.
+`forbidden` and `failed`. `--dry-run` reads and checks everything, writes
+nothing to the target and still writes the report; a volume that would be
+exported is reported as `would export`.
 
 **Exit status.** `2` when the run is refused before any request: the target
 is not an existing directory (it is never created, so an unmounted share
@@ -99,8 +100,8 @@ cannot become a local folder), the repo does not validate, the file is not a
 campaign of the repo, or an option is out of range. `1` when any volume
 `failed` or was `forbidden`, or the run stopped (the session was lost or the
 target became unusable); the report then still lists every volume, the
-unfinished ones as `failed`. Otherwise `0`: every volume was `exported`,
-`below threshold`, `not finished` or had `no scores`.
+unfinished ones as `failed`. Otherwise `0`: every volume was `exported`
+(or `would export`), `below threshold`, `not finished` or had `no scores`.
 
 The design is in the campaign export spec among the
 [design specs](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/docs/superpowers/specs).
