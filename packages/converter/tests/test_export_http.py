@@ -45,7 +45,7 @@ def make(handler):
     return Results(URL, "ann", "s3cret", client), seen
 
 
-def test_login_posts_the_form_with_the_sites_origin():
+def test_login_posts_json_with_the_sites_origin():
     def handler(request):
         if request.url.path.endswith("/_login"):
             return strict_login(request)
@@ -180,3 +180,21 @@ def test_a_transport_error_on_a_get_is_results_unavailable():
     results.login()
     with pytest.raises(ResultsUnavailable, match="ReadTimeout"):
         results.get("ns/p/V1/manifest.json")
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_a_redirect_is_unavailable_and_not_followed(status):
+    def handler(request):
+        if request.url.path.endswith("/_login"):
+            return httpx.Response(204)
+        if request.url.host == "elsewhere.example":
+            return httpx.Response(200, content=b"not the bucket")
+        return httpx.Response(
+            status, headers={"location": "https://elsewhere.example/x"}
+        )
+
+    results, seen = make(handler)
+    results.login()
+    with pytest.raises(ResultsUnavailable, match=str(status)):
+        results.get("ns/p/V1/manifest.json")
+    assert all(r.url.host != "elsewhere.example" for r in seen)

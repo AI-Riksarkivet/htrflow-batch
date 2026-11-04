@@ -414,7 +414,9 @@ def run_export(
     campaign, cfg = checked
     own = client is None
     if client is None:
-        client = httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0))
+        client = httpx.Client(
+            timeout=httpx.Timeout(60.0, connect=10.0), follow_redirects=False
+        )
     results = Results(results_url or cfg.results_url, user, password, client)
     prefix = f"{cfg.namespace}/{campaign.pipeline}"
     ids = [v.id for v in campaign.volumes]

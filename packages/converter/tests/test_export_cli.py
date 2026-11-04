@@ -398,3 +398,28 @@ def test_one_finished_volume_needs_no_config_note(repo, tmp_path, capsys):
     server = Server({"V0000001": manifest("V0000001", 0.9), "V0000002": None})
     go(repo, tmp_path, server)
     assert "every volume" not in capsys.readouterr().err
+
+
+def test_the_runs_own_client_follows_no_redirect(repo, tmp_path, monkeypatch):
+    real, made = httpx.Client, []
+
+    def client(*a, **k):
+        server = Server({"V0000001": None, "V0000002": None})
+        made.append(real(*a, transport=httpx.MockTransport(server), **k))
+        return made[-1]
+
+    monkeypatch.setattr(export_mod.httpx, "Client", client)
+    target = tmp_path / "out"
+    target.mkdir()
+    code = run_export(
+        repo,
+        target,
+        results_url=None,
+        user="ann",
+        password="pw",
+        opts=Options(target, 0.75, frozenset({1})),
+        report=tmp_path / "r.csv",
+        dry_run=False,
+    )
+    assert code == 0 and len(made) == 1
+    assert made[0].follow_redirects is False
