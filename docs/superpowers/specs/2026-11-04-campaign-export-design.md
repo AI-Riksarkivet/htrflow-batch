@@ -39,8 +39,9 @@ pages (for example the cover, page 1) are published without text.
   and pages excluded by the page filter below. A volume whose average is
   below the threshold is not exported. A volume at or above it is exported
   complete.
-- **Page filter**: pages chosen by position (e.g. 1 and 2) are written as
-  empty ALTO, whatever their transcription was.
+- **Page filter**: the **first page** of every volume (by default; other
+  positions can be chosen) is written as empty ALTO, whatever its
+  transcription was.
 - **Full-resolution coordinates**: every exported ALTO is in the pixel space
   of the original scan (see "Scaling" below).
 - **Overwrite**: re-exporting replaces a volume's folder; nothing from an
@@ -112,7 +113,7 @@ A new subcommand of the existing person-facing CLI (my call):
 
 ```
 htrflow-campaigns export <campaign-file> --to <target-dir>
-    [--min-quality 0.75 | --no-quality-filter] [--empty-pages 1,2] [--dry-run]
+    [--min-quality 0.75 | --no-quality-filter] [--empty-pages 1] [--dry-run]
 ```
 
 - `<campaign-file>` is `campaigns/<name>.yaml` in the person's campaigns
@@ -124,7 +125,9 @@ htrflow-campaigns export <campaign-file> --to <target-dir>
   **skipped** and reported as such (it cannot be shown to meet the
   threshold). `--no-quality-filter` turns the filter off entirely, for a
   campaign whose pipeline has no quality step.
-- `--empty-pages` takes 1-based page positions; ranges (`1-2`) are fine.
+- `--empty-pages` defaults to `1`: the first page of every volume is
+  published empty. It takes 1-based page positions, comma-separated, and
+  ranges (`1-2`); `--empty-pages none` empties no page.
   Positions past a volume's end are ignored for that volume.
 - `--dry-run` reads everything and prints the report, writes nothing.
 - `--site <url>` is the campaign browser's address (the web front that
