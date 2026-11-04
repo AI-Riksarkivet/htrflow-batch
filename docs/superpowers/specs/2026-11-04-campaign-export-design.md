@@ -137,7 +137,7 @@ htrflow-campaigns export <campaign-file> --to <target-dir>
 - **Results are read through the results proxy**, with the same login a
   person uses in the browser — no store keys on the workstation and no
   direct route to the bucket needed. The CLI logs in with
-  `POST {results_url}/_login` (form fields `username`, `password`; the `Origin`
+  `POST {results_url}/_login` (a JSON body `{"username", "password"}`, as the browser's login page sends it; the `Origin`
   header set to the site's own origin, which the proxy requires), keeps the
   `htr_session` cookie, and reads files with `GET {results_url}/<key>`
   ([results proxy login design](2026-09-30-results-proxy-login-design.md),
