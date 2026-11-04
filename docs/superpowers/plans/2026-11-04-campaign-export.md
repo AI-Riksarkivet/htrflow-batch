@@ -22,7 +22,7 @@
 - Results are read only through the results proxy: `POST {results_url}/_login` (JSON body `{"username", "password"}`; `Origin` = the results URL's `scheme://host`), then `GET {results_url}/{namespace}/{pipeline}/{quote(volume id)}/…`. `results_url` and `namespace` come from the repo's `converter.yaml`; `--results-url` overrides. Password from a no-echo prompt or `HTRFLOW_PASSWORD`, never an argument; user from `--user` or `HTRFLOW_USER`.
 - Proxy answers: `404` on `manifest.json` = "not finished"; `403` = skipped, "your account may not read this volume"; `401` mid-run = log in again once and retry, then stop the run.
 - Report: one row per campaign volume, columns `volume, outcome, pages, pages_with_text, pages_empty_filled, pages_empty_chosen, quality_mean, quality_pages, reason`; printed as a table and written as CSV to `--report` (default `./export-<campaign>.csv`), never into the target. Outcomes: `exported`, `below threshold`, `not finished`, `no scores`, `forbidden`, `failed`.
-- Exit status non-zero iff any volume's outcome is `failed`, or the run stopped (session lost, target unusable).
+- Exit status non-zero iff any volume's outcome is `failed` or `forbidden`, or the run stopped (session lost, target unusable).
 - One new dependency at most (`httpx>=0.27`, the range the wrapper uses). No lxml, no S3 client, no htrflow.
 - Converter LOC budget (`scripts/loc-budget.sh`, currently 5085) is raised in the last task with a comment in the file's style.
 - No person's name in any doc or comment; docs say "the publishing side", not a system name.
@@ -33,7 +33,7 @@
 - **A leftover temp folder** from a crashed run (`<target>/.<id>.tmp-*`) is removed when that volume is exported again and never counted as a volume — test in Task 4.
 - **Session expiring mid-campaign** (a `401` on the 200th file) logs in once more and continues; a second `401` stops the run with a clear message — test in Task 3.
 - **Both `POINTS` spellings** ALTO allows — `"x,y x,y"` and `"x y x y"` — scale correctly and keep their spelling — test in Task 2.
-- **An `ok` page whose ALTO is gone** (`404` on `alto/<key>.xml`) is filled with an empty ALTO and counted in `pages_empty_filled`, not a crash — test in Task 4.
+- **An `ok` page whose ALTO is gone** (`404` on `alto/<key>.xml`) fails its volume ("page 0002: ALTO missing for an ok page"): the wrapper keeps an ALTO for every `ok`/`skipped` page, so a missing one means the bucket changed under the export — test in Task 4. `manifest.json` is read again before the swap; gone or different fails the volume ("volume changed during export").
 
 ---
 
@@ -264,7 +264,7 @@ git commit -m "feat(export): read results through the proxy's login and image si
   - `export_volume(results: Results, client: httpx.Client, prefix: str, volume_id: str, opts: Options, dry_run: bool) -> Row` — `prefix` is `"{namespace}/{pipeline}"`
   - `swap_in(built: Path, final: Path) -> None`
 
-Order inside `export_volume`, per the spec's "Per volume": manifest (`404` → `not finished`, `Forbidden` → `forbidden`) → quality (`no scores` / `below threshold`, with the mean in the row) → for every page: number from `page_sources` (`PageRuleError` → `failed`), size from `info.json` (`SizeUnreadable` → `failed`, the page key in `reason`) → build files into `<target>/.<id>.tmp-<random>` (a page whose number is in `empty_pages` → `empty_alto`, counted `pages_empty_chosen`; `failed` status or ALTO `404` → `empty_alto`, counted `pages_empty_filled`; otherwise `scale_alto`, counted `pages_with_text`; `AltoMismatch` → `failed`) → check the count equals `pages` and the numbers are unique → `swap_in`. On any `failed`, the temp folder is removed and the real folder is untouched. `dry_run` does everything but write and swap. Before building, remove any `<target>/.<id>.tmp-*` left by an earlier run.
+Order inside `export_volume`, per the spec's "Per volume": manifest (`404` → `not finished`, `Forbidden` → `forbidden`) → quality (`no scores` / `below threshold`, with the mean in the row) → for every page: number from `page_sources` (`PageRuleError` → `failed`; a null `source_manifest` → `failed`, "not a whole volume (images: source)"; page numbers not exactly {1..`pages`} → `failed`, naming the first missing number), size from `info.json` (`SizeUnreadable` → `failed`, the page key in `reason`) → build files into `<target>/.<id>.tmp-<random>` (a page whose number is in `empty_pages` → `empty_alto`, counted `pages_empty_chosen`; `failed` status → `empty_alto`, counted `pages_empty_filled`; an `ok`/`skipped` page's ALTO `404` → `failed`; otherwise `scale_alto`, counted `pages_with_text`; `AltoMismatch` → `failed`) → check the count equals `pages` and the numbers are unique → read `manifest.json` again (gone or different → `failed`) → `swap_in`. On any `failed`, the temp folder is removed and the real folder is untouched. `dry_run` does everything but write and swap. Before building, remove any `<target>/.<id>.tmp-*` left by an earlier run.
 
 - [ ] **Step 1: Write the failing tests** — a fake proxy + image server on one `MockTransport`, serving a three-page volume `V0000001` (page 1 ok, page 2 ok, page 3 failed; qualities 0.9, 0.8; images 5000×3538; ALTO = the Task 2 fixture), `tmp_path` as target:
 
@@ -287,7 +287,7 @@ def test_an_unreadable_size_fails_and_keeps_the_old_folder():
     # target already holds V0000001/old.xml; page 2's info.json 500s
     # → outcome "failed", reason names "0002", old.xml still there, no temp folder left
 def test_a_reexport_replaces_the_folder(): ...          # old.xml gone, three new files
-def test_an_ok_page_without_its_alto_is_filled(): ...   # ALTO 404 for page 2 → pages_empty_filled 2
+def test_an_ok_page_without_its_alto_fails_its_volume(): ...  # ALTO 404 for page 2 → failed, old folder kept
 def test_a_leftover_temp_folder_is_cleared(): ...       # .V0000001.tmp-old exists before → gone after
 def test_dry_run_writes_nothing(): ...
 ```
@@ -351,7 +351,7 @@ def test_the_report_has_one_row_per_volume_and_stays_out_of_the_target():
                               "pages_empty_chosen", "quality_mean", "quality_pages", "reason"}
     assert not list(target.glob("*.csv"))
 
-def test_exit_status():                                    # below threshold + not finished → 0; one failed → 1
+def test_exit_status():                                    # below threshold + not finished → 0; one failed or forbidden → 1
 def test_session_lost_stops_the_run_with_status_1(): ...
 def test_the_defaults_are_075_and_page_1(): ...           # parsed args: min_quality 0.75, empty_pages {1}
 def test_results_url_comes_from_converter_yaml(): ...     # the login request goes to its /_login
