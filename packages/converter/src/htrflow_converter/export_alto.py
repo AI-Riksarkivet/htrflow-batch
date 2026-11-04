@@ -72,10 +72,30 @@ def scale_alto(xml: bytes, native: tuple[int, int], stem: str, number: int) -> b
     page.set("WIDTH", str(native_w))
     page.set("HEIGHT", str(native_h))
     page.set("PHYSICAL_IMG_NR", str(number))
-    file_name = root.find(f".//{_q('sourceImageInformation')}/{_q('fileName')}")
-    if file_name is not None:
-        file_name.text = stem
+    _file_name(root).text = stem
     return _serialise(root)
+
+
+def _child(parent: ET.Element, name: str, index: int) -> ET.Element:
+    """``parent``'s ``name`` child, inserted at ``index`` if it has none."""
+    found = parent.find(_q(name))
+    if found is None:
+        found = ET.Element(_q(name))
+        parent.insert(index, found)
+    return found
+
+
+def _file_name(root: ET.Element) -> ET.Element:
+    """``Description/sourceImageInformation/fileName``, created where ALTO 4.4
+    puts each one if absent: Description first in the document, then
+    MeasurementUnit, sourceImageInformation, and fileName first in that."""
+    description = root.find(_q("Description"))
+    if description is None:
+        description = _child(root, "Description", 0)
+        _child(description, "MeasurementUnit", 0).text = "pixel"
+    after_unit = 1 if description.find(_q("MeasurementUnit")) is not None else 0
+    info = _child(description, "sourceImageInformation", after_unit)
+    return _child(info, "fileName", 0)
 
 
 def empty_alto(native: tuple[int, int], stem: str, number: int, page_key: str) -> bytes:

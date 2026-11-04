@@ -78,3 +78,41 @@ def test_a_different_shape_is_refused():
 def test_a_malformed_alto_is_a_mismatch_not_a_parse_crash():
     with pytest.raises(AltoMismatch, match="not well-formed"):
         scale_alto(b"<alto", (2500, 1769), "V0000001_00002", 2)
+
+
+def _without(path: str) -> bytes:
+    """The fixture with the element at ``path`` (from the root) removed."""
+    root = ET.fromstring(FIXTURE.read_bytes())
+    *parent_path, name = path.split("/")
+    parent = root.find("/".join(f"{{{ALTO_NS}}}{p}" for p in parent_path) or ".")
+    parent.remove(parent.find(f"{{{ALTO_NS}}}{name}"))
+    return ET.tostring(root)
+
+
+def _children(el) -> list[str]:
+    return [c.tag.split("}")[1] for c in el]
+
+
+@pytest.mark.parametrize(
+    ("removed", "description"),
+    [
+        (
+            "Description/sourceImageInformation/fileName",
+            ["MeasurementUnit", "sourceImageInformation", "Processing", "Processing"],
+        ),
+        (
+            "Description/sourceImageInformation",
+            ["MeasurementUnit", "sourceImageInformation", "Processing", "Processing"],
+        ),
+        ("Description", ["MeasurementUnit", "sourceImageInformation"]),
+    ],
+)
+def test_a_missing_file_name_is_created_in_alto_order(removed, description):
+    out = ET.fromstring(scale_alto(_without(removed), (3494, 2472), "X_00001", 1))
+    assert _children(out)[0] == "Description"
+    desc = out.find(f"{{{ALTO_NS}}}Description")
+    assert _children(desc) == description
+    assert desc.find(f"{{{ALTO_NS}}}MeasurementUnit").text == "pixel"
+    info = desc.find(f"{{{ALTO_NS}}}sourceImageInformation")
+    assert _children(info)[0] == "fileName"
+    assert info.find(f"{{{ALTO_NS}}}fileName").text == "X_00001"
