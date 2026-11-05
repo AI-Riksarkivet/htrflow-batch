@@ -1570,7 +1570,8 @@ def _export(args: argparse.Namespace) -> int:
         return 2
     source = Source(results_url, args.namespace, args.pipeline, volumes)
     report = Path(args.report) if args.report else Path(f"export-{args.pipeline}.csv")
-    refused = check_inputs(source, target, report)
+    manifests = Path(args.manifests) if args.manifests else None
+    refused = check_inputs(source, target, report, manifests)
     if refused:
         print(refused, file=sys.stderr)
         return 2
@@ -1584,7 +1585,12 @@ def _export(args: argparse.Namespace) -> int:
     except EOFError:
         print("no password: set HTRFLOW_PASSWORD", file=sys.stderr)
         return 2
-    opts = Options(target, None if args.no_quality_filter else args.min_quality, pages)
+    opts = Options(
+        target,
+        None if args.no_quality_filter else args.min_quality,
+        pages,
+        manifests=manifests,
+    )
     return run_export(
         source,
         target,
@@ -1704,6 +1710,12 @@ def main(argv: list[str] | None = None) -> int:
         "--empty-pages",
         default="1",
         help="pages (1-based, e.g. 1,3-4) published as empty ALTO; none = no page",
+    )
+    export_p.add_argument(
+        "--manifests",
+        metavar="DIR",
+        help="downloaded IIIF manifests, <volume>.json: page sizes from there, "
+        "not from the image server",
     )
     export_p.add_argument(
         "--results-url",

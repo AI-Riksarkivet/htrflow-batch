@@ -524,3 +524,47 @@ def test_the_runs_own_client_follows_no_redirect(repo, tmp_path, monkeypatch):
     )
     assert code == 0 and len(made) == 1
     assert made[0].follow_redirects is False
+
+
+def test_a_manifests_folder_that_is_not_there_is_refused(tmp_path, monkeypatch):
+    _no_prompts_and_no_client(monkeypatch)
+    (tmp_path / "t").mkdir()
+    code = main(cli(tmp_path / "t", "--manifests", str(tmp_path / "nope")))
+    assert code == 2
+
+
+def test_with_manifests_no_image_server_is_asked(tmp_path, monkeypatch):
+    server = Server({v: manifest(v, 0.9) for v in ("V0000001", "V0000002")})
+    real = httpx.Client
+    monkeypatch.setattr(
+        export_mod.httpx,
+        "Client",
+        lambda *a, **k: real(*a, transport=httpx.MockTransport(server), **k),
+    )
+    monkeypatch.setenv("HTRFLOW_USER", "ann")
+    monkeypatch.setenv("HTRFLOW_PASSWORD", "pw")
+    files = tmp_path / "manifests"
+    files.mkdir()
+    for vid in ("V0000001", "V0000002"):
+        canvases = [
+            {
+                "width": 5000,
+                "height": 3538,
+                "items": [
+                    {
+                        "items": [
+                            {"body": {"service": {"@id": f"{IMAGES}/{vid}_{n:05d}"}}}
+                        ]
+                    }
+                ],
+            }
+            for n in (1, 2)
+        ]
+        doc = {"id": f"{IMAGES}/{vid}/manifest", "items": canvases}
+        (files / f"{vid}.json").write_text(json.dumps(doc))
+    (tmp_path / "t").mkdir()
+    report = tmp_path / "r.csv"
+    code = main(cli(tmp_path / "t", "--manifests", str(files), "--report", str(report)))
+    assert code == 0
+    assert not [r for r in server.requests if r.url.path.endswith("/info.json")]
+    assert len(list((tmp_path / "t" / "V0000002").iterdir())) == 2

@@ -31,6 +31,7 @@ from htrflow_converter.export_http import (
 from htrflow_converter.export_pages import (
     PageRuleError,
     info_url,
+    manifest_sizes,
     page_number,
     quality_mean,
 )
@@ -68,6 +69,9 @@ class Options:
     target: Path
     min_quality: float | None  # None = quality filter off
     empty_pages: frozenset[int]  # published page numbers to blank
+    #: A folder of downloaded IIIF manifests, ``<volume>.json``: page sizes
+    #: come from there instead of one info.json request per page.
+    manifests: Path | None = None
 
 
 def swap_in(built: Path, final: Path) -> None:
@@ -127,11 +131,14 @@ def export_volume(
 _STATUSES = ("ok", "skipped", "failed")
 
 
-def _read_manifest(raw: bytes) -> tuple[int, dict[str, dict], dict[str, str], bool]:
-    """``(pages, results, page_sources, whole)``, each of the type the export
-    relies on; a ``ValueError`` names what is not. ``whole`` is False for a
-    volume made from an image list (``images: source``): with no source
-    manifest it may be any part of a series."""
+def _read_manifest(
+    raw: bytes,
+) -> tuple[int, dict[str, dict], dict[str, str], str | None]:
+    """``(pages, results, page_sources, source_manifest)``, each of the type
+    the export relies on; a ``ValueError`` names what is not.
+    ``source_manifest`` is None for a volume made from an image list
+    (``images: source``): with no source manifest it may be any part of a
+    series, so it is not a whole volume."""
     manifest = json.loads(raw)
     if not isinstance(manifest, dict):
         raise ValueError("not a JSON object")
@@ -147,7 +154,8 @@ def _read_manifest(raw: bytes) -> tuple[int, dict[str, dict], dict[str, str], bo
         isinstance(u, str) for u in sources.values()
     ):
         raise ValueError("page_sources is not an object of URLs")
-    return pages, entries, sources, isinstance(manifest.get("source_manifest"), str)
+    recorded = manifest.get("source_manifest")
+    return pages, entries, sources, recorded if isinstance(recorded, str) else None
 
 
 def _export(
@@ -165,12 +173,12 @@ def _export(
         manifest = _read_manifest(raw)
     except ValueError as exc:
         return Row(volume_id, "failed", reason=f"manifest unreadable: {exc}")
-    expected, entries, sources, whole = manifest
+    expected, entries, sources, recorded = manifest
 
     def failed(reason: str, **kw) -> Row:
         return Row(volume_id, "failed", pages=expected, reason=reason, **kw)
 
-    if not whole:
+    if recorded is None:
         return failed("not a whole volume (images: source)")
 
     keys = sorted(entries)
@@ -201,12 +209,19 @@ def _export(
         if mean < opts.min_quality:
             return Row(volume_id, "below threshold", pages=expected, **stats)
 
-    sizes: dict[str, tuple[int, int]] = {}
-    for key in keys:
+    if opts.manifests is not None:
         try:
-            sizes[key] = image_size(client, info_url(sources[key]))
-        except (SizeUnreadable, PageRuleError) as exc:
-            return failed(f"page {key}: {exc}", **stats)
+            pages_of = {k: sources[k] for k in keys}
+            sizes = _sizes_from_file(opts.manifests, volume_id, recorded, pages_of)
+        except PageRuleError as exc:
+            return failed(str(exc), **stats)
+    else:
+        sizes = {}
+        for key in keys:
+            try:
+                sizes[key] = image_size(client, info_url(sources[key]))
+            except (SizeUnreadable, PageRuleError) as exc:
+                return failed(f"page {key}: {exc}", **stats)
 
     tmp = opts.target / f".{volume_id}.tmp-{secrets.token_hex(4)}"
     if not dry_run:
@@ -249,6 +264,29 @@ def _export(
     finally:
         if not dry_run:
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _sizes_from_file(
+    folder: Path, volume_id: str, recorded: str, sources: dict[str, str]
+) -> dict[str, tuple[int, int]]:
+    """The page sizes in ``<folder>/<volume>.json``, the volume's IIIF
+    manifest downloaded where the image server can be reached. No fallback
+    to the image server: where it cannot be reached it would only time out."""
+    path = folder / f"{volume_id}.json"
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        raise PageRuleError(f"no manifest file {path}") from None
+    except OSError as exc:
+        raise PageRuleError(f"cannot read {path}: {exc}") from None
+    try:
+        doc = json.loads(raw)
+    except ValueError as exc:
+        raise PageRuleError(f"cannot read {path}: {exc}") from None
+    try:
+        return manifest_sizes(doc, recorded, sources)
+    except PageRuleError as exc:
+        raise PageRuleError(f"{path.name}: {exc}") from None
 
 
 def _build(
@@ -375,7 +413,10 @@ def read_volumes(listed: str | None, listing: Path | None) -> tuple[str, ...]:
 
 
 def check_inputs(
-    source: Source, target: Path, report: Path | None = None
+    source: Source,
+    target: Path,
+    report: Path | None = None,
+    manifests: Path | None = None,
 ) -> str | None:
     """The one-line reason the run is refused, or ``None``. Nothing is asked
     of the network and nothing is created: an unmounted share must not turn
@@ -390,6 +431,8 @@ def check_inputs(
         return f"the report {report} would be inside the target; put it elsewhere"
     if report is not None and not report.parent.is_dir():
         return f"the report's folder {report.parent} does not exist"
+    if manifests is not None and not manifests.is_dir():
+        return f"--manifests {manifests} is not a directory"
     url = source.results_url
     if _plain_text_url(url):
         return f"the results URL {url} is not https; the password would cross in clear"
@@ -446,7 +489,7 @@ def run_export(
     dry_run: bool,
     client: httpx.Client | None = None,
 ) -> int:
-    refused = check_inputs(source, target, report)
+    refused = check_inputs(source, target, report, opts.manifests)
     if refused:
         print(refused, file=sys.stderr)
         return 2
