@@ -22,7 +22,7 @@ pages (for example the cover, page 1) are published without text.
   <target>/<bildid>/<bildid>_<00004>.xml
   ```
 
-  The folder is the volume id from the campaign file. Campaigns that are
+  The folder is the volume id as listed for the export. Campaigns that are
   exported list their volumes by image-series id ("bildid", e.g.
   `30003043`, `R0001203`); the image server names each image
   `<bildid>_<nnnnn>`. Each file is named after **its page's own source
@@ -120,15 +120,23 @@ real volume on the dev cluster:
 A new subcommand of the existing person-facing CLI (my call):
 
 ```
-htrflow-campaigns export <campaign-file> --to <target-dir>
-    [--min-quality 0.75 | --no-quality-filter] [--empty-pages 1]
-    [--results-url URL] [--user NAME] [--report FILE] [--dry-run]
+htrflow-campaigns export --pipeline <id> --namespace <ns>
+    (--volumes ID,ID | --volumes-file FILE) --to <target-dir>
+    [--results-url URL] [--min-quality 0.75 | --no-quality-filter]
+    [--empty-pages 1] [--user NAME] [--report FILE] [--dry-run]
 ```
 
-- `<campaign-file>` is `campaigns/<name>.yaml` in the person's campaigns
-  repo checkout. Its `pipeline:` and `volumes:` say what to read; the
-  namespace (the key prefix) is `namespace:` in the same repo's
-  `converter.yaml`, as `render` reads it.
+- **What to read is named on the command line, not taken from a campaigns
+  repo** (amended 2026-11-05, the requester's call: the person exporting
+  often has no campaigns repo on the machine with the share). The key prefix
+  is `<namespace>/<pipeline>/`, and each volume id adds `<volume>/`. The
+  pipeline is the one the campaign file names; the volumes are its batches.
+  `--volumes` takes comma-separated ids and `--volumes-file` one per line
+  (blank lines and `#` comments skipped); both may be given, flag ids
+  first. No id at all, an id twice, an id that is not a volume id, a
+  namespace that is not a Kubernetes namespace or a pipeline that is not a
+  pipeline id refuses the run (exit 2) before any request. The campaign
+  name is not part of any key and is not asked for.
 - `--min-quality` defaults to **0.75**, so every export filters on quality
   unless told otherwise. A volume with no scored pages at all is
   **skipped** and reported as such (it cannot be shown to meet the
@@ -139,9 +147,10 @@ htrflow-campaigns export <campaign-file> --to <target-dir>
   ranges (`1-2`); `--empty-pages none` empties no page.
   Positions past a volume's end are ignored for that volume.
 - `--dry-run` reads everything and prints the report, writes nothing.
-- The results address is `results_url` in the same repo's `converter.yaml`
-  (required there, e.g. `https://<web front host>/results`);
-  `--results-url` overrides it.
+- The results address is `--results-url`, else `HTRFLOW_RESULTS_URL`
+  (required, e.g. `https://<web front host>/results`; it must end in
+  `/results`, as `converter.yaml`'s `results_url` must). The bucket name is
+  never asked for: the proxy serves its bucket under that address.
 - **Results are read through the results proxy**, with the same login a
   person uses in the browser — no store keys on the workstation and no
   direct route to the bucket needed. The CLI logs in with
@@ -259,8 +268,7 @@ included) and get `PHYSICAL_IMG_NR` = the page position as well.
 ## Report
 
 Printed as a table, and written as CSV to the current directory (or
-`--report <file>`), never into the target folder: one row per volume in the
-campaign file, with `volume`, `outcome` (exported / below threshold / not
+`--report <file>`), never into the target folder: one row per volume listed, with `volume`, `outcome` (exported / below threshold / not
 finished / no scores / forbidden / failed; a dry run says would export
 for exported), `pages`, `pages_with_text`,
 `pages_empty_filled` (no ALTO), `pages_empty_chosen` (`--empty-pages`),
@@ -282,7 +290,8 @@ for exported), `pages`, `pages_with_text`,
 
 ## Calls made in this design (not from the requester)
 
-- The command is `htrflow-campaigns export`, reading the campaign file.
+- The command is `htrflow-campaigns export`; it first read the campaign file,
+  and since 2026-11-05 takes the pipeline, namespace and volumes instead.
 - Results are read only through the results proxy, with the browser login.
 - File names come from each page's source image id, checked against the
   volume id.
