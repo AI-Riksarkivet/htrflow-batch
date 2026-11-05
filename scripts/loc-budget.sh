@@ -878,8 +878,11 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 5127
 # page sizes from downloaded IIIF manifests where the image server cannot
 # be reached (export_pages.manifest_sizes for P3 and P2, matched by image
 # service, with the manifest-URL, one-canvas and size checks; the file read
-# in export.py; the flag and its folder check).
-check converter "$(count packages/converter/src -name '*.py')" 6180
+# in export.py; the flag and its folder check). 6180 -> 6212: a manifest of
+# the wrong shape fails its volume instead of the run, a canvas naming its
+# image twice is one canvas, escaped service ids match, a stated image size
+# that is not a size is refused.
+check converter "$(count packages/converter/src -name '*.py')" 6212
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

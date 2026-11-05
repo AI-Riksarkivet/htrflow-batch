@@ -95,19 +95,32 @@ def _size(value: object) -> int | None:
     return value if ok else None  # type: ignore[return-value]
 
 
-def _service_ids(service: object) -> list[str]:
+def _service_ids(service: object) -> set[str]:
+    """The service ids of an image, unescaped and without a trailing slash."""
     services = service if isinstance(service, list) else [service]
-    return [
-        sid
+    return {
+        _service_key(sid)
         for s in services
         if isinstance(s, dict) and isinstance(sid := s.get("id") or s.get("@id"), str)
-    ]
+    }
 
 
-def _canvas_images(doc: dict) -> list[tuple[dict, dict]]:
-    """``(canvas, image)`` for every canvas of a Presentation 3 or 2 manifest
-    that names an image; a canvas of any other shape is passed over."""
-    found = []
+def _service_key(url: str) -> str:
+    return unquote(url).rstrip("/")
+
+
+def _list(value: object, what: str, n: int) -> list:
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(v, dict) for v in value):
+        raise PageRuleError(f"canvas {n}: {what} is not a list of objects")
+    return value
+
+
+def _canvas_images(doc: dict) -> list[tuple[dict, list[dict]]]:
+    """``(canvas, images)`` for every canvas of a Presentation 3 or 2
+    manifest. A canvas of the wrong shape is refused, never passed over:
+    the volume fails with a reason instead of the run with a traceback."""
     canvases = doc.get("items")
     if canvases is None:  # Presentation 2: sequences[0].canvases
         seqs = doc.get("sequences")
@@ -115,18 +128,25 @@ def _canvas_images(doc: dict) -> list[tuple[dict, dict]]:
         canvases = first.get("canvases") if isinstance(first, dict) else None
     if not isinstance(canvases, list):
         raise PageRuleError("the file is not an IIIF manifest (no list of canvases)")
-    for canvas in canvases:
+    found = []
+    for n, canvas in enumerate(canvases, start=1):
         if not isinstance(canvas, dict):
-            continue
-        for page in canvas.get("items") or []:  # P3: AnnotationPage -> Annotation
-            for anno in page.get("items") or [] if isinstance(page, dict) else []:
-                body = anno.get("body") if isinstance(anno, dict) else None
-                if isinstance(body, dict):
-                    found.append((canvas, body))
-        for anno in canvas.get("images") or []:  # P2
-            res = anno.get("resource") if isinstance(anno, dict) else None
-            if isinstance(res, dict):
-                found.append((canvas, res))
+            raise PageRuleError(f"canvas {n} is not an object")
+        images = []
+        for page in _list(canvas.get("items"), "items", n):  # P3
+            for anno in _list(page.get("items"), "an annotation page's items", n):
+                body = anno.get("body")
+                if body is not None and not isinstance(body, dict):
+                    raise PageRuleError(f"canvas {n}: an image is not an object")
+                if body is not None:
+                    images.append(body)
+        for anno in _list(canvas.get("images"), "images", n):  # P2
+            res = anno.get("resource")
+            if res is not None and not isinstance(res, dict):
+                raise PageRuleError(f"canvas {n}: an image is not an object")
+            if res is not None:
+                images.append(res)
+        found.append((canvas, images))
     return found
 
 
@@ -149,13 +169,19 @@ def manifest_sizes(
         raise PageRuleError(
             f"the file is the manifest {ident!r}, not the volume's {recorded_url!r}"
         )
+    # service -> [(canvas, image)], one entry per canvas: a canvas naming
+    # its image twice is still one canvas.
     by_service: dict[str, list[tuple[dict, dict]]] = {}
-    for canvas, image in _canvas_images(doc):
-        for sid in set(_service_ids(image.get("service"))):
-            by_service.setdefault(sid.rstrip("/"), []).append((canvas, image))
+    for canvas, images in _canvas_images(doc):
+        mine: dict[str, dict] = {}
+        for image in images:
+            for sid in _service_ids(image.get("service")):
+                mine.setdefault(sid, image)
+        for sid, image in mine.items():
+            by_service.setdefault(sid, []).append((canvas, image))
     sizes: dict[str, tuple[int, int]] = {}
     for key in sorted(sources):
-        hits = by_service.get(service_url(sources[key]), [])
+        hits = by_service.get(_service_key(service_url(sources[key])), [])
         if not hits:
             raise PageRuleError(f"page {key}: its image is not in the manifest")
         if len(hits) > 1:
@@ -167,7 +193,13 @@ def manifest_sizes(
                 f"page {key}: canvas size {canvas.get('width')!r}x"
                 f"{canvas.get('height')!r} is not two positive integers"
             )
-        own = (_size(image.get("width")), _size(image.get("height")))
+        stated = (image.get("width"), image.get("height"))
+        own = tuple(_size(v) for v in stated)
+        if any(v is not None and _size(v) is None for v in stated):
+            raise PageRuleError(
+                f"page {key}: the image states a size {stated[0]!r}x"
+                f"{stated[1]!r} that is not two positive integers"
+            )
         if all(own) and own != (width, height):
             raise PageRuleError(
                 f"page {key}: the image is {own[0]}x{own[1]}, "

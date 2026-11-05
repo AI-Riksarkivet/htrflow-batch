@@ -153,12 +153,43 @@ def test_a_document_that_is_not_a_manifest_is_refused(doc):
         manifest_sizes(doc, MAN, SOURCES)
 
 
-def test_junk_canvases_are_skipped_not_crashed_on():
-    doc = p3(
-        "junk",
-        {"items": "x"},
-        {"items": [{"items": [{"body": "u"}]}]},
-        p3_canvas(1),
-        p3_canvas(2),
-    )
-    assert set(manifest_sizes(doc, MAN, SOURCES)) == {"0001", "0002"}
+def test_a_body_that_is_not_an_object_is_refused():
+    doc = p3({"items": [{"items": [{"body": "u"}]}]}, p3_canvas(1), p3_canvas(2))
+    with pytest.raises(PageRuleError, match="canvas 1"):
+        manifest_sizes(doc, MAN, SOURCES)
+
+
+@pytest.mark.parametrize(
+    "canvas",
+    [
+        {"items": 5},
+        {"items": [{"items": 5}]},
+        {"images": 7},
+        {"items": [5, {"items": [7, {"body": [1]}]}]},
+    ],
+)
+def test_a_canvas_of_the_wrong_shape_is_a_refusal_not_a_crash(canvas):
+    with pytest.raises(PageRuleError):
+        manifest_sizes(p3(canvas, p3_canvas(1)), MAN, SOURCES)
+
+
+def test_one_canvas_naming_its_image_twice_is_one_canvas():
+    one = p3_canvas(1)
+    body = one["items"][0]["items"][0]["body"]
+    body["service"].append({"id": body["service"][0]["id"] + "/"})
+    one["items"][0]["items"].append({"body": body})
+    assert manifest_sizes(p3(one, p3_canvas(2)), MAN, SOURCES)["0001"] == (3574, 2543)
+
+
+def test_an_escaped_service_id_still_matches():
+    one = p3_canvas(1)
+    sid = one["items"][0]["items"][0]["body"]["service"][0]
+    sid["id"] = sid["id"].replace("!", "%21")
+    assert "0001" in manifest_sizes(p3(one, p3_canvas(2)), MAN, SOURCES)
+
+
+def test_a_stated_image_size_that_is_not_a_size_is_refused():
+    bad = p3_canvas(1)
+    bad["items"][0]["items"][0]["body"]["width"] = "3574"
+    with pytest.raises(PageRuleError, match="page 0001: the image states"):
+        manifest_sizes(p3(bad, p3_canvas(2)), MAN, SOURCES)
