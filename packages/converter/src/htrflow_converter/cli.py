@@ -19,7 +19,14 @@ from typing import TYPE_CHECKING
 import yaml
 
 from . import render
-from .export import Options, check_inputs, run_export
+from .export import (
+    Options,
+    Source,
+    VolumeListError,
+    check_inputs,
+    read_volumes,
+    run_export,
+)
 from .export_pages import PageRuleError, parse_page_set
 from .models import STATUS_SUFFIX, Campaign, parse_source_line
 from .parse import ValidationError, load
@@ -1539,7 +1546,7 @@ def _apply(
 
 
 def _export(args: argparse.Namespace) -> int:
-    campaign_file, target = Path(args.campaign_file), Path(args.to)
+    target = Path(args.to)
     if not 0 <= args.min_quality <= 1:
         print("--min-quality must be between 0 and 1", file=sys.stderr)
         return 2
@@ -1548,11 +1555,23 @@ def _export(args: argparse.Namespace) -> int:
     except PageRuleError as exc:
         print(exc, file=sys.stderr)
         return 2
-    report = (
-        Path(args.report) if args.report else Path(f"export-{campaign_file.stem}.csv")
-    )
-    refused = check_inputs(campaign_file, target, report, args.results_url)
-    if isinstance(refused, str):
+    results_url = args.results_url or os.environ.get("HTRFLOW_RESULTS_URL")
+    if not results_url:
+        print(
+            "no results URL: pass --results-url or set HTRFLOW_RESULTS_URL",
+            file=sys.stderr,
+        )
+        return 2
+    listing = Path(args.volumes_file) if args.volumes_file else None
+    try:
+        volumes = read_volumes(args.volumes, listing)
+    except VolumeListError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    source = Source(results_url, args.namespace, args.pipeline, volumes)
+    report = Path(args.report) if args.report else Path(f"export-{args.pipeline}.csv")
+    refused = check_inputs(source, target, report)
+    if refused:
         print(refused, file=sys.stderr)
         return 2
     try:
@@ -1567,9 +1586,8 @@ def _export(args: argparse.Namespace) -> int:
         return 2
     opts = Options(target, None if args.no_quality_filter else args.min_quality, pages)
     return run_export(
-        campaign_file,
+        source,
         target,
-        results_url=args.results_url,
         user=user,
         password=password,
         opts=opts,
@@ -1646,13 +1664,27 @@ def main(argv: list[str] | None = None) -> int:
     )
     export_p = sub.add_parser(
         "export",
-        help="export a finished campaign's ALTO to a publishing folder",
+        help="export finished volumes' ALTO to a publishing folder",
         description="One folder per volume, one full-resolution ALTO per "
         "image. Whole volumes only, filtered on predicted quality. Reads "
-        "through the results proxy; the password comes from "
-        "HTRFLOW_PASSWORD or a prompt, never an argument.",
+        "<results-url>/<namespace>/<pipeline>/<volume>/ through the results "
+        "proxy; the password comes from HTRFLOW_PASSWORD or a prompt, never "
+        "an argument.",
     )
-    export_p.add_argument("campaign_file")
+    export_p.add_argument(
+        "--pipeline", required=True, help="the pipeline id the volumes ran on"
+    )
+    export_p.add_argument(
+        "--namespace", required=True, help="the namespace the campaign ran in"
+    )
+    export_p.add_argument(
+        "--volumes", metavar="ID,ID", help="volume ids, comma-separated"
+    )
+    export_p.add_argument(
+        "--volumes-file",
+        metavar="FILE",
+        help="volume ids, one per line (blank lines and # comments skipped)",
+    )
     export_p.add_argument(
         "--to", required=True, metavar="DIR", help="existing target directory"
     )
@@ -1673,12 +1705,16 @@ def main(argv: list[str] | None = None) -> int:
         default="1",
         help="pages (1-based, e.g. 1,3-4) published as empty ALTO; none = no page",
     )
-    export_p.add_argument("--results-url", help="override converter.yaml's results_url")
+    export_p.add_argument(
+        "--results-url",
+        help="the site's results address, https://<host>/results "
+        "(else HTRFLOW_RESULTS_URL)",
+    )
     export_p.add_argument(
         "--user", help="results login (else HTRFLOW_USER, else asked)"
     )
     export_p.add_argument(
-        "--report", help="CSV report (default ./export-<campaign>.csv)"
+        "--report", help="CSV report (default ./export-<pipeline>.csv)"
     )
     export_p.add_argument(
         "--dry-run",

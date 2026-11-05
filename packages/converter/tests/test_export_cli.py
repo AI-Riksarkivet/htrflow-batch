@@ -1,6 +1,5 @@
 import csv
 import json
-import shutil
 from pathlib import Path
 
 import httpx
@@ -8,10 +7,19 @@ import pytest
 
 from htrflow_converter import export as export_mod
 from htrflow_converter.cli import main
-from htrflow_converter.export import Options, Row, run_export, write_report
+from htrflow_converter.export import (
+    Options,
+    Row,
+    Source,
+    VolumeListError,
+    read_volumes,
+    run_export,
+    write_report,
+)
 from htrflow_converter.export_pages import parse_page_set
 
 FIXTURES = Path(__file__).parent / "fixtures"
+URL = "https://htr.example.org/results"
 ALTO = (FIXTURES / "export/alto-2500.xml").read_bytes()
 IMAGES = "https://img.example/iiif"
 COLUMNS = [
@@ -28,15 +36,18 @@ COLUMNS = [
 
 
 @pytest.fixture
-def repo(tmp_path):
-    root = tmp_path / "repo"
-    shutil.copytree(FIXTURES / "good", root)
-    for old in (root / "campaigns").glob("*.yaml"):
-        old.unlink()
-    (root / "campaigns" / "pub.yaml").write_text(
-        "pipeline: demo-v1\nvolumes:\n  - V0000001\n  - V0000002\n"
-    )
-    return root / "campaigns" / "pub.yaml"
+def repo():
+    """The source every test reads: two volumes of demo-v1 in htr-test."""
+    return Source(URL, "htr-test", "demo-v1", ("V0000001", "V0000002"))
+
+
+def cli(target, *extra, volumes="V0000001,V0000002"):
+    """``export`` arguments for the same source, aimed at ``target``."""
+    args = ["export", "--pipeline", "demo-v1", "--namespace", "htr-test"]
+    args += ["--results-url", URL, "--to", str(target)]
+    if volumes is not None:
+        args += ["--volumes", volumes]
+    return [*args, *extra]
 
 
 def manifest(vid, quality):
@@ -85,7 +96,6 @@ def go(repo, tmp_path, server, **kw):
     target.mkdir(exist_ok=True)
     client = httpx.Client(transport=httpx.MockTransport(server))
     args = dict(
-        results_url=None,
         user="ann",
         password="pw",
         opts=Options(target, 0.75, frozenset({1})),
@@ -104,7 +114,7 @@ def test_a_missing_target_is_refused_before_any_request(repo, tmp_path, monkeypa
         "Client",
         lambda *a, **k: requests.append(1) or httpx.Client(*a, **k),
     )
-    code = main(["export", str(repo), "--to", str(tmp_path / "not-mounted")])
+    code = main(cli(str(tmp_path / "not-mounted")))
     assert code == 2 and requests == []
     assert not (tmp_path / "not-mounted").exists()
 
@@ -115,22 +125,128 @@ def test_a_missing_target_is_refused_before_any_request(repo, tmp_path, monkeypa
 )
 def test_bad_options_are_refused_with_2(repo, tmp_path, extra, capsys):
     (tmp_path / "t").mkdir()
-    code = main(["export", str(repo), "--to", str(tmp_path / "t"), *extra])
+    code = main(cli(str(tmp_path / "t"), *extra))
     assert code == 2 and capsys.readouterr().err.strip()
 
 
-def test_an_unknown_campaign_file_is_refused(repo, tmp_path):
-    other = repo.with_name("nope.yaml")
-    other.write_text(repo.read_text())
-    other.unlink()
+@pytest.mark.parametrize(
+    "flag, value, why",
+    [
+        ("--namespace", "Htr_Test", "not a Kubernetes namespace"),
+        ("--namespace", "a.b", "not a Kubernetes namespace"),
+        ("--pipeline", "../demo", "not a pipeline id"),
+        ("--pipeline", "Demo", "not a pipeline id"),
+    ],
+)
+def test_a_bad_namespace_or_pipeline_is_refused(
+    tmp_path, monkeypatch, capsys, flag, value, why
+):
+    _no_prompts_and_no_client(monkeypatch)
     (tmp_path / "t").mkdir()
-    assert main(["export", str(other), "--to", str(tmp_path / "t")]) == 2
+    args = cli(str(tmp_path / "t"))
+    args[args.index(flag) + 1] = value
+    assert main(args) == 2
+    assert why in capsys.readouterr().err
 
 
-def test_an_invalid_repo_is_refused(repo, tmp_path):
-    (repo.parent.parent / "pipelines" / "demo-v1.yaml").write_text("nonsense: [")
+def test_a_results_url_not_ending_in_results_is_refused(tmp_path, monkeypatch, capsys):
+    _no_prompts_and_no_client(monkeypatch)
     (tmp_path / "t").mkdir()
-    assert main(["export", str(repo), "--to", str(tmp_path / "t")]) == 2
+    args = cli(str(tmp_path / "t"))
+    args[args.index("--results-url") + 1] = "https://htr.example.org/bucket"
+    assert main(args) == 2
+    assert "/results" in capsys.readouterr().err
+
+
+def test_no_results_url_is_refused_and_the_env_is_read(tmp_path, monkeypatch):
+    _no_prompts_and_no_client(monkeypatch)
+    monkeypatch.delenv("HTRFLOW_RESULTS_URL", raising=False)
+    (tmp_path / "t").mkdir()
+    args = cli(str(tmp_path / "t"))
+    i = args.index("--results-url")
+    del args[i : i + 2]
+    assert main(args) == 2
+    seen = {}
+    monkeypatch.setattr(
+        "htrflow_converter.cli.run_export", lambda src, *a, **k: seen.update(src=src)
+    )
+    monkeypatch.setenv("HTRFLOW_RESULTS_URL", "https://env.example/results")
+    monkeypatch.setenv("HTRFLOW_USER", "ann")
+    monkeypatch.setenv("HTRFLOW_PASSWORD", "pw")
+    main(args)
+    assert seen["src"].results_url == "https://env.example/results"
+
+
+@pytest.mark.parametrize("volumes", [None, "", " , "])
+def test_no_volumes_is_refused(tmp_path, monkeypatch, capsys, volumes):
+    _no_prompts_and_no_client(monkeypatch)
+    (tmp_path / "t").mkdir()
+    assert main(cli(str(tmp_path / "t"), volumes=volumes)) == 2
+    assert "no volumes" in capsys.readouterr().err
+
+
+def test_read_volumes_joins_the_flag_and_the_file_in_order(tmp_path):
+    listing = tmp_path / "vols.txt"
+    listing.write_text("# batch 1\nR0000003\n\n  R0000004  # late\n")
+    assert read_volumes("R0000001, R0000002", listing) == (
+        "R0000001",
+        "R0000002",
+        "R0000003",
+        "R0000004",
+    )
+    assert read_volumes(None, listing) == ("R0000003", "R0000004")
+
+
+@pytest.mark.parametrize(
+    "listed, why",
+    [
+        ("R1,R1", "twice"),
+        ("R1,../R2", "not a volume id"),
+        ("R1,.hidden", "not a volume id"),
+        ("R1,a b", "not a volume id"),
+    ],
+)
+def test_read_volumes_refuses_duplicates_and_unsafe_ids(listed, why):
+    with pytest.raises(VolumeListError, match=why):
+        read_volumes(listed, None)
+
+
+def test_read_volumes_takes_a_windows_saved_file(tmp_path):
+    listing = tmp_path / "vols.txt"
+    listing.write_bytes("\ufeffR0000001\r\nR0000002\r\n".encode())
+    assert read_volumes(None, listing) == ("R0000001", "R0000002")
+
+
+@pytest.mark.parametrize(
+    "listed, lines", [("R0000001", "R0000001\n"), ("R0000001", "r0000001\n")]
+)
+def test_an_id_in_both_sources_or_in_two_cases_is_twice(tmp_path, listed, lines):
+    listing = tmp_path / "vols.txt"
+    listing.write_text(lines)
+    with pytest.raises(VolumeListError, match="twice"):
+        read_volumes(listed, listing)
+
+
+def test_an_unreadable_volumes_file_is_refused_with_2(tmp_path, monkeypatch, capsys):
+    _no_prompts_and_no_client(monkeypatch)
+    (tmp_path / "t").mkdir()
+    missing = str(tmp_path / "nope.txt")
+    code = main(cli(str(tmp_path / "t"), "--volumes-file", missing, volumes=None))
+    assert code == 2 and "cannot read" in capsys.readouterr().err
+
+
+def test_the_volumes_file_alone_is_enough(tmp_path, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        "htrflow_converter.cli.run_export", lambda src, *a, **k: seen.update(src=src)
+    )
+    monkeypatch.setenv("HTRFLOW_USER", "ann")
+    monkeypatch.setenv("HTRFLOW_PASSWORD", "pw")
+    (tmp_path / "t").mkdir()
+    listing = tmp_path / "vols.txt"
+    listing.write_text("V0000002\nV0000001\n")
+    main(cli(str(tmp_path / "t"), "--volumes-file", str(listing), volumes=None))
+    assert seen["src"] == Source(URL, "htr-test", "demo-v1", ("V0000002", "V0000001"))
 
 
 def test_the_report_has_one_row_per_volume_and_stays_out_of_the_target(repo, tmp_path):
@@ -153,19 +269,14 @@ def test_a_report_inside_the_target_is_refused(repo, tmp_path):
     assert code == 2 and server.requests == []
 
 
-def test_login_uses_the_url_from_converter_yaml(repo, tmp_path):
+def test_reads_namespace_pipeline_volume_under_the_results_url(repo, tmp_path):
     server = Server({"V0000001": None, "V0000002": None})
     go(repo, tmp_path, server)
     assert str(server.requests[0].url) == "https://htr.example.org/results/_login"
-    assert server.requests[1].url.path == (
-        "/results/htr-test/demo-v1/V0000001/manifest.json"
-    )
-
-
-def test_results_url_overrides_converter_yaml(repo, tmp_path):
-    server = Server({"V0000001": None, "V0000002": None})
-    go(repo, tmp_path, server, results_url="https://other.example/results")
-    assert str(server.requests[0].url) == "https://other.example/results/_login"
+    assert [r.url.path for r in server.requests[1:]] == [
+        "/results/htr-test/demo-v1/V0000001/manifest.json",
+        "/results/htr-test/demo-v1/V0000002/manifest.json",
+    ]
 
 
 def test_exit_status(repo, tmp_path):
@@ -225,7 +336,7 @@ def test_an_unusable_target_stops_the_run(repo, tmp_path, monkeypatch):
 def test_the_defaults_are_075_and_page_1(repo, tmp_path, monkeypatch):
     seen = {}
 
-    def fake(campaign_file, target, **kw):
+    def fake(source, target, **kw):
         seen.update(kw)
         return 0
 
@@ -233,27 +344,17 @@ def test_the_defaults_are_075_and_page_1(repo, tmp_path, monkeypatch):
     monkeypatch.setenv("HTRFLOW_PASSWORD", "pw")
     monkeypatch.setenv("HTRFLOW_USER", "ann")
     (tmp_path / "t").mkdir()
-    assert main(["export", str(repo), "--to", str(tmp_path / "t")]) == 0
+    assert main(cli(str(tmp_path / "t"))) == 0
     assert seen["opts"].min_quality == 0.75
     assert seen["opts"].empty_pages == parse_page_set("1") == {1}
-    assert seen["user"] == "ann" and seen["report"] == Path("export-pub.csv")
-    main(["export", str(repo), "--to", str(tmp_path / "t"), "--no-quality-filter"])
+    assert seen["user"] == "ann" and seen["report"] == Path("export-demo-v1.csv")
+    main(cli(str(tmp_path / "t"), "--no-quality-filter"))
     assert seen["opts"].min_quality is None
 
 
 def test_the_filter_options_exclude_each_other(repo, tmp_path):
     with pytest.raises(SystemExit):
-        main(
-            [
-                "export",
-                str(repo),
-                "--to",
-                "x",
-                "--no-quality-filter",
-                "--min-quality",
-                "0.5",
-            ]
-        )
+        main(cli("x", "--no-quality-filter", "--min-quality", "0.5"))
 
 
 def test_write_report_rounds_and_prints_a_summary(tmp_path):
@@ -327,9 +428,9 @@ def _no_prompts_and_no_client(monkeypatch):
 def test_a_results_url_without_tls_is_refused(repo, tmp_path, monkeypatch, capsys, url):
     _no_prompts_and_no_client(monkeypatch)
     (tmp_path / "t").mkdir()
-    code = main(
-        ["export", str(repo), "--to", str(tmp_path / "t"), "--results-url", url]
-    )
+    args = cli(str(tmp_path / "t"))
+    args[args.index("--results-url") + 1] = url
+    code = main(args)
     err = capsys.readouterr().err
     assert code == 2 and len(err.strip().splitlines()) == 1 and "https" in err
 
@@ -347,7 +448,8 @@ def test_plain_http_to_this_machine_is_allowed(repo, tmp_path, monkeypatch, url)
     monkeypatch.setenv("HTRFLOW_USER", "ann")
     monkeypatch.setenv("HTRFLOW_PASSWORD", "pw")
     (tmp_path / "t").mkdir()
-    args = ["export", str(repo), "--to", str(tmp_path / "t"), "--results-url", url]
+    args = cli(str(tmp_path / "t"))
+    args[args.index("--results-url") + 1] = url
     assert main(args) == 0
 
 
@@ -359,7 +461,7 @@ def test_no_user_at_the_prompt_is_refused_with_2(repo, tmp_path, monkeypatch, ca
 
     monkeypatch.setattr("builtins.input", eof)
     (tmp_path / "t").mkdir()
-    assert main(["export", str(repo), "--to", str(tmp_path / "t")]) == 2
+    assert main(cli(str(tmp_path / "t"))) == 2
     assert capsys.readouterr().err.strip() == (
         "no user name: pass --user or set HTRFLOW_USER"
     )
@@ -373,14 +475,14 @@ def test_no_password_at_the_prompt_is_refused_with_2(repo, tmp_path, monkeypatch
 
     monkeypatch.setattr("getpass.getpass", eof)
     (tmp_path / "t").mkdir()
-    assert main(["export", str(repo), "--to", str(tmp_path / "t"), "--user", "a"]) == 2
+    assert main(cli(str(tmp_path / "t"), "--user", "a")) == 2
 
 
 def test_a_report_in_a_missing_folder_is_refused(repo, tmp_path, monkeypatch):
     _no_prompts_and_no_client(monkeypatch)
     (tmp_path / "t").mkdir()
     report = str(tmp_path / "no-such" / "r.csv")
-    code = main(["export", str(repo), "--to", str(tmp_path / "t"), "--report", report])
+    code = main(cli(str(tmp_path / "t"), "--report", report))
     assert code == 2
     assert not (tmp_path / "no-such").exists()
 
@@ -390,7 +492,7 @@ def test_every_volume_not_finished_points_at_the_config(repo, tmp_path, capsys):
     out, err = capsys.readouterr()
     assert code == 0
     assert "every volume read as not finished" in err
-    assert "namespace" in err and "results_url" in err
+    assert all(flag in err for flag in ("--namespace", "--pipeline", "--results-url"))
     assert "report:" in out
 
 
@@ -414,7 +516,6 @@ def test_the_runs_own_client_follows_no_redirect(repo, tmp_path, monkeypatch):
     code = run_export(
         repo,
         target,
-        results_url=None,
         user="ann",
         password="pw",
         opts=Options(target, 0.75, frozenset({1})),

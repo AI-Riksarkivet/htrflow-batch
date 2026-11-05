@@ -34,13 +34,16 @@ from htrflow_converter.export_pages import (
     page_number,
     quality_mean,
 )
-from htrflow_converter.parse import ValidationError, load
+from htrflow_converter.models import _DNS_LABEL_RE, _NAME_RE, _VOLUME_ID_RE
 
 __all__ = [
     "Options",
     "Row",
+    "Source",
+    "VolumeListError",
     "check_inputs",
     "export_volume",
+    "read_volumes",
     "run_export",
     "swap_in",
     "write_report",
@@ -329,35 +332,70 @@ def _plain_text_url(url: str) -> bool:
     return not (parts.scheme == "http" and parts.hostname in _LOCAL_HOSTS)
 
 
+@dataclass(frozen=True)
+class Source:
+    """Where the results are: ``<results_url>/<namespace>/<pipeline>/<id>/``."""
+
+    results_url: str
+    namespace: str
+    pipeline: str
+    volumes: tuple[str, ...]
+
+
+class VolumeListError(ValueError):
+    """The volume list cannot be read or names a volume it may not."""
+
+
+def read_volumes(listed: str | None, listing: Path | None) -> tuple[str, ...]:
+    """The volume ids of ``--volumes a,b`` then ``--volumes-file`` (one per
+    line; blank lines, ``#`` comments and a byte-order mark skipped), in that
+    order. Refused: no id at all, an id twice (case folded: on a
+    case-insensitive share R1 and r1 are one folder), an id that is not a
+    volume id."""
+    ids = [v.strip() for v in (listed or "").split(",") if v.strip()]
+    if listing is not None:
+        try:
+            text = listing.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise VolumeListError(f"cannot read {listing}: {exc}") from None
+        for line in text.splitlines():
+            line = line.split("#", 1)[0].strip()
+            if line:
+                ids.append(line)
+    if not ids:
+        raise VolumeListError("no volumes: pass --volumes or --volumes-file")
+    seen: set[str] = set()
+    for vid in ids:
+        if not _VOLUME_ID_RE.match(vid):
+            raise VolumeListError(f"{vid!r} is not a volume id")
+        if vid.casefold() in seen:
+            raise VolumeListError(f"{vid} is listed twice")
+        seen.add(vid.casefold())
+    return tuple(ids)
+
+
 def check_inputs(
-    campaign_file: Path,
-    target: Path,
-    report: Path | None = None,
-    results_url: str | None = None,
-):
-    """``(campaign, config)`` for the campaign file, or the one-line reason
-    the run is refused. Nothing is asked of the network and nothing is
-    created: an unmounted share must not turn into a local folder."""
+    source: Source, target: Path, report: Path | None = None
+) -> str | None:
+    """The one-line reason the run is refused, or ``None``. Nothing is asked
+    of the network and nothing is created: an unmounted share must not turn
+    into a local folder."""
+    if not _DNS_LABEL_RE.match(source.namespace):
+        return f"{source.namespace!r} is not a Kubernetes namespace"
+    if not _NAME_RE.match(source.pipeline):
+        return f"{source.pipeline!r} is not a pipeline id"
     if not target.is_dir():
         return f"{target} is not a directory (it is not created for you)"
     if report is not None and report.resolve().is_relative_to(target.resolve()):
         return f"the report {report} would be inside the target; put it elsewhere"
     if report is not None and not report.parent.is_dir():
         return f"the report's folder {report.parent} does not exist"
-    repo = campaign_file.resolve().parent.parent
-    try:
-        campaigns, _, cfg = load(
-            repo / "campaigns", repo / "pipelines", repo / "converter.yaml"
-        )
-    except ValidationError as exc:
-        return f"the campaigns repo does not validate: {exc}"
-    url = results_url or cfg.results_url
+    url = source.results_url
     if _plain_text_url(url):
         return f"the results URL {url} is not https; the password would cross in clear"
-    for campaign in campaigns:
-        if campaign.name == campaign_file.stem:
-            return campaign, cfg
-    return f"{campaign_file} is not a campaign of the repo {repo}"
+    if not urlsplit(url).path.rstrip("/").endswith("/results"):
+        return f"the results URL {url} must end in /results (the site's results proxy)"
+    return None
 
 
 def write_report(rows: list[Row], path: Path) -> str:
@@ -392,16 +430,15 @@ def write_report(rows: list[Row], path: Path) -> str:
 
 
 _ALL_UNFINISHED = (
-    "every volume read as not finished: check that converter.yaml's namespace "
-    "and results_url point at the deployment that ran this campaign"
+    "every volume read as not finished: check that --namespace, --pipeline "
+    "and --results-url point at the deployment that ran these volumes"
 )
 
 
 def run_export(
-    campaign_file: Path,
+    source: Source,
     target: Path,
     *,
-    results_url: str | None,
     user: str,
     password: str,
     opts: Options,
@@ -409,19 +446,18 @@ def run_export(
     dry_run: bool,
     client: httpx.Client | None = None,
 ) -> int:
-    checked = check_inputs(campaign_file, target, report, results_url)
-    if isinstance(checked, str):
-        print(checked, file=sys.stderr)
+    refused = check_inputs(source, target, report)
+    if refused:
+        print(refused, file=sys.stderr)
         return 2
-    campaign, cfg = checked
     own = client is None
     if client is None:
         client = httpx.Client(
             timeout=httpx.Timeout(60.0, connect=10.0), follow_redirects=False
         )
-    results = Results(results_url or cfg.results_url, user, password, client)
-    prefix = f"{cfg.namespace}/{campaign.pipeline}"
-    ids = [v.id for v in campaign.volumes]
+    results = Results(source.results_url, user, password, client)
+    prefix = f"{source.namespace}/{source.pipeline}"
+    ids = source.volumes
     rows: list[Row] = []
     stopped = ""
     try:
