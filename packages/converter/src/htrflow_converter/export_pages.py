@@ -13,7 +13,14 @@ from __future__ import annotations
 import re
 from urllib.parse import unquote, urlsplit
 
-__all__ = ["PageRuleError", "info_url", "page_number", "parse_page_set", "quality_mean"]
+__all__ = [
+    "PageRuleError",
+    "info_url",
+    "manifest_sizes",
+    "page_number",
+    "parse_page_set",
+    "quality_mean",
+]
 
 # An IIIF Image API request ends in {region}/{size}/{rotation}/{quality}.{format};
 # the identifier is the path segment just before those four.
@@ -72,10 +79,102 @@ def page_number(source_url: str, volume_id: str) -> int:
     return int(m.group(1))
 
 
+def service_url(source_url: str) -> str:
+    """The image service an image request was made of: the identifier's URL."""
+    origin, segments = _split_request(source_url)
+    return f"{origin}/{'/'.join(segments[:-_REQUEST_SEGMENTS])}"
+
+
 def info_url(source_url: str) -> str:
     """The image service's ``info.json``: the identifier's URL plus ``/info.json``."""
-    origin, segments = _split_request(source_url)
-    return f"{origin}/{'/'.join(segments[:-_REQUEST_SEGMENTS])}/info.json"
+    return f"{service_url(source_url)}/info.json"
+
+
+def _size(value: object) -> int | None:
+    ok = isinstance(value, int) and not isinstance(value, bool) and value > 0
+    return value if ok else None  # type: ignore[return-value]
+
+
+def _service_ids(service: object) -> list[str]:
+    services = service if isinstance(service, list) else [service]
+    return [
+        sid
+        for s in services
+        if isinstance(s, dict) and isinstance(sid := s.get("id") or s.get("@id"), str)
+    ]
+
+
+def _canvas_images(doc: dict) -> list[tuple[dict, dict]]:
+    """``(canvas, image)`` for every canvas of a Presentation 3 or 2 manifest
+    that names an image; a canvas of any other shape is passed over."""
+    found = []
+    canvases = doc.get("items")
+    if canvases is None:  # Presentation 2: sequences[0].canvases
+        seqs = doc.get("sequences")
+        first = seqs[0] if isinstance(seqs, list) and seqs else {}
+        canvases = first.get("canvases") if isinstance(first, dict) else None
+    if not isinstance(canvases, list):
+        raise PageRuleError("the file is not an IIIF manifest (no list of canvases)")
+    for canvas in canvases:
+        if not isinstance(canvas, dict):
+            continue
+        for page in canvas.get("items") or []:  # P3: AnnotationPage -> Annotation
+            for anno in page.get("items") or [] if isinstance(page, dict) else []:
+                body = anno.get("body") if isinstance(anno, dict) else None
+                if isinstance(body, dict):
+                    found.append((canvas, body))
+        for anno in canvas.get("images") or []:  # P2
+            res = anno.get("resource") if isinstance(anno, dict) else None
+            if isinstance(res, dict):
+                found.append((canvas, res))
+    return found
+
+
+def manifest_sizes(
+    doc: object, recorded_url: str, sources: dict[str, str]
+) -> dict[str, tuple[int, int]]:
+    """Each page's full scan size, read from the volume's own IIIF manifest
+    (a downloaded copy) instead of one ``info.json`` per page.
+
+    The size is the canvas's: on the archive's manifests it is the scan's
+    native size. A page is found by its image service, the identifier its
+    ``page_sources`` request was made of. Refused rather than guessed: the
+    manifest of another volume, a page not in it or on two canvases, a canvas
+    without a size, and an image whose own size disagrees with its canvas.
+    """
+    if not isinstance(doc, dict):
+        raise PageRuleError("the file is not an IIIF manifest (not a JSON object)")
+    ident = doc.get("id") or doc.get("@id")
+    if ident != recorded_url:
+        raise PageRuleError(
+            f"the file is the manifest {ident!r}, not the volume's {recorded_url!r}"
+        )
+    by_service: dict[str, list[tuple[dict, dict]]] = {}
+    for canvas, image in _canvas_images(doc):
+        for sid in set(_service_ids(image.get("service"))):
+            by_service.setdefault(sid.rstrip("/"), []).append((canvas, image))
+    sizes: dict[str, tuple[int, int]] = {}
+    for key in sorted(sources):
+        hits = by_service.get(service_url(sources[key]), [])
+        if not hits:
+            raise PageRuleError(f"page {key}: its image is not in the manifest")
+        if len(hits) > 1:
+            raise PageRuleError(f"page {key}: its image is on two canvases")
+        canvas, image = hits[0]
+        width, height = _size(canvas.get("width")), _size(canvas.get("height"))
+        if width is None or height is None:
+            raise PageRuleError(
+                f"page {key}: canvas size {canvas.get('width')!r}x"
+                f"{canvas.get('height')!r} is not two positive integers"
+            )
+        own = (_size(image.get("width")), _size(image.get("height")))
+        if all(own) and own != (width, height):
+            raise PageRuleError(
+                f"page {key}: the image is {own[0]}x{own[1]}, "
+                f"its canvas {width}x{height}"
+            )
+        sizes[key] = (width, height)
+    return sizes
 
 
 def quality_mean(
