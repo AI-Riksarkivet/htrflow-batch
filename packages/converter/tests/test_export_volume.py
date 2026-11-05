@@ -447,3 +447,78 @@ def test_a_page_number_past_the_volume_fails_naming_it(tmp_path):
         "failed",
         "page number 4 is past the volume's 3",
     )
+
+
+# --- sizes from downloaded manifests (--manifests) --------------------------
+
+
+def iiif_manifest(sizes=((5000, 3538),) * 3, ident=f"{IMAGES}/{VID}/manifest"):
+    canvases = [
+        {
+            "width": w,
+            "height": h,
+            "items": [
+                {"items": [{"body": {"service": [{"id": f"{IMAGES}/{VID}_{n:05d}"}]}}]}
+            ],
+        }
+        for n, (w, h) in enumerate(sizes, start=1)
+    ]
+    return {"id": ident, "items": canvases}
+
+
+def run_with_files(srv, tmp_path, tmp_path_factory, doc, **kw):
+    folder = tmp_path_factory.mktemp("manifests")
+    if doc is not None:
+        text = doc if isinstance(doc, str) else json.dumps(doc)
+        (folder / f"{VID}.json").write_text(text)
+    client = httpx.Client(transport=httpx.MockTransport(srv))
+    results = Results(RESULTS, "ann", "pw", client)
+    results.login()
+    opts = Options(tmp_path, 0.75, frozenset({1}), manifests=folder)
+    return export_volume(results, client, PREFIX, VID, opts, kw.get("dry", False))
+
+
+class NoIIIF(Server):
+    def __call__(self, request):
+        assert not request.url.path.endswith("/info.json"), "IIIF was asked"
+        return super().__call__(request)
+
+
+def test_with_manifests_the_sizes_come_from_the_file_not_iiif(
+    tmp_path, tmp_path_factory
+):
+    row = run_with_files(NoIIIF(), tmp_path, tmp_path_factory, iiif_manifest())
+    assert row.outcome == "exported", row.reason
+    assert b'WIDTH="5000"' in (tmp_path / VID / "V0000001_00002.xml").read_bytes()
+    # an empty page gets its size from the file too
+    assert b'WIDTH="5000"' in (tmp_path / VID / "V0000001_00001.xml").read_bytes()
+
+
+def test_a_missing_manifest_file_fails_without_asking_iiif(tmp_path, tmp_path_factory):
+    row = run_with_files(NoIIIF(), tmp_path, tmp_path_factory, None)
+    assert row.outcome == "failed"
+    assert row.reason.startswith("no manifest file ") and row.reason.endswith(
+        f"{VID}.json"
+    )
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_an_unreadable_manifest_file_fails(tmp_path, tmp_path_factory):
+    row = run_with_files(NoIIIF(), tmp_path, tmp_path_factory, "{not json")
+    assert row.outcome == "failed" and "cannot read" in row.reason
+
+
+def test_a_manifest_file_of_another_volume_fails(tmp_path, tmp_path_factory):
+    doc = iiif_manifest(ident=f"{IMAGES}/V0000002/manifest")
+    row = run_with_files(NoIIIF(), tmp_path, tmp_path_factory, doc)
+    assert row.outcome == "failed" and "not the volume's" in row.reason
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_canvas_size_of_another_shape_fails_the_aspect_check(
+    tmp_path, tmp_path_factory
+):
+    doc = iiif_manifest(sizes=((5000, 3538), (5000, 5000), (5000, 3538)))
+    row = run_with_files(NoIIIF(), tmp_path, tmp_path_factory, doc)
+    assert row.outcome == "failed" and "0002" in row.reason
+    assert list(tmp_path.iterdir()) == []

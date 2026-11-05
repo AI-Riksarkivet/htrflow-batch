@@ -218,6 +218,17 @@ both count).
 The scan the publishing viewer shows is the image RA's IIIF server
 serves, so its `info.json` `width`/`height` is the target size.
 
+Amended 2026-11-05 (the requester's call): the results do not hold the
+scan's full size, and a workstation may not reach the image server. With
+`--manifests DIR`, each volume's IIIF manifest, downloaded elsewhere as
+`<volume id>.json`, supplies every page's size as its canvas's (on the
+archive's manifests the canvas is the scan's native size). The file must
+carry the manifest URL the volume's results recorded, every page's image
+service must sit on exactly one canvas, and an image's own stated size must
+equal its canvas's; anything else fails the volume. A missing file fails
+the volume too, with no fallback to the image server, which would only time
+out there. The aspect check below applies unchanged.
+
 Per page, `sx = native_width / ALTO WIDTH`, `sy = native_height / ALTO
 HEIGHT`. Every `HPOS`, `WIDTH` is multiplied by `sx`, every `VPOS`, `HEIGHT`
 by `sy`, and every `Polygon@POINTS` pair by `(sx, sy)`, on every element that

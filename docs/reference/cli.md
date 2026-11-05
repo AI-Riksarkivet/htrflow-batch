@@ -44,7 +44,8 @@ renders a suitable ServiceAccount behind `apply.rbac.enabled`
 htrflow-campaigns export --pipeline <id> --namespace <ns>
     (--volumes ID,ID | --volumes-file FILE) --to <dir>
     [--results-url URL] [--min-quality 0.75 | --no-quality-filter]
-    [--empty-pages 1] [--user NAME] [--report FILE] [--dry-run]
+    [--empty-pages 1] [--manifests DIR] [--user NAME] [--report FILE]
+    [--dry-run]
 ```
 
 **What it reads.** Each volume's results at
@@ -92,6 +93,17 @@ export rewrites every coordinate to the scan's full resolution, read from the
 image server. A volume whose page proportions differ from its scan's by
 more than one per cent fails instead of being published stretched.
 
+**Without the image server.** The full resolution is not in the results, so
+by default each page's size is read from the image server, one request per
+page. Where the export runs without access to the image server, download
+each volume's IIIF manifest elsewhere, save it as `<volume id>.json` in one
+folder, and pass that folder as `--manifests`. Each page's size is then its
+canvas's in that file, and the image server is never asked. A volume fails,
+with nothing written, when its file is missing or unreadable, when the
+file's own `id` is not the manifest URL the volume's results recorded, when
+a page's image is not on exactly one canvas, when a canvas has no size, or
+when an image states a size other than its canvas's.
+
 **The login.** The export reads only through the results proxy at
 `--results-url` (else `HTRFLOW_RESULTS_URL`), the site's address ending in
 `/results`, for example `https://<web front host>/results`. It logs in once with
@@ -116,15 +128,16 @@ volume that would be exported is reported as `would export`.
 
 **Exit status.** `2` when the run is refused before any request: the target
 is not an existing directory (it is never created, so an unmounted share
-cannot become a local folder), the report's folder does not exist, no volume
-is listed or the list cannot be read, an id is listed twice or is not a
-volume id, the namespace or pipeline is not a valid name, no results address
-is given or it is not `https` or does not end in `/results`, no user name or
-password could be read, or an option is out of range. `1` when any volume
-`failed` or was `forbidden`, or the run stopped (the session was lost or the
-target became unusable); the report then still lists every volume, the
-unfinished ones as `failed`. Otherwise `0`: every volume was `exported` (or
-`would export`), `below threshold`, `not finished` or had `no scores`.
+cannot become a local folder), the report's folder or the `--manifests`
+folder does not exist, no volume is listed or the list cannot be read, an id
+is listed twice or is not a volume id, the namespace or pipeline is not a
+valid name, no results address is given or it is not `https` or does not end
+in `/results`, no user name or password could be read, or an option is out
+of range. `1` when any volume `failed` or was `forbidden`, or the run
+stopped (the session was lost or the target became unusable); the report
+then still lists every volume, the unfinished ones as `failed`. Otherwise
+`0`: every volume was `exported` (or `would export`), `below threshold`,
+`not finished` or had `no scores`.
 
 The design is in the campaign export spec among the
 [design specs](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/docs/superpowers/specs).
