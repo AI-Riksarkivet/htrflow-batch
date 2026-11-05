@@ -130,20 +130,23 @@ def test_bad_options_are_refused_with_2(repo, tmp_path, extra, capsys):
 
 
 @pytest.mark.parametrize(
-    "flag, value",
+    "flag, value, why",
     [
-        ("--namespace", "Htr_Test"),
-        ("--namespace", "a.b"),
-        ("--pipeline", "../demo"),
-        ("--pipeline", "Demo"),
+        ("--namespace", "Htr_Test", "not a Kubernetes namespace"),
+        ("--namespace", "a.b", "not a Kubernetes namespace"),
+        ("--pipeline", "../demo", "not a pipeline id"),
+        ("--pipeline", "Demo", "not a pipeline id"),
     ],
 )
-def test_a_bad_namespace_or_pipeline_is_refused(tmp_path, monkeypatch, flag, value):
+def test_a_bad_namespace_or_pipeline_is_refused(
+    tmp_path, monkeypatch, capsys, flag, value, why
+):
     _no_prompts_and_no_client(monkeypatch)
     (tmp_path / "t").mkdir()
     args = cli(str(tmp_path / "t"))
     args[args.index(flag) + 1] = value
     assert main(args) == 2
+    assert why in capsys.readouterr().err
 
 
 def test_a_results_url_not_ending_in_results_is_refused(tmp_path, monkeypatch, capsys):
@@ -206,6 +209,22 @@ def test_read_volumes_joins_the_flag_and_the_file_in_order(tmp_path):
 def test_read_volumes_refuses_duplicates_and_unsafe_ids(listed, why):
     with pytest.raises(VolumeListError, match=why):
         read_volumes(listed, None)
+
+
+def test_read_volumes_takes_a_windows_saved_file(tmp_path):
+    listing = tmp_path / "vols.txt"
+    listing.write_bytes("\ufeffR0000001\r\nR0000002\r\n".encode())
+    assert read_volumes(None, listing) == ("R0000001", "R0000002")
+
+
+@pytest.mark.parametrize(
+    "listed, lines", [("R0000001", "R0000001\n"), ("R0000001", "r0000001\n")]
+)
+def test_an_id_in_both_sources_or_in_two_cases_is_twice(tmp_path, listed, lines):
+    listing = tmp_path / "vols.txt"
+    listing.write_text(lines)
+    with pytest.raises(VolumeListError, match="twice"):
+        read_volumes(listed, listing)
 
 
 def test_an_unreadable_volumes_file_is_refused_with_2(tmp_path, monkeypatch, capsys):

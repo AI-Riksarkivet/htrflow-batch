@@ -348,12 +348,14 @@ class VolumeListError(ValueError):
 
 def read_volumes(listed: str | None, listing: Path | None) -> tuple[str, ...]:
     """The volume ids of ``--volumes a,b`` then ``--volumes-file`` (one per
-    line; blank lines and ``#`` comments skipped), in that order. Refused:
-    no id at all, an id twice, an id that is not a volume id."""
+    line; blank lines, ``#`` comments and a byte-order mark skipped), in that
+    order. Refused: no id at all, an id twice (case folded: on a
+    case-insensitive share R1 and r1 are one folder), an id that is not a
+    volume id."""
     ids = [v.strip() for v in (listed or "").split(",") if v.strip()]
     if listing is not None:
         try:
-            text = listing.read_text(encoding="utf-8")
+            text = listing.read_text(encoding="utf-8-sig")
         except (OSError, UnicodeDecodeError) as exc:
             raise VolumeListError(f"cannot read {listing}: {exc}") from None
         for line in text.splitlines():
@@ -366,9 +368,9 @@ def read_volumes(listed: str | None, listing: Path | None) -> tuple[str, ...]:
     for vid in ids:
         if not _VOLUME_ID_RE.match(vid):
             raise VolumeListError(f"{vid!r} is not a volume id")
-        if vid in seen:
+        if vid.casefold() in seen:
             raise VolumeListError(f"{vid} is listed twice")
-        seen.add(vid)
+        seen.add(vid.casefold())
     return tuple(ids)
 
 
@@ -378,16 +380,16 @@ def check_inputs(
     """The one-line reason the run is refused, or ``None``. Nothing is asked
     of the network and nothing is created: an unmounted share must not turn
     into a local folder."""
+    if not _DNS_LABEL_RE.match(source.namespace):
+        return f"{source.namespace!r} is not a Kubernetes namespace"
+    if not _NAME_RE.match(source.pipeline):
+        return f"{source.pipeline!r} is not a pipeline id"
     if not target.is_dir():
         return f"{target} is not a directory (it is not created for you)"
     if report is not None and report.resolve().is_relative_to(target.resolve()):
         return f"the report {report} would be inside the target; put it elsewhere"
     if report is not None and not report.parent.is_dir():
         return f"the report's folder {report.parent} does not exist"
-    if not _DNS_LABEL_RE.match(source.namespace):
-        return f"{source.namespace!r} is not a Kubernetes namespace"
-    if not _NAME_RE.match(source.pipeline):
-        return f"{source.pipeline!r} is not a pipeline id"
     url = source.results_url
     if _plain_text_url(url):
         return f"the results URL {url} is not https; the password would cross in clear"
