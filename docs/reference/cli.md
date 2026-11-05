@@ -38,27 +38,35 @@ with server-side apply and no `kubectl`. It authenticates from
 renders a suitable ServiceAccount behind `apply.rbac.enabled`
 ([Chart Values](chart.md#apply-identity-apply)).
 
-## `export`: publishing a finished campaign
+## `export`: publishing finished volumes
 
 ```
-htrflow-campaigns export campaigns/<name>.yaml --to <dir>
-    [--min-quality 0.75 | --no-quality-filter] [--empty-pages 1]
-    [--results-url URL] [--user NAME] [--report FILE] [--dry-run]
+htrflow-campaigns export --pipeline <id> --namespace <ns>
+    (--volumes ID,ID | --volumes-file FILE) --to <dir>
+    [--results-url URL] [--min-quality 0.75 | --no-quality-filter]
+    [--empty-pages 1] [--user NAME] [--report FILE] [--dry-run]
 ```
 
-**What it writes.** For each volume of the campaign, a folder
+**What it reads.** Each volume's results at
+`<results-url>/<namespace>/<pipeline>/<volume id>/`, the same place the
+viewer reads them. No campaigns repo is needed: the pipeline is the one the
+campaign file names, and the volumes are its batches. `--volumes` takes ids
+separated by commas and `--volumes-file` one id per line, with blank lines
+and `#` comments skipped; both may be given, and the flag's ids come first.
+An id listed twice, or one that is not a volume id, refuses the run.
+
+**What it writes.** For each volume, a folder
 `<dir>/<volume id>/` holding one ALTO file per image, named
 `<volume id>_<nnnnn>.xml` after the page's own source image id, never after
 its place in the canvas order. A volume is published whole or not at all:
 it is built beside the target and renamed into place only when every page is
 there, so the real folder name never holds a partial volume, and an earlier
-export of the same volume is replaced as a whole. The campaign is the file
-named, and the repo is the directory two levels up; the repo must validate.
-Only a whole image series is published: a volume made from an `images:`
+export of the same volume is replaced as a whole. Only a whole image series is published: a volume made from an `images:`
 list, or whose image numbers are not exactly 1 to its page count, fails. So
 does a volume whose results change during the export: its `manifest.json`
 differs at the end from what was read first, or a page recorded as
-transcribed has no ALTO. Point `--to` at a folder inside the share, not at the bare mount point: an
+transcribed has no ALTO. Point `--to` at a folder inside the share, not at
+the bare mount point: an
 unmounted share leaves the mount point as an empty local directory, while a
 folder inside it is then missing and the run is refused. The files and
 folders are written with the person's own umask and ownership; the
@@ -84,8 +92,8 @@ image server. A volume whose page proportions differ from its scan's by
 more than one per cent fails instead of being published stretched.
 
 **The login.** The export reads only through the results proxy at
-`results_url` from `converter.yaml` (`--results-url` replaces it, for
-example `https://<web front host>/results`). It logs in once with
+`--results-url` (else `HTRFLOW_RESULTS_URL`), the site's address ending in
+`/results`, for example `https://<web front host>/results`. It logs in once with
 `--user` or `HTRFLOW_USER`, else a prompt, and the password from
 `HTRFLOW_PASSWORD` or a prompt without echo, never an argument. The results
 address must be `https`, except plain `http` to the workstation's own
@@ -93,26 +101,28 @@ loopback address, so the password never crosses the network in clear. A
 volume the account may not read is skipped as `forbidden`; an expired
 session is renewed once, and then the run stops.
 
-**The report.** One row per volume of the campaign is printed as a table and
-written as CSV to `--report` (default `./export-<campaign>.csv` in the
+**The report.** One row per volume listed is printed as a table and
+written as CSV to `--report` (default `./export-<pipeline>.csv` in the
 current directory, never inside the target) with the columns `volume`,
 `outcome`, `pages`, `pages_with_text`, `pages_empty_filled`,
 `pages_empty_chosen`, `quality_mean`, `quality_pages` and `reason`. The
 outcomes are `exported`, `below threshold`, `not finished`, `no scores`,
 `forbidden` and `failed`. When every volume reads as `not finished`, a note
-says to check that `converter.yaml`'s `namespace` and `results_url` point
-at the deployment that ran the campaign. `--dry-run` reads and checks
+says to check that `--namespace`, `--pipeline` and `--results-url` point
+at the deployment that ran those volumes. `--dry-run` reads and checks
 everything, writes nothing to the target and still writes the report; a
 volume that would be exported is reported as `would export`.
 
 **Exit status.** `2` when the run is refused before any request: the target
 is not an existing directory (it is never created, so an unmounted share
-cannot become a local folder), the report's folder does not exist, the repo
-does not validate, the file is not a campaign of the repo, the results
-address is not `https`, no user name or password could be read, or an
-option is out of range. `1` when any volume `failed` or was `forbidden`, or
+cannot become a local folder), the report's folder does not exist, no
+volume is listed or the list cannot be read, an id is listed twice or is not
+a volume id, the namespace or pipeline is not a valid name, no results
+address is given or it is not `https` or does not end in `/results`, no user
+name or password could be read, or an option is out of range. `1` when any volume `failed` or was `forbidden`, or
 the run stopped (the session was lost or the target became unusable); the
-report then still lists every volume, the unfinished ones as `failed`. Otherwise `0`: every volume was `exported`
+report then still lists every volume, the unfinished ones as `failed`.
+Otherwise `0`: every volume was `exported`
 (or `would export`), `below threshold`, `not finished` or had `no scores`.
 
 The design is in the campaign export spec among the
