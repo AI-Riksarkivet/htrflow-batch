@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING
 import yaml
 
 from . import render
+from .export import Options, check_inputs, run_export
+from .export_pages import PageRuleError, parse_page_set
 from .models import STATUS_SUFFIX, Campaign, parse_source_line
 from .parse import ValidationError, load
 from .record import (
@@ -1536,6 +1538,46 @@ def _apply(
             return 1
 
 
+def _export(args: argparse.Namespace) -> int:
+    campaign_file, target = Path(args.campaign_file), Path(args.to)
+    if not 0 <= args.min_quality <= 1:
+        print("--min-quality must be between 0 and 1", file=sys.stderr)
+        return 2
+    try:
+        pages = parse_page_set(args.empty_pages)
+    except PageRuleError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    report = (
+        Path(args.report) if args.report else Path(f"export-{campaign_file.stem}.csv")
+    )
+    refused = check_inputs(campaign_file, target, report, args.results_url)
+    if isinstance(refused, str):
+        print(refused, file=sys.stderr)
+        return 2
+    try:
+        user = args.user or os.environ.get("HTRFLOW_USER") or input("User: ")
+    except EOFError:
+        print("no user name: pass --user or set HTRFLOW_USER", file=sys.stderr)
+        return 2
+    try:
+        password = os.environ.get("HTRFLOW_PASSWORD") or getpass.getpass()
+    except EOFError:
+        print("no password: set HTRFLOW_PASSWORD", file=sys.stderr)
+        return 2
+    opts = Options(target, None if args.no_quality_filter else args.min_quality, pages)
+    return run_export(
+        campaign_file,
+        target,
+        results_url=args.results_url,
+        user=user,
+        password=password,
+        opts=opts,
+        report=report,
+        dry_run=args.dry_run,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="htrflow-campaigns")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1602,7 +1644,50 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="render and print what would be applied, without a cluster",
     )
+    export_p = sub.add_parser(
+        "export",
+        help="export a finished campaign's ALTO to a publishing folder",
+        description="One folder per volume, one full-resolution ALTO per "
+        "image. Whole volumes only, filtered on predicted quality. Reads "
+        "through the results proxy; the password comes from "
+        "HTRFLOW_PASSWORD or a prompt, never an argument.",
+    )
+    export_p.add_argument("campaign_file")
+    export_p.add_argument(
+        "--to", required=True, metavar="DIR", help="existing target directory"
+    )
+    quality = export_p.add_mutually_exclusive_group()
+    quality.add_argument(
+        "--min-quality",
+        type=float,
+        default=0.75,
+        help="skip volumes whose mean predicted quality is below this (0-1)",
+    )
+    quality.add_argument(
+        "--no-quality-filter",
+        action="store_true",
+        help="export every finished volume whatever its quality",
+    )
+    export_p.add_argument(
+        "--empty-pages",
+        default="1",
+        help="pages (1-based, e.g. 1,3-4) published as empty ALTO; none = no page",
+    )
+    export_p.add_argument("--results-url", help="override converter.yaml's results_url")
+    export_p.add_argument(
+        "--user", help="results login (else HTRFLOW_USER, else asked)"
+    )
+    export_p.add_argument(
+        "--report", help="CSV report (default ./export-<campaign>.csv)"
+    )
+    export_p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="check and report; write nothing to the target",
+    )
     args = parser.parse_args(argv)
+    if args.command == "export":
+        return _export(args)
     if args.command == "init":
         return _init(args.dir, args.force, args.ci)
     if args.command == "render":

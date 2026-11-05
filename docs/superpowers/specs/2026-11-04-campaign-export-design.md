@@ -32,8 +32,13 @@ pages (for example the cover, page 1) are published without text.
   fails (reported) rather than being written under guessed names. (For
   RA's manifests the number equals the canvas position, the naming the
   image cache already uses; the check is what makes that safe to rely on.)
-- **Complete volumes**: every page of the volume gets a file. A page with no
-  ALTO in the results bucket (a failed page) gets an **empty ALTO**.
+- **Complete volumes**: every page of the volume gets a file. A `failed`
+  page (which has no ALTO in the results bucket) gets an **empty ALTO**. An
+  `ok` or `skipped` page always has one; if its ALTO is missing, the bucket
+  changed under the export and the volume fails. Only a **whole image
+  series** is published: the volume came from a IIIF manifest
+  (`source_manifest` set; a volume from an `images:` list may be any part of
+  a series) and its page numbers are exactly 1 to `pages`.
 - **Quality filter (per volume)**: average the predicted quality over the
   volume's pages, leaving out pages scored exactly 0, pages with no score,
   and pages excluded by the page filter below. A volume whose average is
@@ -50,6 +55,9 @@ pages (for example the cover, page 1) are published without text.
   this run skips is left untouched on the share (it is not deleted); the
   publishing side only picks up complete volume folders.
 - A **report** at the end: one row per volume of the campaign.
+- **Exit status**: non-zero when any volume's outcome is other than
+  exported, below threshold, not finished or no scores — a `failed` or a
+  `forbidden` volume makes the run exit 1.
 
 ## Non-goals
 
@@ -137,7 +145,7 @@ htrflow-campaigns export <campaign-file> --to <target-dir>
 - **Results are read through the results proxy**, with the same login a
   person uses in the browser — no store keys on the workstation and no
   direct route to the bucket needed. The CLI logs in with
-  `POST {results_url}/_login` (form fields `username`, `password`; the `Origin`
+  `POST {results_url}/_login` (a JSON body `{"username", "password"}`, as the browser's login page sends it; the `Origin`
   header set to the site's own origin, which the proxy requires), keeps the
   `htr_session` cookie, and reads files with `GET {results_url}/<key>`
   ([results proxy login design](2026-09-30-results-proxy-login-design.md),
@@ -154,7 +162,12 @@ htrflow-campaigns export <campaign-file> --to <target-dir>
 ## Per volume
 
 1. **Read `manifest.json`.** None: skip, reported "not finished". Its
-   `pages`, `results` and `page_sources` drive everything below.
+   `pages`, `results` and `page_sources` drive everything below; a manifest
+   whose fields are not of the expected types fails the volume ("manifest
+   unreadable"). A null `source_manifest` fails it, "not a whole volume
+   (images: source)", and so does a set of page numbers (from the source
+   image ids) that is not exactly {1..`pages`}, naming the first missing
+   number (or the first one past `pages`).
 2. **Quality filter.** Compute the mean as defined in Goals. Below the
    threshold: skip, reported with the mean.
 3. **Real page sizes.** For every page (ok and failed alike) read the scan's
@@ -164,15 +177,20 @@ htrflow-campaigns export <campaign-file> --to <target-dir>
    with the page and the reason. Nothing for it is written.
 4. **Build every page** into a temporary folder beside the target
    (`<target>/.<bildid>.tmp-…`, same filesystem):
-   - a page with an ALTO and not in `--empty-pages`: the ALTO **scaled**;
-   - a page in `--empty-pages`, and a page with no ALTO: an **empty ALTO**
+   - an `ok`/`skipped` page not in `--empty-pages`: its ALTO **scaled**. A
+     `404` on that ALTO fails the volume ("page 0002: ALTO missing for an
+     ok page"): the wrapper keeps an ALTO for every such page, so a missing
+     one means a re-run is deleting the volume's pages;
+   - a page in `--empty-pages`, and a `failed` page: an **empty ALTO**
      (below), built the same way for both — nothing of the page's own
      ALTO, if it has one, is carried over.
    In every file, `sourceImageInformation/fileName` is set to the
    published file stem (`<bildid>_<00004>`).
 5. **Check** the temporary folder holds exactly `pages` files, one per
    page, with the names from the source image ids, each well-formed
-   ALTO v4.
+   ALTO v4. Then **read `manifest.json` again**: gone, or not byte-for-byte
+   what step 1 read, fails the volume ("volume changed during export") —
+   a re-run deletes the manifest before its stale pages.
 6. **Swap in**: replace `<target>/<bildid>` with the temporary folder (move
    the old one aside, rename the new one in, delete the old one). A
    directory cannot be renamed over a non-empty one, so there is a moment
@@ -181,8 +199,9 @@ htrflow-campaigns export <campaign-file> --to <target-dir>
    carries the real name.
 
 A failure in one volume is reported and the export moves on to the next;
-the exit status is non-zero if any volume failed for a reason other than
-the quality filter, "not finished", or no scores.
+the exit status is non-zero if any volume's outcome is other than exported,
+below threshold, not finished or no scores (so `failed` and `forbidden`
+both count).
 
 ## Scaling
 
@@ -242,7 +261,8 @@ included) and get `PHYSICAL_IMG_NR` = the page position as well.
 Printed as a table, and written as CSV to the current directory (or
 `--report <file>`), never into the target folder: one row per volume in the
 campaign file, with `volume`, `outcome` (exported / below threshold / not
-finished / no scores / failed), `pages`, `pages_with_text`,
+finished / no scores / forbidden / failed; a dry run says would export
+for exported), `pages`, `pages_with_text`,
 `pages_empty_filled` (no ALTO), `pages_empty_chosen` (`--empty-pages`),
 `quality_mean`, `quality_pages` (pages in the mean), and `reason`.
 

@@ -1,0 +1,45 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<alto xmlns="http://www.loc.gov/standards/alto/ns-v4#" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.loc.gov/standards/alto/ns-v4# http://www.loc.gov/standards/alto/v4/alto-4-4.xsd">
+  <Description>
+    <MeasurementUnit>pixel</MeasurementUnit>
+    <sourceImageInformation>
+      <fileName>0001</fileName>
+    </sourceImageInformation>
+    <Processing ID="htrflow_1">
+      <processingDateTime>2026-01-01T00:00:00</processingDateTime>
+      <processingStepDescription>Text recognition</processingStepDescription>
+      <processingSoftware>
+        <softwareName>htrflow</softwareName>
+      </processingSoftware>
+    </Processing>
+    <Processing ID="htrflow_2">
+      <processingDateTime>2026-01-01T00:01:00</processingDateTime>
+      <processingStepDescription>Quality prediction</processingStepDescription>
+      <processingSoftware>
+        <softwareName>htrflow</softwareName>
+      </processingSoftware>
+    </Processing>
+  </Description>
+  <ReadingOrder>
+    <OrderedGroup ID="order_1">
+      <ElementRef ID="ref_1" REF="block_1"/>
+    </OrderedGroup>
+  </ReadingOrder>
+  <Layout>
+    <Page WIDTH="2500" HEIGHT="1769" PHYSICAL_IMG_NR="0" ID="_0001" PC="0.87">
+      <PrintSpace>
+        <TextBlock ID="block_1" HPOS="100" VPOS="200" WIDTH="300" HEIGHT="50">
+          <Shape>
+            <Polygon POINTS="100,200 400,200 400,250 100,250"/>
+          </Shape>
+          <TextLine ID="line_1" HPOS="100" VPOS="200" WIDTH="300" HEIGHT="50">
+            <Shape>
+              <Polygon POINTS="100 200 400 200 400 250 100 250"/>
+            </Shape>
+            <String ID="string_1" HPOS="100" VPOS="200" WIDTH="300" HEIGHT="50" CONTENT="Lorem ipsum" WC="0.9"/>
+          </TextLine>
+        </TextBlock>
+      </PrintSpace>
+    </Page>
+  </Layout>
+</alto>
