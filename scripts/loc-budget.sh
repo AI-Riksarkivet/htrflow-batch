@@ -874,8 +874,12 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 5127
 # a closed prompt is exit 2. 5954 -> 6026: export takes --pipeline,
 # --namespace and --volumes/--volumes-file instead of a campaign file
 # (read_volumes with BOM and case-folded duplicates, Source, the
-# namespace/pipeline/results-URL checks).
-check converter "$(count packages/converter/src -name '*.py')" 6026
+# namespace/pipeline/results-URL checks). 6026 -> 6180: --manifests DIR,
+# page sizes from downloaded IIIF manifests where the image server cannot
+# be reached (export_pages.manifest_sizes for P3 and P2, matched by image
+# service, with the manifest-URL, one-canvas and size checks; the file read
+# in export.py; the flag and its folder check).
+check converter "$(count packages/converter/src -name '*.py')" 6180
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
