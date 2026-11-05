@@ -16,7 +16,7 @@ Source: [`packages/converter/src/htrflow_converter/cli.py`](https://github.com/A
 | `validate <repo> [--rendered]` | Checks `converter.yaml`, `campaigns/` and `pipelines/`, and prints one line per problem. `--rendered` also refuses unless the committed `rendered/` is exactly what this checkout renders. |
 | `render <repo> --out <dir>` | Writes the rendered objects to `<dir>`. Renders nothing at all if there is one problem. |
 | `apply <repo> [flags]` | Renders into a temporary directory (or `--out`), then applies to the cluster. See below. |
-| `export <campaign file> --to <dir> [flags]` | Writes a finished campaign's ALTO into a publishing folder, one folder per volume. See [`export`](#export-publishing-a-finished-campaign). |
+| `export --pipeline <id> --namespace <ns> --volumes <ids> --to <dir> [flags]` | Writes finished volumes' ALTO into a publishing folder, one folder per volume. See [`export`](#export-publishing-finished-volumes). |
 
 `make campaigns-apply DIR=<repo>` runs
 `uv run htrflow-campaigns apply <repo> --out <repo>/rendered --namespace
@@ -50,28 +50,29 @@ htrflow-campaigns export --pipeline <id> --namespace <ns>
 **What it reads.** Each volume's results at
 `<results-url>/<namespace>/<pipeline>/<volume id>/`, the same place the
 viewer reads them. No campaigns repo is needed: the pipeline is the one the
-campaign file names, and the volumes are its batches. `--volumes` takes ids
-separated by commas and `--volumes-file` one id per line, with blank lines
-and `#` comments skipped; both may be given, and the flag's ids come first.
-An id listed twice, or one that is not a volume id, refuses the run.
+campaign file names, and the volumes are those it lists. `--volumes` takes
+ids separated by commas and `--volumes-file` one id per line, with blank
+lines and `#` comments skipped (a UTF-8 byte-order mark too); both may be
+given, and the flag's ids come first. An id listed twice (letter case
+ignored), or one that is not a volume id, refuses the run.
 
-**What it writes.** For each volume, a folder
-`<dir>/<volume id>/` holding one ALTO file per image, named
-`<volume id>_<nnnnn>.xml` after the page's own source image id, never after
-its place in the canvas order. A volume is published whole or not at all:
-it is built beside the target and renamed into place only when every page is
-there, so the real folder name never holds a partial volume, and an earlier
-export of the same volume is replaced as a whole. Only a whole image series is published: a volume made from an `images:`
-list, or whose image numbers are not exactly 1 to its page count, fails. So
-does a volume whose results change during the export: its `manifest.json`
-differs at the end from what was read first, or a page recorded as
-transcribed has no ALTO. Point `--to` at a folder inside the share, not at
-the bare mount point: an
-unmounted share leaves the mount point as an empty local directory, while a
-folder inside it is then missing and the run is refused. The files and
-folders are written with the person's own umask and ownership; the
-publishing side must be able to read and remove them, so check the share's
-setup (group, ACLs, squash) before the first export.
+**What it writes.** For each volume, a folder `<dir>/<volume id>/` holding
+one ALTO file per image, named `<volume id>_<nnnnn>.xml` after the page's
+own source image id, never after its place in the canvas order. A volume is
+published whole or not at all: it is built beside the target and renamed
+into place only when every page is there, so the real folder name never
+holds a partial volume, and an earlier export of the same volume is replaced
+as a whole. Only a whole image series is published: a volume made from an
+`images:` list, or whose image numbers are not exactly 1 to its page count,
+fails. So does a volume whose results change during the export: its
+`manifest.json` differs at the end from what was read first, or a page
+recorded as transcribed has no ALTO. Point `--to` at a folder inside the
+share, not at the bare mount point: an unmounted share leaves the mount
+point as an empty local directory, while a folder inside it is then missing
+and the run is refused. The files and folders are written with the person's
+own umask and ownership; the publishing side must be able to read and remove
+them, so check the share's setup (group, ACLs, squash) before the first
+export.
 
 **The quality rule.** A volume is exported only if the mean predicted quality
 of its pages reaches `--min-quality` (default `0.75`). The mean counts pages
@@ -115,15 +116,15 @@ volume that would be exported is reported as `would export`.
 
 **Exit status.** `2` when the run is refused before any request: the target
 is not an existing directory (it is never created, so an unmounted share
-cannot become a local folder), the report's folder does not exist, no
-volume is listed or the list cannot be read, an id is listed twice or is not
-a volume id, the namespace or pipeline is not a valid name, no results
-address is given or it is not `https` or does not end in `/results`, no user
-name or password could be read, or an option is out of range. `1` when any volume `failed` or was `forbidden`, or
-the run stopped (the session was lost or the target became unusable); the
-report then still lists every volume, the unfinished ones as `failed`.
-Otherwise `0`: every volume was `exported`
-(or `would export`), `below threshold`, `not finished` or had `no scores`.
+cannot become a local folder), the report's folder does not exist, no volume
+is listed or the list cannot be read, an id is listed twice or is not a
+volume id, the namespace or pipeline is not a valid name, no results address
+is given or it is not `https` or does not end in `/results`, no user name or
+password could be read, or an option is out of range. `1` when any volume
+`failed` or was `forbidden`, or the run stopped (the session was lost or the
+target became unusable); the report then still lists every volume, the
+unfinished ones as `failed`. Otherwise `0`: every volume was `exported` (or
+`would export`), `below threshold`, `not finished` or had `no scores`.
 
 The design is in the campaign export spec among the
 [design specs](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/docs/superpowers/specs).
@@ -496,7 +497,7 @@ The codes are a precedence, highest first: `1` beats `3` beats `0`.
 | `3` | Some objects were refused and are unchanged, a prune could not delete some, a campaign's Job or record could not be read, or a campaign was held back for sharing a volume. Everything else was applied, and every pause holds. The summary line names each one. |
 | `0` | Everything was applied. |
 
-`export` has its own codes, set out [above](#export-publishing-a-finished-campaign):
+`export` has its own codes, set out [above](#export-publishing-finished-volumes):
 `0` when no volume failed or was forbidden, `1` when one was or the run
 stopped, `2` when it was refused before any request.
 

@@ -871,10 +871,11 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 5127
 # manifest changed under the run fail the volume, a TLS-only results URL, a
 # missing report folder refused, `would export`, the not-finished note;
 # export_alto.py +20, a missing fileName created in ALTO order; cli.py +10,
-# a closed prompt is exit 2. 5954 -> 6024: export takes --pipeline,
+# a closed prompt is exit 2. 5954 -> 6026: export takes --pipeline,
 # --namespace and --volumes/--volumes-file instead of a campaign file
-# (read_volumes, Source, the namespace/pipeline/results-URL checks).
-check converter "$(count packages/converter/src -name '*.py')" 6024
+# (read_volumes with BOM and case-folded duplicates, Source, the
+# namespace/pipeline/results-URL checks).
+check converter "$(count packages/converter/src -name '*.py')" 6026
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

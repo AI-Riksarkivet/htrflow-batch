@@ -130,10 +130,11 @@ htrflow-campaigns export --pipeline <id> --namespace <ns>
   repo** (amended 2026-11-05, the requester's call: the person exporting
   often has no campaigns repo on the machine with the share). The key prefix
   is `<namespace>/<pipeline>/`, and each volume id adds `<volume>/`. The
-  pipeline is the one the campaign file names; the volumes are its batches.
+  pipeline is the one the campaign file names; the volumes are those it lists.
   `--volumes` takes comma-separated ids and `--volumes-file` one per line
-  (blank lines and `#` comments skipped); both may be given, flag ids
-  first. No id at all, an id twice, an id that is not a volume id, a
+  (blank lines, `#` comments and a UTF-8 byte-order mark skipped); both may
+  be given, flag ids first. No id at all, an id twice (letter case ignored,
+  as on a case-insensitive share), an id that is not a volume id, a
   namespace that is not a Kubernetes namespace or a pipeline that is not a
   pipeline id refuses the run (exit 2) before any request. The campaign
   name is not part of any key and is not asked for.
