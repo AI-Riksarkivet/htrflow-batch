@@ -1712,8 +1712,8 @@ def _retry(args: argparse.Namespace) -> int:
                 return 1
         for line in _summary(args.campaign, outcomes, args.include_permanent):
             print(line)
-        take = [o for o in outcomes if o.state == "retry" or args.include_permanent]
-        take = [o for o in take if o.state != "done"]
+        wanted = ("retry", "permanent") if args.include_permanent else ("retry",)
+        take = [o for o in outcomes if o.state in wanted]
         if not take:
             if all(o.state == "done" for o in outcomes):
                 print(
