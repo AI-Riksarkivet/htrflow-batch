@@ -119,3 +119,12 @@ def test_a_403_or_5xx_stops_the_search(status, error):
     results, _ = results_for({"ns/p1/B/manifest.json": status})
     with pytest.raises(error):
         find_unfinished(results, "ns", "p1", ["A\timages:u", "B\timages:u"])
+
+
+def test_a_403_cancels_the_fetches_still_queued():
+    files = {"ns/p1/V0/manifest.json": 403}
+    results, server = results_for(files)
+    lines = [f"V{i}\timages:u" for i in range(20)]
+    with pytest.raises(Forbidden):
+        find_unfinished(results, "ns", "p1", lines, workers=1)
+    assert len(server.paths) < len(lines)
