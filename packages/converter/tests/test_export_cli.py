@@ -568,3 +568,17 @@ def test_with_manifests_no_image_server_is_asked(tmp_path, monkeypatch):
     assert code == 0
     assert not [r for r in server.requests if r.url.path.endswith("/info.json")]
     assert len(list((tmp_path / "t" / "V0000002").iterdir())) == 2
+
+
+def test_a_run_reports_each_volume_on_stderr_and_keeps_stdout_the_report(
+    repo, tmp_path, capsys
+):
+    server = Server({"V0000001": manifest("V0000001", 0.9), "V0000002": None})
+    code, _ = go(repo, tmp_path, server)
+    out, err = capsys.readouterr()
+    assert code == 0
+    lines = err.splitlines()
+    assert lines[0].startswith("[1/2] V0000001  exported  2 pages  (")
+    assert lines[1].startswith("[2/2] V0000002  not finished  (")
+    assert lines[2].startswith("2 volumes in ")
+    assert "[1/2]" not in out and out.startswith("volume")

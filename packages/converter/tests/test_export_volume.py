@@ -522,3 +522,19 @@ def test_a_canvas_size_of_another_shape_fails_the_aspect_check(
     row = run_with_files(NoIIIF(), tmp_path, tmp_path_factory, doc)
     assert row.outcome == "failed" and "0002" in row.reason
     assert list(tmp_path.iterdir()) == []
+
+
+def test_the_slow_steps_are_counted_page_by_page(tmp_path):
+    seen = []
+    client = httpx.Client(transport=httpx.MockTransport(Server()))
+    results = Results(RESULTS, "ann", "pw", client)
+    results.login()
+    opts = Options(tmp_path, 0.75, frozenset({1}))
+    row = export_volume(
+        results, client, PREFIX, VID, opts, False, lambda *a: seen.append(a)
+    )
+    assert row.outcome == "exported"
+    assert seen == [
+        *(("reading page sizes", n, 3) for n in (1, 2, 3)),
+        *(("building ALTO", n, 3) for n in (1, 2, 3)),
+    ]
