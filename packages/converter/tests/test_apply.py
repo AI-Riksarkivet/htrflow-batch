@@ -589,6 +589,43 @@ def test_prune_deletes_only_unrendered_labelled_objects(tmp_path, cluster, capsy
     assert "pruned: Job/cancelled" in capsys.readouterr().out
 
 
+def _seed_retry(cluster, *, status_labelled: bool) -> None:
+    """A retry of ``kyrk`` made in the cluster: no campaign file renders it."""
+    base = dict([CAMPAIGN_SELECTOR.split("=")])
+    retry = {**base, render.RETRY_OF_LABEL: "kyrk"}
+    status = retry if status_labelled else base
+    for kind, name, labels in (
+        ("Job", "kyrk-retry-1", retry),
+        ("ConfigMap", "campaign-kyrk-retry-1", retry),
+        ("ConfigMap", "campaign-kyrk-retry-1-status", status),
+    ):
+        cluster.live.append(
+            {"kind": kind, "metadata": {"name": name, "labels": dict(labels)}}
+        )
+
+
+_RETRY_NAMES = {"kyrk-retry-1", "campaign-kyrk-retry-1", "campaign-kyrk-retry-1-status"}
+
+
+@pytest.mark.parametrize("status_labelled", [True, False])
+def test_prune_keeps_a_retry_while_its_original_is_rendered(
+    tmp_path, cluster, status_labelled
+):
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    _seed_retry(cluster, status_labelled=status_labelled)
+    assert cli.main(["apply", str(repo), "--out", str(out), "--prune"]) == 0
+    assert cluster.of("delete") == []
+
+
+@pytest.mark.parametrize("status_labelled", [True, False])
+def test_prune_takes_a_retry_with_its_original(tmp_path, cluster, status_labelled):
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    (repo / "campaigns" / "kyrk.yaml").unlink()
+    _seed_retry(cluster, status_labelled=status_labelled)
+    assert cli.main(["apply", str(repo), "--out", str(out), "--prune"]) == 0
+    assert {n for _, _, n in cluster.of("delete")} == _RETRY_NAMES
+
+
 def test_the_workload_is_patched_only_when_active_differs(tmp_path, cluster):
     """Git is the truth about what should run: a paused campaign's Workload
     is deactivated, a running one's is re-activated (Kueue deactivates a

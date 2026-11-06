@@ -33,7 +33,7 @@ from kubernetes.client.exceptions import ApiException
 from urllib3.exceptions import HTTPError
 
 from .models import STATUS_SUFFIX
-from .render import CAMPAIGN_SELECTOR, WARMUP_PREFIX
+from .render import CAMPAIGN_SELECTOR, RETRY_OF_LABEL, WARMUP_PREFIX
 
 #: Field manager for every apply: what lets a field this tool stopped
 #: rendering be removed from a live object -- the role `kubectl`'s
@@ -695,17 +695,27 @@ class Cluster:
         caller reports what is left rather than stopping (3090).
         """
         problems: list[tuple[str, str]] = []
+        listings: dict[str, list[dict]] = {}
         for kind in _KINDS:
             try:
-                listed = self.labelled(kind)
+                listings[kind] = self.labelled(kind)
             except Unreachable:
                 raise
             except ClusterError as e:
                 problems.append((kind, str(e)))
-                continue
+        # A retry (made in the cluster, never rendered from a file) lives as
+        # long as the campaign it retries is in git, and goes with it.
+        kept = set(rendered)
+        for kind, listed in listings.items():
+            for item in listed:
+                meta = item["metadata"]
+                of = (meta.get("labels") or {}).get(RETRY_OF_LABEL)
+                if of and ("ConfigMap", f"campaign-{of}") in rendered:
+                    kept.add((kind, meta["name"]))
+        for kind, listed in listings.items():
             for item in listed:
                 name = item["metadata"]["name"]
-                if (kind, name) in rendered or self._kept_status(kind, name, rendered):
+                if (kind, name) in kept or self._kept_status(kind, name, kept):
                     continue
                 extra = {"propagation_policy": "Background"} if kind == "Job" else {}
                 try:
