@@ -589,10 +589,11 @@ def test_prune_deletes_only_unrendered_labelled_objects(tmp_path, cluster, capsy
     assert "pruned: Job/cancelled" in capsys.readouterr().out
 
 
-def _seed_retry(cluster, *, status_labelled: bool) -> None:
-    """A retry of ``kyrk`` made in the cluster: no campaign file renders it."""
+def _seed_retry(cluster, *, status_labelled: bool, of: str = "kyrk") -> None:
+    """A retry of ``of`` (a Job name) made in the cluster: no campaign file
+    renders it."""
     base = dict([CAMPAIGN_SELECTOR.split("=")])
-    retry = {**base, render.RETRY_OF_LABEL: "kyrk"}
+    retry = {**base, render.RETRY_OF_LABEL: of}
     status = retry if status_labelled else base
     for kind, name, labels in (
         ("Job", "kyrk-retry-1", retry),
@@ -623,7 +624,48 @@ def test_prune_takes_a_retry_with_its_original(tmp_path, cluster, status_labelle
     (repo / "campaigns" / "kyrk.yaml").unlink()
     _seed_retry(cluster, status_labelled=status_labelled)
     assert cli.main(["apply", str(repo), "--out", str(out), "--prune"]) == 0
-    assert {n for _, _, n in cluster.of("delete")} == _RETRY_NAMES
+    deleted = sorted(n for _, _, n in cluster.of("delete"))
+    assert deleted == sorted(_RETRY_NAMES)
+
+
+def _split_repo(tmp_path) -> Path:
+    """A repo whose ``kyrk`` campaign is cut into two ``-partN`` Jobs."""
+    repo = _repo(tmp_path)
+    ids = "".join(f"  - R1{i:06d}\n" for i in range(render.MAX_VOLUMES_PER_JOB + 1))
+    (repo / "campaigns" / "kyrk.yaml").write_text("pipeline: demo-v1\nvolumes:\n" + ids)
+    return repo
+
+
+def test_prune_keeps_a_retry_of_a_split_campaigns_part(tmp_path, cluster):
+    """Only the part that was retried names the retry, but the campaign file
+    that renders every part is what keeps it."""
+    repo, out = _split_repo(tmp_path), tmp_path / "rendered"
+    _seed_retry(cluster, status_labelled=False, of="kyrk-part2")
+    assert cli.main(["apply", str(repo), "--out", str(out), "--prune"]) == 0
+    assert cluster.of("delete") == []
+
+
+def test_prune_takes_a_retry_of_a_split_campaign_with_every_part(tmp_path, cluster):
+    repo, out = _split_repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    cluster.live = [
+        _object(kind, name)
+        for kind, name in (
+            ("Job", "kyrk-part1"),
+            ("Job", "kyrk-part2"),
+            ("ConfigMap", "campaign-kyrk-part1"),
+            ("ConfigMap", "campaign-kyrk-part2"),
+        )
+    ]
+    _seed_retry(cluster, status_labelled=False, of="kyrk-part2")
+    cluster.calls.clear()
+    (repo / "campaigns" / "kyrk.yaml").unlink()
+    assert cli.main(["apply", str(repo), "--out", str(out), "--prune"]) == 0
+    deleted = sorted(n for _, _, n in cluster.of("delete"))
+    assert deleted == sorted(
+        _RETRY_NAMES
+        | {"kyrk-part1", "kyrk-part2", "campaign-kyrk-part1", "campaign-kyrk-part2"}
+    )
 
 
 def test_the_workload_is_patched_only_when_active_differs(tmp_path, cluster):

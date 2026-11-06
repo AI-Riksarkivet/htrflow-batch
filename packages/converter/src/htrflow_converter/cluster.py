@@ -688,6 +688,10 @@ class Cluster:
         """Delete every labelled Job/ConfigMap not in ``rendered``; return
         ``(what, sentence)`` for each object (or kind) it could not.
 
+        A retry made in the cluster (``RETRY_OF_LABEL``) is no campaign
+        file's output, yet is kept while the campaign ConfigMap of the Job it
+        retries is rendered, and pruned when that campaign leaves git.
+
         ``rendered`` is ``(kind, name)`` for **all** rendered objects,
         pipelines included: pruning against the campaigns alone would delete
         the pipeline ConfigMaps and warm-up Jobs the same apply just wrote.
@@ -737,14 +741,15 @@ class Cluster:
         return problems
 
     @staticmethod
-    def _kept_status(kind: str, name: str, rendered: set[tuple[str, str]]) -> bool:
+    def _kept_status(kind: str, name: str, kept: set[tuple[str, str]]) -> bool:
         """A campaign's status ConfigMap (B76) is written by the read API
         and never rendered, so a prune would delete it on sight. It belongs
         to the campaign ConfigMap it is named after: kept while that one is
-        rendered, pruned with it when the campaign file leaves git."""
+        kept (rendered, or a retry kept with its original), pruned with it
+        when the campaign leaves git."""
         if kind != "ConfigMap" or not name.endswith(STATUS_SUFFIX):
             return False
-        return (kind, name.removesuffix(STATUS_SUFFIX)) in rendered
+        return (kind, name.removesuffix(STATUS_SUFFIX)) in kept
 
     def _workload(self, uid: str) -> dict | None:
         """The Kueue Workload of the Job with ``uid``. Kueue labels it with
