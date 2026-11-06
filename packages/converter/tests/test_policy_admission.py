@@ -1411,6 +1411,46 @@ def test_a_campaign_or_pipeline_configmap_holds_only_the_converters_keys(
         assert "ConfigMap holds only the keys the converter writes" in out
 
 
+def _retry_pair(converter_configmaps: list[dict]) -> tuple[dict, dict]:
+    """The ConfigMap and Job ``htrflow-campaigns retry`` would start for the
+    good fixture's ``kyrk``, one volume left out as a permanent failure."""
+    from htrflow_converter import render
+    from htrflow_converter.retry import Original, retry_objects
+
+    record = next(
+        c for c in converter_configmaps if c["metadata"]["name"] == "campaign-kyrk"
+    )
+    batch, _ = converter_jobs()
+    lines = record["data"]["volumes.txt"].splitlines()
+    original = Original(
+        root="kyrk",
+        parts=["kyrk"],
+        pipeline=record["metadata"]["labels"][render._PIPELINE_LABEL],
+        digest=record["metadata"]["annotations"][render._DIGEST_ANNOTATION],
+        lines=lines,
+        source_job=batch,
+        record_labels=record["metadata"]["labels"],
+    )
+    prov = {"htrflow.riksarkivet.se/applied-by": "operator"}
+    skipped = [lines[0].partition("\t")[0]]
+    cm, job = retry_objects(original, "kyrk-retry-1", lines[1:], skipped, prov)
+    return cm, job
+
+
+def test_a_retry_is_admitted(
+    tmp_path: Path, job_shape: Path, converter_configmaps: list[dict]
+):
+    """A retry is created by an operator's own kubectl identity, not by the
+    apply's, and is held to the same shape as what the converter renders:
+    its record keeps the skipped volumes in annotations, which the pod does
+    not see, never in a data key beside volumes.txt."""
+    cm, job = _retry_pair(converter_configmaps)
+    for obj in (cm, job):
+        for user in (APPLY_SA, "kubernetes-admin"):
+            verdict, out = admission(tmp_path, job_shape, obj, user=user)
+            assert verdict == "admitted", out
+
+
 def test_other_configmaps_are_not_held_to_those_keys(tmp_path: Path, job_shape: Path):
     for name in ("campaign-kyrk-status", "team-settings", "htrflow-campaigns-render"):
         verdict, out = admission(

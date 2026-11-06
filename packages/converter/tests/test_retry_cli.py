@@ -102,11 +102,10 @@ def test_retry_starts_the_job_and_leaves_the_original_alone(
     assert "started: Job/kyrk-retry-1 with 2 volumes" in capsys.readouterr().out
     assert snapshot(cluster, OBJECTS) == before
     cm = cluster.find("ConfigMap", "campaign-kyrk-retry-1")
-    assert cm["data"] == {
-        "volumes.txt": "x2\timages:u\nx4\timages:u\n",
-        "skipped.txt": "x3\n",
-    }
+    assert cm["data"] == {"volumes.txt": "x2\timages:u\nx4\timages:u\n"}
     ann = cm["metadata"]["annotations"]
+    assert ann["htrflow.riksarkivet.se/retry-skipped"] == "x3"
+    assert ann["htrflow.riksarkivet.se/retry-skipped-count"] == "1"
     assert ann["htrflow.riksarkivet.se/applied-at"].endswith("Z")
     assert "htrflow.riksarkivet.se/applied-by" in ann
     assert not any("commit" in k for k in ann)
@@ -120,7 +119,8 @@ def test_include_permanent_takes_them_too(tmp_path, cluster, monkeypatch, capsys
     assert "started: Job/kyrk-retry-1 with 3 volumes" in capsys.readouterr().out
     cm = cluster.find("ConfigMap", "campaign-kyrk-retry-1")
     assert cm["data"]["volumes.txt"].count("\n") == 3
-    assert cm["data"]["skipped.txt"] == ""
+    assert set(cm["data"]) == {"volumes.txt"}
+    assert "htrflow.riksarkivet.se/retry-skipped" not in cm["metadata"]["annotations"]
 
 
 def test_nothing_to_retry_exits_0_and_creates_nothing(

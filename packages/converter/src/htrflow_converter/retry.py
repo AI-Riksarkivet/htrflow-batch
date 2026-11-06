@@ -371,6 +371,36 @@ def _named(root: str, n: int) -> str:
     return f"{root[: render._SPLIT_STEM - len(suffix)]}{suffix}"
 
 
+#: On a retry's first ConfigMap, the volumes it left out (permanent
+#: failures), one id per line, and how many there were. Annotations, not a
+#: ``data`` key: annotations are not mounted into the pod.
+SKIPPED_ANNOTATION = "htrflow.riksarkivet.se/retry-skipped"
+SKIPPED_COUNT_ANNOTATION = "htrflow.riksarkivet.se/retry-skipped-count"
+#: Bytes the skipped list may take. The API server refuses an object whose
+#: annotations together pass 256 KiB, and the ``job-spec`` stamp beside this
+#: one is a whole Job; the count annotation keeps the full number.
+SKIPPED_MAX_BYTES = 64 * 1024
+
+
+def _skipped_value(skipped: list[str]) -> str:
+    """``skipped`` one per line, cut to ``SKIPPED_MAX_BYTES`` with a last
+    line saying how many more there were."""
+    text = "\n".join(skipped)
+    if len(text.encode()) <= SKIPPED_MAX_BYTES:
+        return text
+    # Room for the widest tail this list can need.
+    budget = SKIPPED_MAX_BYTES - len(f"\n… and {len(skipped)} more".encode())
+    kept: list[str] = []
+    used = 0
+    for vid in skipped:
+        size = len(vid.encode()) + (1 if kept else 0)
+        if used + size > budget:
+            break
+        kept.append(vid)
+        used += size
+    return "\n".join([*kept, f"… and {len(skipped) - len(kept)} more"])
+
+
 def _split(lines: list[str]) -> list[list[str]]:
     """``render.split``'s cut, by its own budgets, over lines as they stand:
     rebuilding ``Volume``s from them could re-spell a line the original
@@ -429,9 +459,16 @@ def retry_objects(
         labels = dict(original.record_labels)
         labels[render.CAMPAIGN_LABEL] = campaign
         labels[render.RETRY_OF_LABEL] = original.root
-        data = {"volumes.txt": "".join(f"{line}\n" for line in chunk)}
-        if i == 0:  # the record of what was left out, once per retry
-            data["skipped.txt"] = "".join(f"{vid}\n" for vid in skipped)
+        annotations = {
+            render._DIGEST_ANNOTATION: original.digest,
+            **prov,
+            render.JOB_SPEC_ANNOTATION: json.dumps(
+                job, sort_keys=True, separators=(",", ":")
+            ),
+        }
+        if i == 0 and skipped:  # the record of what was left out, once
+            annotations[SKIPPED_ANNOTATION] = _skipped_value(skipped)
+            annotations[SKIPPED_COUNT_ANNOTATION] = str(len(skipped))
         cm = {
             "apiVersion": "v1",
             "kind": "ConfigMap",
@@ -439,15 +476,12 @@ def retry_objects(
                 "name": f"campaign-{part}",
                 "namespace": namespace,
                 "labels": labels,
-                "annotations": {
-                    render._DIGEST_ANNOTATION: original.digest,
-                    **prov,
-                    render.JOB_SPEC_ANNOTATION: json.dumps(
-                        job, sort_keys=True, separators=(",", ":")
-                    ),
-                },
+                "annotations": annotations,
             },
-            "data": data,
+            # Only ``volumes.txt``: the Job mounts this ConfigMap whole, so
+            # any other key is a file in the pod, and the chart's
+            # ``campaign-configmap-keys`` policy refuses it.
+            "data": {"volumes.txt": "".join(f"{line}\n" for line in chunk)},
         }
         objects += [cm, job]
     return objects

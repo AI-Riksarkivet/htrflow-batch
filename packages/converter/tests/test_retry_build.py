@@ -23,6 +23,9 @@ from htrflow_converter.render import (
     RETRY_OF_LABEL,
 )
 from htrflow_converter.retry import (
+    SKIPPED_ANNOTATION,
+    SKIPPED_COUNT_ANNOTATION,
+    SKIPPED_MAX_BYTES,
     load_original,
     next_name,
     refusal,
@@ -192,10 +195,7 @@ def test_retry_objects(tmp_path, cluster):
     cm, job = retry_objects(o, "kyrk-retry-1", lines, ["C"], PROV)
     assert cm["kind"] == "ConfigMap" and job["kind"] == "Job"
     assert cm["metadata"]["name"] == "campaign-kyrk-retry-1"
-    assert cm["data"] == {
-        "volumes.txt": "B\timages:u\nD\timages:u\n",
-        "skipped.txt": "C\n",
-    }
+    assert cm["data"] == {"volumes.txt": "B\timages:u\nD\timages:u\n"}
     assert job["metadata"]["name"] == "kyrk-retry-1"
     assert job["spec"]["completions"] == job["spec"]["maxFailedIndexes"] == 2
     assert job["spec"]["parallelism"] == min(o.source_job["spec"]["parallelism"], 2)
@@ -212,6 +212,7 @@ def test_retry_objects(tmp_path, cluster):
     assert ann[_DIGEST_ANNOTATION] == o.digest
     assert PROV.items() <= ann.items()
     assert json.loads(ann[JOB_SPEC_ANNOTATION]) == job
+    assert ann[SKIPPED_ANNOTATION] == "C" and ann[SKIPPED_COUNT_ANNOTATION] == "1"
     assert o.source_job == load_original(cluster, "kyrk").source_job, "not mutated"
 
 
@@ -450,3 +451,32 @@ def test_retry_objects_refuses_no_lines(tmp_path, cluster):
     _applied(tmp_path, cluster)
     with pytest.raises(ValueError):
         retry_objects(load_original(cluster, "kyrk"), "kyrk-retry-1", [], [], PROV)
+
+
+def test_retry_objects_without_skipped_volumes_records_none(tmp_path, cluster):
+    _applied(tmp_path, cluster)
+    cm, _ = retry_objects(load_original(cluster, "kyrk"), "r", ["B\tx"], [], PROV)
+    assert SKIPPED_ANNOTATION not in cm["metadata"]["annotations"]
+    assert SKIPPED_COUNT_ANNOTATION not in cm["metadata"]["annotations"]
+
+
+def test_the_skipped_record_is_capped_and_counts_them_all(
+    tmp_path, cluster, monkeypatch
+):
+    """The API server refuses an object whose annotations pass 256 KiB in
+    all, and the job-spec stamp is beside this one."""
+    _applied(tmp_path, cluster)
+    monkeypatch.setattr(render, "MAX_VOLUMES_PER_JOB", 2)
+    o = load_original(cluster, "kyrk")
+    skipped = [f"R{i:07d}" for i in range(20_000)]  # 9 bytes each with "\n"
+    cm1, _, cm2, _ = retry_objects(o, "r", o.lines, skipped, PROV)
+    ann = cm1["metadata"]["annotations"]
+    value = ann[SKIPPED_ANNOTATION]
+    assert SKIPPED_MAX_BYTES - 32 < len(value.encode()) <= SKIPPED_MAX_BYTES
+    kept, tail = value.split("\n")[:-1], value.split("\n")[-1]
+    assert kept == skipped[: len(kept)] and len(kept) > 7000
+    assert tail == f"… and {len(skipped) - len(kept)} more"
+    assert ann[SKIPPED_COUNT_ANNOTATION] == "20000"
+    assert sum(len(v.encode()) for v in ann.values()) < 256 * 1024
+    assert SKIPPED_ANNOTATION not in cm2["metadata"]["annotations"], "first part"
+    assert set(cm1["data"]) == set(cm2["data"]) == {"volumes.txt"}
