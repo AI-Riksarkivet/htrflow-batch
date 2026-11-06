@@ -139,6 +139,11 @@ _MOVED = (
     "the one campaign {root} ran — a retry runs only what the repo approved, "
     "so run the volumes as a new campaign file"
 )
+_UNKNOWN = (
+    "campaign {job} is running on pipeline {pipeline} and its ConfigMap "
+    "campaign-{job} has no volumes.txt to read, so it may be running these "
+    "volumes — let it finish first"
+)
 _HELD = (
     "campaign {job} is running {volumes} on pipeline {pipeline}: both would "
     "write the same results — let it finish first"
@@ -233,7 +238,16 @@ def load_original(cluster: Cluster, campaign: str) -> Original:
     annotations = first["metadata"].get("annotations") or {}
     stamped = annotations.get(render.JOB_SPEC_ANNOTATION)
     if stamped:
-        source = json.loads(stamped)
+        try:
+            source = json.loads(stamped)
+        except json.JSONDecodeError:
+            source = None
+        if not isinstance(source, dict) or not isinstance(source.get("spec"), dict):
+            raise ClusterError(
+                f"ConfigMap campaign-{names[0]}'s {render.JOB_SPEC_ANNOTATION} "
+                "annotation is not a Job, so there are no settings to copy — "
+                "let the next apply stamp it again, then retry"
+            )
     else:
         live = cluster.get("Job", names[0])
         if live is None:
@@ -304,6 +318,9 @@ def refusal(cluster: Cluster, original: Original, volume_ids: set[str]) -> str |
             continue
         name = job["metadata"]["name"]
         cm = cluster.get("ConfigMap", f"campaign-{name}") or {}
+        if "volumes.txt" not in (cm.get("data") or {}):
+            # Fails closed: a volume list that cannot be read may hold any.
+            return _UNKNOWN.format(job=name, pipeline=original.pipeline)
         shared = sorted(
             volume_ids & {parse_source_line(line)[0] for line in _lines(cm)}
         )
@@ -318,17 +335,39 @@ def next_name(cluster: Cluster, root: str) -> str:
     """``<root>-retry-<n>``, ``n`` one past the highest retry of ``root`` in
     the cluster, cut to the stem a split campaign's parts are built from.
     Read off the retry's campaign label, not its object names: a split
-    retry's are ``-partN``."""
+    retry's are ``-partN``.
+
+    The cut makes two long roots that share a prefix -- or a campaign file
+    that is itself called ``<x>-retry-1`` -- spell the same name, so ``n``
+    also goes past every labelled object whose campaign is that stem's
+    retry, whatever its ``retry-of`` says, and past any name in use.
+    ``start`` still refuses a name that is taken: this only picks a free one.
+    """
+    objects = [o for kind in ("ConfigMap", "Job") for o in cluster.labelled(kind)]
     highest = 0
-    for kind in ("ConfigMap", "Job"):
-        for obj in cluster.labelled(kind):
-            labels = _labels(obj)
-            if labels.get(render.RETRY_OF_LABEL) != root:
-                continue
-            m = _RETRY_N.search(labels.get(render.CAMPAIGN_LABEL, ""))
-            if m:
-                highest = max(highest, int(m.group(1)))
-    suffix = f"-retry-{highest + 1}"
+    for obj in objects:
+        labels = _labels(obj)
+        m = _RETRY_N.search(labels.get(render.CAMPAIGN_LABEL, ""))
+        if m is None:
+            continue
+        n = int(m.group(1))
+        if labels.get(render.RETRY_OF_LABEL) == root or _named(root, n) == m.string:
+            highest = max(highest, n)
+    taken = {_labels(o).get(render.CAMPAIGN_LABEL) for o in objects} | {
+        _PART.sub(
+            "",
+            o["metadata"]["name"].removeprefix("campaign-").removesuffix(STATUS_SUFFIX),
+        )
+        for o in objects
+    }
+    n = highest + 1
+    while _named(root, n) in taken:
+        n += 1
+    return _named(root, n)
+
+
+def _named(root: str, n: int) -> str:
+    suffix = f"-retry-{n}"
     return f"{root[: render._SPLIT_STEM - len(suffix)]}{suffix}"
 
 
@@ -361,6 +400,8 @@ def retry_objects(
     """The retry's ConfigMap and Job per part, in apply order. The Job is the
     original's with only what makes it another campaign changed: its name,
     its labels' campaign and ``retry-of``, its counts and its ConfigMap."""
+    if not lines:
+        raise ValueError("a retry needs at least one volume line")
     chunks = _split(lines)
     names = (
         [name]
@@ -417,8 +458,22 @@ def start(cluster: Cluster, objects: list[dict]) -> None:
     Job. A ConfigMap sent under a Job the API server then refuses is the
     record of a retry that never ran, which the next retry would number past
     and a prune would keep."""
-    jobs = [o for o in objects if o["kind"] == "Job"]
-    for job in jobs:
-        cluster.apply(job, dry_run=True)
+    from .cluster import ClusterError
+
+    # Every object is a create: ``apply`` is a forced server-side apply, and
+    # an existing labelled object of that name -- another campaign's record,
+    # a retry whose Job was reaped -- would be taken over, not refused.
+    for obj in objects:
+        kind, name = obj["kind"], obj["metadata"]["name"]
+        if cluster.get(kind, name) is not None:
+            raise ClusterError(
+                f"{kind} {name} already exists in namespace {cluster.namespace}, "
+                "so the retry was not started and nothing was written — it "
+                "belongs to another campaign or retry; run the retry again to "
+                "be given a free name"
+            )
+    for obj in objects:
+        if obj["kind"] == "Job":
+            cluster.apply(obj, dry_run=True)
     for obj in objects:
         cluster.apply(obj)

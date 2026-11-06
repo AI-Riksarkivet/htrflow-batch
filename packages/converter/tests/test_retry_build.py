@@ -378,3 +378,75 @@ def test_start_sends_nothing_when_the_job_dry_run_is_refused(
         start(cluster, retry_objects(o, "kyrk-retry-1", o.lines, [], PROV))
     assert cluster.of("apply") == []
     assert cluster.find("ConfigMap", "campaign-kyrk-retry-1-part1") is None
+
+
+def test_next_name_steps_past_a_name_another_root_cut_to_the_same(tmp_path, cluster):
+    """Two long roots that share their first 42 characters cut to one retry
+    name. The first's retry, its Job reaped, leaves its ConfigMap: the
+    second's retry is numbered past it, and ``start`` would refuse the name
+    anyway rather than take that record over."""
+    _applied(tmp_path, cluster)
+    first, second = "a" * 45 + "-one", "a" * 45 + "-two"
+    taken = next_name(cluster, first)
+    assert taken == next_name(cluster, second), "the cut that makes them collide"
+    _seed(cluster, "ConfigMap", f"campaign-{taken}", taken, first)
+    assert next_name(cluster, second) == next_name(cluster, first)
+    assert next_name(cluster, second).endswith("-retry-2")
+    o = load_original(cluster, "kyrk")
+    cluster.calls.clear()
+    with pytest.raises(ClusterError, match=f"ConfigMap campaign-{taken} already"):
+        start(cluster, retry_objects(o, taken, o.lines, [], PROV))
+    assert [c for c in cluster.calls if c[0] in ("dry-run", "apply")] == []
+
+
+def test_next_name_steps_past_a_campaign_file_called_like_a_retry(tmp_path, cluster):
+    _applied(tmp_path, cluster)
+    # A campaign file named kyrk-retry-1.yaml: no retry-of, same name.
+    labels = dict([CAMPAIGN_SELECTOR.split("=")]) | {CAMPAIGN_LABEL: "kyrk-retry-1"}
+    cluster.live.append(
+        {"kind": "Job", "metadata": {"name": "kyrk-retry-1", "labels": labels}}
+    )
+    assert next_name(cluster, "kyrk") == "kyrk-retry-2"
+
+
+def test_start_writes_nothing_when_a_later_parts_configmap_exists(
+    tmp_path, cluster, monkeypatch
+):
+    _applied(tmp_path, cluster)
+    monkeypatch.setattr(render, "MAX_VOLUMES_PER_JOB", 2)
+    cluster.live.append(  # made by hand: no converter label
+        {"kind": "ConfigMap", "metadata": {"name": "campaign-kyrk-retry-1-part2"}}
+    )
+    o = load_original(cluster, "kyrk")
+    cluster.calls.clear()
+    with pytest.raises(ClusterError, match="campaign-kyrk-retry-1-part2 already"):
+        start(cluster, retry_objects(o, "kyrk-retry-1", o.lines, [], PROV))
+    assert [c for c in cluster.calls if c[0] in ("dry-run", "apply")] == []
+    assert cluster.find("ConfigMap", "campaign-kyrk-retry-1-part1") is None
+
+
+@pytest.mark.parametrize("gone", ["configmap", "volumes"])
+def test_refusal_fails_closed_on_an_unreadable_volume_list(tmp_path, cluster, gone):
+    _applied(tmp_path, cluster)  # loc's Job is running on the same pipeline
+    o = load_original(cluster, "kyrk")
+    cm = cluster.find("ConfigMap", "campaign-loc")
+    if gone == "configmap":
+        cluster.live.remove(cm)
+    else:
+        cm["data"].pop("volumes.txt")
+    said = refusal(cluster, o, {"R0001203"}) or ""
+    assert "campaign loc is running on pipeline demo-v1" in said
+
+
+@pytest.mark.parametrize("stamp", ["{not json", "[]", '{"kind": "Job"}'])
+def test_load_original_refuses_a_corrupt_stamp(tmp_path, cluster, stamp):
+    _applied(tmp_path, cluster)
+    _annotations(cluster, "campaign-kyrk")[JOB_SPEC_ANNOTATION] = stamp
+    with pytest.raises(ClusterError, match="annotation is not a Job"):
+        load_original(cluster, "kyrk")
+
+
+def test_retry_objects_refuses_no_lines(tmp_path, cluster):
+    _applied(tmp_path, cluster)
+    with pytest.raises(ValueError):
+        retry_objects(load_original(cluster, "kyrk"), "kyrk-retry-1", [], [], PROV)
