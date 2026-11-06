@@ -1,16 +1,23 @@
-"""``retry``: which volumes of a campaign are unfinished, and why."""
+"""``retry``: which volumes of a campaign are unfinished, and why; and the
+retry campaign that runs them again, built from the original's record."""
 
 from __future__ import annotations
 
+import copy
+import json
 import re
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
-from typing import Literal
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Literal
 from urllib.parse import quote
 
+from htrflow_converter import render
 from htrflow_converter.export import _safe_segment
 from htrflow_converter.export_http import Results
-from htrflow_converter.models import parse_source_line
+from htrflow_converter.models import STATUS_SUFFIX, WARMUP_PREFIX, parse_source_line
+
+if TYPE_CHECKING:
+    from htrflow_converter.cluster import Cluster
 
 _PERMANENT = "permanent failure in "
 _TRANSIENT = "transient failure in "
@@ -77,3 +84,341 @@ def find_unfinished(
         return list(
             pool.map(lambda line: _outcome(results, namespace, pipeline, line), lines)
         )
+
+
+# ``.cluster`` is imported inside the functions below, never here: it pulls
+# in ``kubernetes``, and ``cli`` imports this module for commands that never
+# reach a cluster (the same reason ``cli._cluster`` imports it lazily).
+
+
+@dataclass
+class Original:
+    """The campaign a retry restarts volumes of, as its record holds it."""
+
+    #: What a retry's ``RETRY_OF_LABEL`` carries: the first part's Job name
+    #: (the ``<name>`` of ``campaign-<name>``, which prune keeps it by), or a
+    #: retry's own ``retry-of`` when this is a retry, so a chain prunes as one.
+    root: str
+    #: Its Job names, in part order.
+    parts: list[str]
+    pipeline: str
+    digest: str
+    #: Every part's ``volumes.txt`` lines, blank ones dropped, in part order.
+    lines: list[str]
+    #: The Job a retry's Jobs are copied from.
+    source_job: dict
+    #: The first part ConfigMap's labels, which a retry's ConfigMaps keep.
+    record_labels: dict[str, str] = field(default_factory=dict)
+
+
+_PART = re.compile(r"-part(\d+)$")
+_RETRY_N = re.compile(r"-retry-(\d+)$")
+#: What the Job controller labels a Job and its pod template with, to tie
+#: the two together: a copy that kept them would give the retry's pods the
+#: original's uid and name. ``spec.selector`` is dropped for the same reason.
+_CONTROLLER_LABELS = ("controller-uid", "job-name")
+_CONTROLLER_PREFIX = "batch.kubernetes.io/"
+_NO_STAMP = (
+    "campaign {name} was applied before retries existed and its Job is gone, "
+    "so there is no Job left to copy its settings from — run its volumes as a "
+    "new campaign file instead"
+)
+_OLD_PRUNE = (
+    "the last apply in namespace {ns} ran a converter whose prune does not "
+    "know retries — upgrade the Argo CD hook's converter and let it apply once"
+)
+_RUNNING = (
+    "campaign {job} is still running in namespace {ns} — let it finish before "
+    "retrying {root}"
+)
+_NO_WARMUP = (
+    "pipeline {pipeline}'s warm-up Job {job} is {state} — retry once it has completed"
+)
+_MOVED = (
+    "pipeline {pipeline}'s warm-up Job {job} no longer runs image {digest}, "
+    "the one campaign {root} ran — a retry runs only what the repo approved, "
+    "so run the volumes as a new campaign file"
+)
+_HELD = (
+    "campaign {job} is running {volumes} on pipeline {pipeline}: both would "
+    "write the same results — let it finish first"
+)
+
+
+def _condition(job: dict, *types: str) -> bool:
+    """``cli._condition``, which this module cannot import (``cli`` imports
+    it)."""
+    conditions = (job.get("status") or {}).get("conditions") or []
+    return any(c.get("type") in types and c.get("status") == "True" for c in conditions)
+
+
+def _labels(obj: dict) -> dict[str, str]:
+    return (obj.get("metadata") or {}).get("labels") or {}
+
+
+def _lines(cm: dict) -> list[str]:
+    """``volumes.txt`` as volume lines: what ``cli._volume_list`` reads."""
+    text = (cm.get("data") or {}).get("volumes.txt") or ""
+    return [line for line in text.splitlines() if line]
+
+
+def _part_order(cm: dict) -> tuple[int, str]:
+    """``-part2`` before ``-part10``: by name alone it would be after."""
+    name = cm["metadata"]["name"]
+    m = _PART.search(name)
+    return (int(m.group(1)) if m else 0, name)
+
+
+def _uncontrolled(labels: dict[str, str]) -> dict[str, str]:
+    return {
+        k: v
+        for k, v in labels.items()
+        if k not in _CONTROLLER_LABELS and not k.startswith(_CONTROLLER_PREFIX)
+    }
+
+
+def _as_applied(live: dict) -> dict:
+    """A live Job cut back to what an apply sends: no status, no server
+    metadata, and none of what the Job controller added to tie the Job to
+    its pods -- a copy sent with those would claim the original's."""
+    meta = live.get("metadata") or {}
+    job = {
+        "apiVersion": live.get("apiVersion", "batch/v1"),
+        "kind": "Job",
+        "metadata": {
+            "name": meta.get("name", ""),
+            "namespace": meta.get("namespace", ""),
+            "labels": _uncontrolled(meta.get("labels") or {}),
+            "annotations": _uncontrolled(meta.get("annotations") or {}),
+        },
+        "spec": copy.deepcopy(live.get("spec") or {}),
+    }
+    job["spec"].pop("selector", None)
+    job["spec"].pop("manualSelector", None)
+    tmeta = job["spec"].get("template", {}).get("metadata")
+    if tmeta is not None:
+        for key in ("labels", "annotations"):
+            if key in tmeta:
+                tmeta[key] = _uncontrolled(tmeta[key])
+    return job
+
+
+def load_original(cluster: Cluster, campaign: str) -> Original:
+    """The campaign file ``campaign`` (or a retry's name) as its ConfigMaps
+    record it, every part. The Job to copy is the one ``apply`` stamped on
+    the first part's ConfigMap; a campaign applied before that stamp falls
+    back to its live Job, while the TTL has not reaped it."""
+    from .cluster import ClusterError
+
+    label = render.label_value(campaign)
+    parts = sorted(
+        (
+            cm
+            for cm in cluster.labelled("ConfigMap")
+            if _labels(cm).get(render.CAMPAIGN_LABEL) == label
+            and _labels(cm).get(render._KIND_LABEL) != render._STATUS_KIND
+            # A status record written before it carried the kind label.
+            and not cm["metadata"]["name"].endswith(STATUS_SUFFIX)
+        ),
+        key=_part_order,
+    )
+    if not parts:
+        raise ClusterError(
+            f"no campaign {campaign} in namespace {cluster.namespace}: no "
+            f"campaign ConfigMap carries {render.CAMPAIGN_LABEL}={label}"
+        )
+    first = parts[0]
+    names = [cm["metadata"]["name"].removeprefix("campaign-") for cm in parts]
+    labels = _labels(first)
+    annotations = first["metadata"].get("annotations") or {}
+    stamped = annotations.get(render.JOB_SPEC_ANNOTATION)
+    if stamped:
+        source = json.loads(stamped)
+    else:
+        live = cluster.get("Job", names[0])
+        if live is None:
+            raise ClusterError(_NO_STAMP.format(name=campaign))
+        source = _as_applied(live)
+    return Original(
+        root=labels.get(render.RETRY_OF_LABEL) or names[0],
+        parts=names,
+        pipeline=labels.get(render._PIPELINE_LABEL, ""),
+        digest=annotations.get(render._DIGEST_ANNOTATION, ""),
+        lines=[line for cm in parts for line in _lines(cm)],
+        source_job=source,
+        record_labels=dict(labels),
+    )
+
+
+def _volumes(ids: list[str]) -> str:
+    return (
+        ("volume " if len(ids) == 1 else "volumes ")
+        + ", ".join(ids[:3])
+        + (f" and {len(ids) - 3} more" if len(ids) > 3 else "")
+    )
+
+
+def refusal(cluster: Cluster, original: Original, volume_ids: set[str]) -> str | None:
+    """One sentence when this retry must not start, else ``None``. In order:
+    an apply here would prune it; the campaign (or an earlier retry of it)
+    still runs; the warm-up is not done or runs another image than the
+    original did; another running campaign on the pipeline holds a volume."""
+    from .cluster import PRUNES_RETRIES
+
+    ns = cluster.namespace
+    if PRUNES_RETRIES not in cluster.lease_marks():
+        return _OLD_PRUNE.format(ns=ns)
+    running = [
+        j
+        for j in cluster.labelled("Job")
+        if not j["metadata"]["name"].startswith(WARMUP_PREFIX)
+        and not _condition(j, "Complete", "Failed")
+    ]
+    # The root's own campaign too, when this is a retry of a retry: its
+    # other parts are not among ``original.parts``.
+    root_cm = cluster.get("ConfigMap", f"campaign-{original.root}") or {}
+    root_campaign = _labels(root_cm).get(render.CAMPAIGN_LABEL)
+    for job in running:
+        name, labels = job["metadata"]["name"], _labels(job)
+        if (
+            name in original.parts
+            or labels.get(render.RETRY_OF_LABEL) == original.root
+            or (root_campaign and labels.get(render.CAMPAIGN_LABEL) == root_campaign)
+        ):
+            return _RUNNING.format(job=name, ns=ns, root=original.root)
+    warmup = f"{WARMUP_PREFIX}{original.pipeline}"
+    live = cluster.get("Job", warmup)
+    if live is None or not _condition(live, "Complete"):
+        state = "missing" if live is None else "not complete"
+        return _NO_WARMUP.format(pipeline=original.pipeline, job=warmup, state=state)
+    # The warm-up carries the pipeline's image; its ConfigMap only the steps.
+    if render.recipe([live])["image"] != original.digest:
+        return _MOVED.format(
+            pipeline=original.pipeline,
+            job=warmup,
+            digest=original.digest or "(none recorded)",
+            root=original.root,
+        )
+    for job in running:
+        if _labels(job).get(render._PIPELINE_LABEL) != original.pipeline:
+            continue
+        name = job["metadata"]["name"]
+        cm = cluster.get("ConfigMap", f"campaign-{name}") or {}
+        shared = sorted(
+            volume_ids & {parse_source_line(line)[0] for line in _lines(cm)}
+        )
+        if shared:
+            return _HELD.format(
+                job=name, volumes=_volumes(shared), pipeline=original.pipeline
+            )
+    return None
+
+
+def next_name(cluster: Cluster, root: str) -> str:
+    """``<root>-retry-<n>``, ``n`` one past the highest retry of ``root`` in
+    the cluster, cut to the stem a split campaign's parts are built from.
+    Read off the retry's campaign label, not its object names: a split
+    retry's are ``-partN``."""
+    highest = 0
+    for kind in ("ConfigMap", "Job"):
+        for obj in cluster.labelled(kind):
+            labels = _labels(obj)
+            if labels.get(render.RETRY_OF_LABEL) != root:
+                continue
+            m = _RETRY_N.search(labels.get(render.CAMPAIGN_LABEL, ""))
+            if m:
+                highest = max(highest, int(m.group(1)))
+    suffix = f"-retry-{highest + 1}"
+    return f"{root[: render._SPLIT_STEM - len(suffix)]}{suffix}"
+
+
+def _split(lines: list[str]) -> list[list[str]]:
+    """``render.split``'s cut, by its own budgets, over lines as they stand:
+    rebuilding ``Volume``s from them could re-spell a line the original
+    Job ran."""
+    parts: list[list[str]] = [[]]
+    used = 0
+    for line in lines:
+        size_of = len(line.encode()) + 1
+        if parts[-1] and (
+            len(parts[-1]) >= render.MAX_VOLUMES_PER_JOB
+            or used + size_of > render.MAX_BYTES_PER_JOB
+        ):
+            parts.append([])
+            used = 0
+        parts[-1].append(line)
+        used += size_of
+    return parts
+
+
+def retry_objects(
+    original: Original,
+    name: str,
+    lines: list[str],
+    skipped: list[str],
+    prov: dict[str, str],
+) -> list[dict]:
+    """The retry's ConfigMap and Job per part, in apply order. The Job is the
+    original's with only what makes it another campaign changed: its name,
+    its labels' campaign and ``retry-of``, its counts and its ConfigMap."""
+    chunks = _split(lines)
+    names = (
+        [name]
+        if len(chunks) == 1
+        else [f"{name}-part{i}" for i in range(1, len(chunks) + 1)]
+    )
+    campaign = render.label_value(name)
+    namespace = original.source_job.get("metadata", {}).get("namespace", "")
+    objects: list[dict] = []
+    for i, (part, chunk) in enumerate(zip(names, chunks)):
+        job = copy.deepcopy(original.source_job)
+        job["metadata"]["name"] = part
+        job["metadata"]["labels"][render.CAMPAIGN_LABEL] = campaign
+        job["metadata"]["labels"][render.RETRY_OF_LABEL] = original.root
+        spec = job["spec"]
+        spec["completions"] = spec["maxFailedIndexes"] = len(chunk)
+        spec["parallelism"] = min(spec.get("parallelism", 1), len(chunk))
+        # Kueue suspends a queued Job on admission; a paused original's
+        # ``suspend: true`` would leave its retry waiting for a resume that
+        # no campaign file can send.
+        spec.pop("suspend", None)
+        for volume in spec["template"]["spec"]["volumes"]:
+            if volume["name"] == "campaign":
+                volume["configMap"]["name"] = f"campaign-{part}"
+        labels = dict(original.record_labels)
+        labels[render.CAMPAIGN_LABEL] = campaign
+        labels[render.RETRY_OF_LABEL] = original.root
+        data = {"volumes.txt": "".join(f"{line}\n" for line in chunk)}
+        if i == 0:  # the record of what was left out, once per retry
+            data["skipped.txt"] = "".join(f"{vid}\n" for vid in skipped)
+        cm = {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {
+                "name": f"campaign-{part}",
+                "namespace": namespace,
+                "labels": labels,
+                "annotations": {
+                    render._DIGEST_ANNOTATION: original.digest,
+                    **prov,
+                    render.JOB_SPEC_ANNOTATION: json.dumps(
+                        job, sort_keys=True, separators=(",", ":")
+                    ),
+                },
+            },
+            "data": data,
+        }
+        objects += [cm, job]
+    return objects
+
+
+def start(cluster: Cluster, objects: list[dict]) -> None:
+    """Every Job tried with a dry run first, then each part's ConfigMap and
+    Job. A ConfigMap sent under a Job the API server then refuses is the
+    record of a retry that never ran, which the next retry would number past
+    and a prune would keep."""
+    jobs = [o for o in objects if o["kind"] == "Job"]
+    for job in jobs:
+        cluster.apply(job, dry_run=True)
+    for obj in objects:
+        cluster.apply(obj)
