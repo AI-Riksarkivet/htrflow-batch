@@ -2624,3 +2624,21 @@ def test_an_apply_with_no_flavored_size_reads_no_queue(tmp_path, cluster):
     repo = _repo(tmp_path)
     assert cli.main(["apply", str(repo), "--out", str(tmp_path / "out")]) == 0
     assert not [c for c in cluster.calls if c[0] == "get"]
+
+
+def test_apply_marks_the_lease_as_pruning_retries(tmp_path, cluster):
+    assert cli.main(["apply", str(_repo(tmp_path)), "--out", str(tmp_path / "r")]) == 0
+    lease = cluster.leases[cluster_mod.LEASE]
+    assert lease["metadata"]["annotations"] == {cluster_mod.PRUNES_RETRIES: "1"}
+
+
+def test_apply_stamps_the_rendered_job_on_its_campaign_configmap(tmp_path, cluster):
+    out = tmp_path / "r"
+    assert cli.main(["apply", str(_repo(tmp_path)), "--out", str(out)]) == 0
+    jobs = [o for o in cli._objects(out / "campaigns") if o["kind"] == "Job"]
+    assert jobs
+    for job in jobs:
+        cm = cluster.find("ConfigMap", f"campaign-{job['metadata']['name']}")
+        assert (
+            json.loads(cm["metadata"]["annotations"][render.JOB_SPEC_ANNOTATION]) == job
+        )

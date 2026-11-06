@@ -6,6 +6,7 @@ import argparse
 import contextlib
 import getpass
 import hashlib
+import json
 import os
 import signal
 import subprocess
@@ -1310,7 +1311,13 @@ def _apply(
         # Imported here, not at module level, for the same reason `_cluster`
         # imports `.cluster` lazily: `validate`/`render` must never pay for
         # importing `kubernetes`.
-        from .cluster import ClusterError, LeaseLost, NotOurs, Unreachable
+        from .cluster import (
+            PRUNES_RETRIES,
+            ClusterError,
+            LeaseLost,
+            NotOurs,
+            Unreachable,
+        )
 
         try:
             # SIGTERM -- how Argo CD stops a hook -- would end the process
@@ -1323,7 +1330,7 @@ def _apply(
             cluster = _cluster(cfg.namespace)
             # One apply at a time, for the whole run: released when this
             # function returns, however it returns (C-12).
-            stack.enter_context(cluster.lease())
+            stack.enter_context(cluster.lease({PRUNES_RETRIES: "1"}))
             # (live object, declared pause) per campaign Job: the live one
             # has the uid Kueue labels the Workload with, the rendered one
             # has what git says. Warm-up Jobs are not campaigns and get no
@@ -1335,6 +1342,13 @@ def _apply(
                 print(moved, file=sys.stderr)
                 return 1
             prov = _provenance(repo)
+            # Taken before the loop sends anything: the Job as rendered,
+            # not as the pause sync or the API server leaves it.
+            job_specs = {
+                _campaign_of(o): json.dumps(o, sort_keys=True, separators=(",", ":"))
+                for o in campaigns
+                if o["kind"] == "Job"
+            }
             # Asked before anything is sent, so a finished campaign's
             # ConfigMap is not re-stamped with a new apply time either.
             # Observe before deciding. The read API writes this record in
@@ -1424,6 +1438,8 @@ def _apply(
                     if is_campaign and obj["kind"] == "ConfigMap":
                         ann = obj["metadata"].setdefault("annotations", {})
                         ann.update(prov)
+                        if campaign in job_specs:
+                            ann[render.JOB_SPEC_ANNOTATION] = job_specs[campaign]
                         ann[_JOB_UID] = _uid(lives.get(campaign))
                         records[_campaign_of(obj)] = obj
                     name = f"{obj['kind']}/{obj['metadata']['name']}"

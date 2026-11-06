@@ -52,6 +52,8 @@ CAMPAIGN_SELECTOR = f"{_MANAGED_BY_LABEL}=converter"
 #: Which campaign an object belongs to. ``cli`` reads it off an earlier
 #: render to tell whose ``-partN`` files are whose.
 CAMPAIGN_LABEL = "htrflow.riksarkivet.se/campaign"
+#: On a retry's Job and ConfigMap: the campaign it restarts the volumes of.
+RETRY_OF_LABEL = "htrflow.riksarkivet.se/retry-of"
 _PIPELINE_LABEL = "htrflow.riksarkivet.se/pipeline"
 _QUEUE_LABEL = "kueue.x-k8s.io/queue-name"
 _PRIORITY_LABEL = "kueue.x-k8s.io/priority-class"
@@ -63,6 +65,10 @@ _DIGEST_ANNOTATION = "htrflow.riksarkivet.se/image-digest"
 #: The pipeline's ``size:`` (B105), on its ConfigMap: part of the recipe the
 #: id names, and what a reader of ``rendered/`` sees ran. Absent for none.
 _SIZE_ANNOTATION = "htrflow.riksarkivet.se/size"
+#: The campaign Job as rendered, compact sorted JSON, stamped on its
+#: ConfigMap by ``apply`` (never by ``render``, which stays a pure function
+#: of the repo): what a retry copies the Job from once the Job's TTL is gone.
+JOB_SPEC_ANNOTATION = "htrflow.riksarkivet.se/job-spec"
 
 
 def label_value(text: str) -> str:

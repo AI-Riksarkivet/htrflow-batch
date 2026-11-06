@@ -96,6 +96,9 @@ DELETE_WAIT = 60
 #: created. A coordination.k8s.io Lease, the object Kubernetes' own
 #: controllers elect a leader with, held for the apply's whole run.
 LEASE = "htrflow-campaigns-apply"
+#: On ``LEASE``, set by an apply that prunes retry Jobs the repo does not
+#: declare. A retry reads it to know an apply here would delete its Job.
+PRUNES_RETRIES = "htrflow.riksarkivet.se/prunes-retries"
 #: Seconds the Lease holds without a renewal: past it, the holder is taken
 #: for dead (a SIGKILLed pod) and the next apply may take over. The apply
 #: renews before any request once ``LEASE_RENEW`` has passed, so the longest
@@ -370,8 +373,11 @@ class Cluster:
     _clock: tuple[datetime, float] | None = None
 
     @contextlib.contextmanager
-    def lease(self):
+    def lease(self, marks: dict[str, str] | None = None):
         """Hold ``LEASE`` for the ``with`` block, or refuse to start.
+
+        ``marks`` become the Lease's annotations, so whoever reads
+        ``lease_marks`` sees what the holder will do.
 
         A Lease held by someone else and renewed within ``LEASE_SECONDS`` is
         a refusal; past that its holder died, and it is taken over. Both
@@ -388,7 +394,11 @@ class Cluster:
         body = {
             "apiVersion": "coordination.k8s.io/v1",
             "kind": "Lease",
-            "metadata": {"name": LEASE, "namespace": self.namespace},
+            "metadata": {
+                "name": LEASE,
+                "namespace": self.namespace,
+                "annotations": dict(marks or {}),
+            },
             "spec": {
                 "holderIdentity": f"{socket.gethostname()}/{os.getpid()}/"
                 f"{uuid.uuid4().hex[:8]}",
@@ -414,6 +424,11 @@ class Cluster:
                 held["spec"]["holderIdentity"] = None
                 with contextlib.suppress(ClusterError):
                     self._write_ours(held, mine)
+
+    def lease_marks(self) -> dict[str, str]:
+        """The live Lease's annotations; ``{}`` when there is no Lease."""
+        live = self._lease("read")
+        return dict((live or {}).get("metadata", {}).get("annotations") or {})
 
     def _due(self) -> None:
         """Before every request: renew the Lease when ``LEASE_RENEW`` has
