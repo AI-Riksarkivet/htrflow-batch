@@ -3,6 +3,7 @@ retry campaign that runs them again, built from the original's record."""
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
 import re
@@ -80,10 +81,15 @@ def find_unfinished(
     """One ``Outcome`` per line, in input order. A volume is done when its
     manifest exists; otherwise its log says why not. ``Forbidden``,
     ``SessionLost`` and ``ResultsUnavailable`` end the search."""
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        return list(
-            pool.map(lambda line: _outcome(results, namespace, pipeline, line), lines)
-        )
+    pool = ThreadPoolExecutor(max_workers=workers)
+    try:
+        futures = [
+            pool.submit(_outcome, results, namespace, pipeline, line) for line in lines
+        ]
+        return [f.result() for f in futures]
+    finally:
+        # On the first error the fetches still queued are never started.
+        pool.shutdown(wait=True, cancel_futures=True)
 
 
 # ``.cluster`` is imported inside the functions below, never here: it pulls
@@ -253,6 +259,15 @@ def load_original(cluster: Cluster, campaign: str) -> Original:
         if live is None:
             raise ClusterError(_NO_STAMP.format(name=campaign))
         source = _as_applied(live)
+    containers = (
+        (source.get("spec") or {}).get("template", {}).get("spec", {}).get("containers")
+    )
+    if not isinstance(containers, list) or not containers:
+        raise ClusterError(
+            f"the Job copied for campaign {campaign} has no container, so "
+            "there are no settings to copy — let the next apply stamp it "
+            "again, then retry"
+        )
     return Original(
         root=labels.get(render.RETRY_OF_LABEL) or names[0],
         parts=names,
@@ -272,16 +287,25 @@ def _volumes(ids: list[str]) -> str:
     )
 
 
-def refusal(cluster: Cluster, original: Original, volume_ids: set[str]) -> str | None:
-    """One sentence when this retry must not start, else ``None``. In order:
-    an apply here would prune it; the campaign (or an earlier retry of it)
-    still runs; the warm-up is not done or runs another image than the
-    original did; another running campaign on the pipeline holds a volume."""
+def old_prune_refusal(cluster: Cluster) -> str | None:
+    """One sentence when the last apply here ran a converter whose prune does
+    not know retries (it would delete the retry), else ``None``. Asked before
+    the Lease is taken, never inside it: a holder writes its own marks back,
+    so inside the Lease they always say yes."""
     from .cluster import PRUNES_RETRIES
 
+    if PRUNES_RETRIES in cluster.lease_marks():
+        return None
+    return _OLD_PRUNE.format(ns=cluster.namespace)
+
+
+def refusal(cluster: Cluster, original: Original, volume_ids: set[str]) -> str | None:
+    """One sentence when this retry must not start, else ``None``. In order:
+    the campaign (or an earlier retry of it) still runs; the warm-up is not
+    done or runs another image than the original did; another running
+    campaign on the pipeline holds a volume. Whether an apply here would
+    prune the retry is ``old_prune_refusal``, asked before the Lease."""
     ns = cluster.namespace
-    if PRUNES_RETRIES not in cluster.lease_marks():
-        return _OLD_PRUNE.format(ns=ns)
     running = [
         j
         for j in cluster.labelled("Job")
@@ -453,9 +477,17 @@ def retry_objects(
         # ``suspend: true`` would leave its retry waiting for a resume that
         # no campaign file can send.
         spec.pop("suspend", None)
-        for volume in spec["template"]["spec"]["volumes"]:
-            if volume["name"] == "campaign":
+        repointed = False
+        for volume in spec["template"]["spec"].get("volumes") or []:
+            if volume.get("name") == "campaign":
                 volume["configMap"]["name"] = f"campaign-{part}"
+                repointed = True
+        if not repointed:
+            # Otherwise the retry would mount the original's ConfigMap.
+            raise ValueError(
+                f"the Job copied for {original.root} has no pod volume named "
+                "campaign, so a retry could not be given its own volume list"
+            )
         labels = dict(original.record_labels)
         labels[render.CAMPAIGN_LABEL] = campaign
         labels[render.RETRY_OF_LABEL] = original.root
@@ -509,5 +541,25 @@ def start(cluster: Cluster, objects: list[dict]) -> None:
     for obj in objects:
         if obj["kind"] == "Job":
             cluster.apply(obj, dry_run=True)
+    made: list[dict] = []
     for obj in objects:
-        cluster.apply(obj)
+        try:
+            cluster.apply(obj)
+        except ClusterError as exc:
+            # A ConfigMap just written for a Job that was refused is the
+            # record of a retry that never ran: take it back.
+            if obj["kind"] == "Job" and made and made[-1]["kind"] == "ConfigMap":
+                cm = made.pop()
+                with contextlib.suppress(ClusterError):
+                    cluster.delete_configmap(cm["metadata"]["name"])
+            live = ", ".join(f"{o['kind']}/{o['metadata']['name']}" for o in made)
+            left = (
+                f"already created and still live: {live}"
+                if live
+                else "nothing is left behind"
+            )
+            raise ClusterError(
+                f"{exc} — the retry stopped at {obj['kind']}/"
+                f"{obj['metadata']['name']}; {left}"
+            ) from exc
+        made.append(obj)

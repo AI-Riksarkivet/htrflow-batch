@@ -184,13 +184,41 @@ def test_an_unknown_campaign_exits_1(tmp_path, cluster, monkeypatch, capsys):
 
 def test_the_results_url_comes_from_the_job_or_the_flag(tmp_path, cluster, monkeypatch):
     seen = serve(monkeypatch, four(tmp_path, cluster))
-    cli.main(["retry", "kyrk", "--namespace", "htr-test", "--dry-run"])
+    rc = cli.main(["retry", "kyrk", "--namespace", "htr-test", "--dry-run"])
+    assert rc == 0
     assert seen and all(p.startswith("/results/htr-test/") for p in seen)
     seen.clear()
     url = "https://other.example.org/r"
-    cli.main(["retry", "kyrk", "--namespace", "htr-test", "--dry-run",
-              "--results-url", url])  # fmt: skip
+    rc = cli.main(["retry", "kyrk", "--namespace", "htr-test", "--dry-run",
+                   "--results-url", url])  # fmt: skip
+    assert rc == 0
     assert seen and all(p.startswith("/r/htr-test/") for p in seen)
+
+
+def test_all_one_volume_done_is_said_in_the_singular(
+    tmp_path, cluster, monkeypatch, capsys
+):
+    files = four(tmp_path, cluster)
+    cluster.find("ConfigMap", "campaign-kyrk")["data"]["volumes.txt"] = "x1\timages:u\n"
+    serve(monkeypatch, files)
+    assert cli.main(["retry", "kyrk", "--namespace", "htr-test"]) == 0
+    assert "nothing to retry: all 1 volume of kyrk are done" in capsys.readouterr().out
+
+
+def test_a_stamp_without_a_container_is_one_sentence_not_a_traceback(
+    tmp_path, cluster, monkeypatch, capsys
+):
+    import json
+
+    serve(monkeypatch, four(tmp_path, cluster))
+    ann = cluster.find("ConfigMap", "campaign-kyrk")["metadata"]["annotations"]
+    key = "htrflow.riksarkivet.se/job-spec"
+    stamp = json.loads(ann[key])
+    stamp["spec"]["template"]["spec"]["containers"] = []
+    ann[key] = json.dumps(stamp)
+    assert cli.main(["retry", "kyrk", "--namespace", "htr-test"]) == 1
+    err = capsys.readouterr().err
+    assert "has no container" in err and err.count("\n") == 1
 
 
 def test_the_password_is_never_an_argument(tmp_path, cluster):
@@ -225,3 +253,77 @@ def test_the_retry_holds_the_lease_while_it_checks_and_writes(
     held = len(cluster.lease_log)
     assert cli.main(["retry", "kyrk", "--namespace", "htr-test"]) == 0
     assert len(cluster.lease_log) == held + 2  # taken, released
+
+
+def _running_retry_of_kyrk(cluster):
+    """A retry of kyrk that is still running: the objects ``retry`` makes, its
+    ConfigMap's volumes.txt overlapping the original's."""
+    from htrflow_converter.retry import load_original, retry_objects, start
+
+    original = load_original(cluster, "kyrk")
+    assert original.lines, "kyrk has volumes to overlap"
+    objects = retry_objects(original, "kyrk-retry-1", original.lines[:1], [], {})
+    start(cluster, objects)
+    assert cluster.find("Job", "kyrk-retry-1")["metadata"].get("status") is None
+    return original.lines[0].partition("\t")[0]
+
+
+def _apply_prune(tmp_path):
+    return cli.main(
+        ["apply", str(tmp_path / "repo"), "--out", str(tmp_path / "out"), "--prune"]
+    )
+
+
+def test_apply_prune_leaves_a_running_retry_beside_a_finished_original(
+    tmp_path, cluster, capsys
+):
+    """The production path: the hook's ``apply --prune`` while a retry runs.
+    The original's record says it ended, so it is skipped as done: nothing is
+    deleted and the original's Job is not applied again."""
+    _applied(tmp_path, cluster)
+    assert _apply_prune(tmp_path) == 0  # writes the original's status record
+    _running_retry_of_kyrk(cluster)
+    before = snapshot(cluster, OBJECTS + ["campaign-kyrk-retry-1", "kyrk-retry-1"])
+    cluster.calls.clear()
+    capsys.readouterr()
+    assert _apply_prune(tmp_path) == 0
+    captured = capsys.readouterr()
+    assert "campaign kyrk finished" in captured.out + captured.err
+    assert "pruned" not in captured.out
+    assert not [c for c in cluster.calls if c[0] == "delete"]
+    assert ("apply", "Job", "kyrk") not in cluster.calls
+    # The original's own records may be re-applied unchanged (and move in the
+    # list); the retry's objects are not touched.
+    kept = ["campaign-kyrk-retry-1", "kyrk-retry-1"]
+    assert snapshot(cluster, kept) == [
+        o for o in before if o["metadata"]["name"] in kept
+    ]
+
+
+def test_apply_prune_holds_back_an_unfinished_original_beside_a_running_retry(
+    tmp_path, cluster, capsys
+):
+    """No status record and no Job to read one from: the original is not done,
+    and its volumes are the running retry's, so its Job is held back. Nothing
+    is deleted and the retry is untouched."""
+    _applied(tmp_path, cluster)
+    _running_retry_of_kyrk(cluster)
+    cluster.live = [
+        o
+        for o in cluster.live
+        if o["metadata"]["name"] not in ("kyrk", "campaign-kyrk-status")
+    ]
+    kept = snapshot(cluster, ["campaign-kyrk-retry-1", "kyrk-retry-1"])
+    cluster.calls.clear()
+    capsys.readouterr()
+    rc = _apply_prune(tmp_path)
+    captured = capsys.readouterr()
+    assert rc == 3
+    assert (
+        "campaign kyrk shares volume" in captured.err
+        and "with campaign kyrk-retry-1 on pipeline demo-v1" in captured.err
+        and "both would write the same results" in captured.err
+    )
+    assert ("apply", "Job", "kyrk") not in cluster.calls
+    assert not [c for c in cluster.calls if c[0] == "delete"]
+    assert snapshot(cluster, ["campaign-kyrk-retry-1", "kyrk-retry-1"]) == kept

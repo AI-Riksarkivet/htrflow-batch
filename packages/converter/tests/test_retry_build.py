@@ -28,6 +28,7 @@ from htrflow_converter.retry import (
     SKIPPED_MAX_BYTES,
     load_original,
     next_name,
+    old_prune_refusal,
     refusal,
     retry_objects,
     start,
@@ -283,7 +284,6 @@ def _digest_moved(cluster) -> None:
 
 
 STATES = {
-    "lease-unmarked": lambda c: c.leases[LEASE]["metadata"].update(annotations={}),
     "original-running": lambda c: _status(c, "Job", "kyrk", None),
     "retry-running": _retry_running,
     "warmup-incomplete": lambda c: _status(c, "Job", WARMUP, None),
@@ -296,7 +296,6 @@ STATES = {
 @pytest.mark.parametrize(
     "state, sentence",
     [
-        ("lease-unmarked", "the last apply in namespace htr-test ran a converter"),
         ("original-running", "campaign kyrk is still running"),
         ("retry-running", "campaign kyrk-retry-1 is still running"),
         ("warmup-incomplete", f"warm-up Job {WARMUP}"),
@@ -316,14 +315,17 @@ def test_refusal(tmp_path, cluster, state, sentence):
     assert "\n" not in said
 
 
-def test_refusal_reads_the_lease_first(tmp_path, cluster):
-    """An apply that would prune the retry is the first thing to know: the
-    rest is moot if the Job is deleted on the next hook run."""
+def test_old_prune_refusal_reads_the_lease_marks(tmp_path, cluster):
+    """An apply that would prune the retry: asked before the Lease, because a
+    holder writes its marks back and inside it the answer is always yes."""
     _applied(tmp_path, cluster)
-    o = load_original(cluster, "kyrk")
-    STATES["lease-unmarked"](cluster)
-    STATES["original-running"](cluster)
-    assert "the last apply" in (refusal(cluster, o, {"R0001203"}) or "")
+    assert old_prune_refusal(cluster) is None
+    cluster.leases[LEASE]["metadata"].update(annotations={})
+    said = old_prune_refusal(cluster)
+    assert said is not None
+    assert "the last apply in namespace htr-test ran a converter" in said
+    with cluster.lease({PRUNES_RETRIES: "1"}):
+        assert old_prune_refusal(cluster) is None, "the holder's own marks"
 
 
 def test_a_running_campaign_on_another_volume_is_no_refusal(tmp_path, cluster):
@@ -480,3 +482,67 @@ def test_the_skipped_record_is_capped_and_counts_them_all(
     assert sum(len(v.encode()) for v in ann.values()) < 256 * 1024
     assert SKIPPED_ANNOTATION not in cm2["metadata"]["annotations"], "first part"
     assert set(cm1["data"]) == set(cm2["data"]) == {"volumes.txt"}
+
+
+def _refuse_real_job_create(cluster, monkeypatch, refused: str):
+    real = FakeCluster._api
+
+    def method(kind, verb, name=""):
+        inner = real(cluster, kind, verb, name)
+        if verb == "patch" and kind == "Job" and name == refused:
+
+            def patch(name, ns, obj, **kw):
+                if kw.get("dry_run"):
+                    return inner(name, ns, obj, **kw)
+                raise ClusterError(f"apply Job/{name}: refused")
+
+            return patch
+        return inner
+
+    monkeypatch.setattr(cluster, "_api", method)
+
+
+def test_start_takes_back_the_configmap_of_a_refused_job(
+    tmp_path, cluster, monkeypatch
+):
+    _applied(tmp_path, cluster)
+    o = load_original(cluster, "kyrk")
+    _refuse_real_job_create(cluster, monkeypatch, "kyrk-retry-1")
+    with pytest.raises(ClusterError, match="refused") as caught:
+        start(cluster, retry_objects(o, "kyrk-retry-1", o.lines, [], PROV))
+    assert cluster.find("ConfigMap", "campaign-kyrk-retry-1") is None
+    assert "nothing is left behind" in str(caught.value)
+
+
+def test_start_names_what_an_earlier_part_left_live(tmp_path, cluster, monkeypatch):
+    _applied(tmp_path, cluster)
+    monkeypatch.setattr(render, "MAX_VOLUMES_PER_JOB", 2)
+    o = load_original(cluster, "kyrk")
+    _refuse_real_job_create(cluster, monkeypatch, "kyrk-retry-1-part2")
+    with pytest.raises(ClusterError) as caught:
+        start(cluster, retry_objects(o, "kyrk-retry-1", o.lines, [], PROV))
+    said = str(caught.value)
+    assert "ConfigMap/campaign-kyrk-retry-1-part1" in said
+    assert "Job/kyrk-retry-1-part1" in said
+    assert "campaign-kyrk-retry-1-part2" not in said.split("still live")[1]
+    assert cluster.find("ConfigMap", "campaign-kyrk-retry-1-part2") is None
+    assert cluster.find("Job", "kyrk-retry-1-part1") is not None
+
+
+def test_retry_objects_refuses_a_job_with_no_campaign_volume(tmp_path, cluster):
+    _applied(tmp_path, cluster)
+    o = load_original(cluster, "kyrk")
+    volumes = o.source_job["spec"]["template"]["spec"]["volumes"]
+    _campaign_volume(o.source_job)["name"] = "other"
+    assert volumes
+    with pytest.raises(ValueError, match="no pod volume named campaign"):
+        retry_objects(o, "kyrk-retry-1", ["B\timages:u"], [], PROV)
+
+
+def test_load_original_refuses_a_stamp_without_a_container(tmp_path, cluster):
+    _applied(tmp_path, cluster)
+    stamp = json.loads(_annotations(cluster, "campaign-kyrk")[JOB_SPEC_ANNOTATION])
+    stamp["spec"]["template"]["spec"].pop("containers")
+    _annotations(cluster, "campaign-kyrk")[JOB_SPEC_ANNOTATION] = json.dumps(stamp)
+    with pytest.raises(ClusterError, match="has no container"):
+        load_original(cluster, "kyrk")

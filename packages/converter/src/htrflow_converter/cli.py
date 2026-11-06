@@ -1665,13 +1665,13 @@ def _credentials(args: argparse.Namespace) -> tuple[str, str] | None:
 
 
 def _retry(args: argparse.Namespace) -> int:
-    from .cluster import PRUNES_RETRIES, ClusterError
+    from .cluster import ClusterError
     from .export_http import Forbidden, Results, ResultsUnavailable, SessionLost
     from .retry import (
-        _OLD_PRUNE,
         find_unfinished,
         load_original,
         next_name,
+        old_prune_refusal,
         refusal,
         retry_objects,
         start,
@@ -1717,7 +1717,7 @@ def _retry(args: argparse.Namespace) -> int:
         if not take:
             if all(o.state == "done" for o in outcomes):
                 print(
-                    f"nothing to retry: all {len(outcomes)} volumes of "
+                    f"nothing to retry: all {_plural(len(outcomes), 'volume')} of "
                     f"{args.campaign} are done"
                 )
             else:
@@ -1733,12 +1733,13 @@ def _retry(args: argparse.Namespace) -> int:
             _APPLIED_BY_ANNOTATION: _applied_by(),
             _APPLIED_AT_ANNOTATION: _applied_at(),
         }
-        marks = cluster.lease_marks()
-        if PRUNES_RETRIES not in marks:
-            # Refused before the Lease is taken: taking it would write these
-            # marks back, and a refused retry changes nothing.
-            print(_OLD_PRUNE.format(ns=args.namespace), file=sys.stderr)
+        # Refused before the Lease is taken: taking it would write these
+        # marks back, and a refused retry changes nothing.
+        said = old_prune_refusal(cluster)
+        if said:
+            print(said, file=sys.stderr)
             return 1
+        marks = cluster.lease_marks()
 
         def plan() -> list[dict] | None:
             said = refusal(cluster, original, ids)

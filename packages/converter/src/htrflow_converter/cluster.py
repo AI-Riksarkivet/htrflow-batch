@@ -672,6 +672,18 @@ class Cluster:
         self._note(kind, name, live)
         return live
 
+    def delete_configmap(self, name: str) -> None:
+        """Delete ConfigMap ``name``; already gone is done. Only for taking
+        back a ConfigMap this process just wrote (``retry.start``)."""
+        with _errors("delete", "ConfigMap", name, self.namespace):
+            _retrying(
+                self._method("ConfigMap", "delete"),
+                name,
+                self.namespace,
+                gone_is_done=True,
+                _request_timeout=REQUEST_TIMEOUT,
+            )
+
     def labelled(self, kind: str) -> list[dict]:
         """Every converter-labelled ``kind`` in the namespace."""
         return _raw(
