@@ -125,6 +125,37 @@ directly against the cluster, without writing or committing a campaign file.
   refusal, `--dry-run` prints the summary and the volume list without
   touching the cluster.
 
+## Testing
+
+Unit tests as usual, and the operator's requirement: **verified end to end
+on the local test cluster** (k3s, namespace `htr-batch`) before it is
+called done. Not against production.
+
+- **Images: only the htrflow demo app's example images**, as `images:`
+  volumes from the `Riksarkivet/htr_demo` Space pinned to a commit, e.g.
+  `images:https://huggingface.co/spaces/Riksarkivet/htr_demo/resolve/<commit>/.gradio_cache/examples/<file>`.
+  **No IIIF manifests**, in the test campaigns or as a fallback.
+- **The scenario**, on one of the existing demo pipelines:
+  1. Apply a campaign of several demo images through the normal `apply`.
+  2. Make some of its volumes fail for a cause that can be fixed
+     afterwards, so the retry can succeed. A `warmup_wait_seconds` cut
+     short with the pipeline's warm-up marker held back is one way. Add
+     one volume that fails permanently (an example file name that does not
+     exist in the Space), so the skip path runs too.
+  3. `retry --dry-run`: the summary lists the right volumes, grouped by
+     reason, with the permanent one named as skipped.
+  4. Fix the cause and run `retry`: only the failed volumes run, with the
+     original Job's settings, and they finish. The original campaign's Job,
+     ConfigMap, status record and results are unchanged.
+  5. A normal `apply --prune` of the campaigns repo keeps the retry, and
+     deleting the original campaign file and pruning removes both.
+  6. The refusals: retry while the original is running, and a second retry
+     while the first is running.
+  7. Retry after the original Job has been reaped (a short
+     `ttl_seconds_after_finished`), from the stamped spec.
+- Every test campaign, retry and result written for the test is cleaned up
+  afterwards; the existing demo campaigns in the namespace are left alone.
+
 ## Left to the builder
 
 - Which Job fields are reset when copying (name, uid, selector, labels the
