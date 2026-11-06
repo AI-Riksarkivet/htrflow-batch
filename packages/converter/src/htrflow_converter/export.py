@@ -12,6 +12,8 @@ import json
 import secrets
 import shutil
 import sys
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Any
@@ -35,6 +37,7 @@ from htrflow_converter.export_pages import (
     page_number,
     quality_mean,
 )
+from htrflow_converter.export_progress import Progress
 from htrflow_converter.models import _DNS_LABEL_RE, _NAME_RE, _VOLUME_ID_RE
 
 __all__ = [
@@ -107,6 +110,14 @@ def _safe_segment(volume_id: str) -> bool:
     )
 
 
+#: ``(step, done, total)``: a slow per-page step has got this far.
+OnPages = Callable[[str, int, int], None]
+
+
+def _quiet(step: str, done: int, total: int) -> None:
+    pass
+
+
 def export_volume(
     results: Results,
     client: httpx.Client,
@@ -114,12 +125,13 @@ def export_volume(
     volume_id: str,
     opts: Options,
     dry_run: bool,
+    on_pages: OnPages = _quiet,
 ) -> Row:
     if not _safe_segment(volume_id):
         return Row(volume_id, "failed", reason="not a safe folder name")
     base = f"{prefix}/{quote(volume_id, safe='')}"
     try:
-        return _export(results, client, base, volume_id, opts, dry_run)
+        return _export(results, client, base, volume_id, opts, dry_run, on_pages)
     except Forbidden:
         return Row(
             volume_id, "forbidden", reason="your account may not read this volume"
@@ -165,6 +177,7 @@ def _export(
     volume_id: str,
     opts: Options,
     dry_run: bool,
+    on_pages: OnPages,
 ) -> Row:
     raw = results.get(f"{base}/manifest.json")
     if raw is None:
@@ -217,7 +230,8 @@ def _export(
             return failed(str(exc), **stats)
     else:
         sizes = {}
-        for key in keys:
+        for i, key in enumerate(keys, start=1):
+            on_pages("reading page sizes", i, len(keys))
             try:
                 sizes[key] = image_size(client, info_url(sources[key]))
             except (SizeUnreadable, PageRuleError) as exc:
@@ -243,6 +257,7 @@ def _export(
             stats,
             tmp,
             dry_run,
+            on_pages,
         )
         if row.outcome != "exported":
             return row
@@ -302,12 +317,14 @@ def _build(
     stats,
     tmp,
     dry_run,
+    on_pages,
 ) -> Row:  # noqa: PLR0913
     def failed(reason: str) -> Row:
         return Row(volume_id, "failed", pages=expected, reason=reason, **stats)
 
     with_text = filled = chosen = built = 0
-    for key in keys:
+    for i, key in enumerate(keys, start=1):
+        on_pages("building ALTO", i, len(keys))
         number, native = numbers[key], sizes[key]
         stem = f"{volume_id}_{number:05d}"
         alto = None
@@ -503,18 +520,25 @@ def run_export(
     ids = source.volumes
     rows: list[Row] = []
     stopped = ""
+    progress = Progress(sys.stderr, len(ids))
+    began = time.monotonic()
     try:
         try:
             results.login()
-            for volume_id in ids:
-                rows.append(
-                    export_volume(results, client, prefix, volume_id, opts, dry_run)
+            for index, volume_id in enumerate(ids, start=1):
+                progress.start(index, volume_id)
+                started = time.monotonic()
+                row = export_volume(
+                    results, client, prefix, volume_id, opts, dry_run, progress.pages
                 )
+                progress.finish(row, time.monotonic() - started)
+                rows.append(row)
         except (SessionLost, OSError) as exc:
             stopped = f"run stopped: {exc}"
     finally:
         if own:
             client.close()
+        progress.done(time.monotonic() - began)
     if stopped:
         print(stopped, file=sys.stderr)
         rows += [Row(v, "failed", reason=stopped) for v in ids[len(rows) :]]

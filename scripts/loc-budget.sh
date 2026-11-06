@@ -881,8 +881,10 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 5127
 # in export.py; the flag and its folder check). 6180 -> 6212: a manifest of
 # the wrong shape fails its volume instead of the run, a canvas naming its
 # image twice is one canvas, escaped service ids match, a stated image size
-# that is not a size is refused.
-check converter "$(count packages/converter/src -name '*.py')" 6212
+# that is not a size is refused. 6212 -> 6307: export progress on stderr
+# (export_progress.py: a line per volume, a live page counter in a
+# terminal, the total time; the page callback threaded through export.py).
+check converter "$(count packages/converter/src -name '*.py')" 6307
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

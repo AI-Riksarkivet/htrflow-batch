@@ -114,6 +114,14 @@ loopback address, so the password never crosses the network in clear. A
 volume the account may not read is skipped as `forbidden`; an expired
 session is renewed once, and then the run stops.
 
+**Progress.** While it runs, the export writes one line per volume to stderr
+as each one is done, with its outcome, page count, time taken and, for a
+failed volume, the reason, then a last line with the total time. In a
+terminal, a counter for the slow steps (reading page sizes, building the
+ALTO) is redrawn in place; written to a file or a pipe, only the finished
+lines appear. The report below goes to stdout, so `2>/dev/null` hides the
+progress and leaves the report.
+
 **The report.** One row per volume listed is printed as a table and
 written as CSV to `--report` (default `./export-<pipeline>.csv` in the
 current directory, never inside the target) with the columns `volume`,
