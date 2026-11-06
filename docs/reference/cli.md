@@ -169,8 +169,9 @@ only its name, labels, volumes and counts changed (and `suspend` dropped, so a p
 cause that lives in the settings, such as a too-small `workdir`, is not
 fixed by a retry. A retry of a retry is named after the original, and one of
 a split campaign after its first part (`<name>-part1-retry-<n>`). Its
-ConfigMap records the volumes (`volumes.txt`), the ones left out
-(`skipped.txt`, on the first part's ConfigMap only), who ran it and when. A large retry is split into parts the
+ConfigMap records the volumes (`volumes.txt`), the ones left out (the
+annotations `htrflow.riksarkivet.se/retry-skipped`, capped at 64 KiB, and
+`retry-skipped-count`, on the first part's ConfigMap only), who ran it and when. A large retry is split into parts the
 way `render` splits a campaign.
 
 ```
