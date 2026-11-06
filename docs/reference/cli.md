@@ -16,6 +16,7 @@ Source: [`packages/converter/src/htrflow_converter/cli.py`](https://github.com/A
 | `validate <repo> [--rendered]` | Checks `converter.yaml`, `campaigns/` and `pipelines/`, and prints one line per problem. `--rendered` also refuses unless the committed `rendered/` is exactly what this checkout renders. |
 | `render <repo> --out <dir>` | Writes the rendered objects to `<dir>`. Renders nothing at all if there is one problem. |
 | `apply <repo> [flags]` | Renders into a temporary directory (or `--out`), then applies to the cluster. See below. |
+| `retry <campaign> --namespace <ns> [flags]` | Starts a campaign's unfinished volumes again as a new campaign in the cluster. See [`retry`](#retry-starting-failed-volumes-again). |
 | `export --pipeline <id> --namespace <ns> --volumes <ids> --to <dir> [flags]` | Writes finished volumes' ALTO into a publishing folder, one folder per volume. See [`export`](#export-publishing-finished-volumes). |
 
 `make campaigns-apply DIR=<repo>` runs
@@ -141,6 +142,73 @@ then still lists every volume, the unfinished ones as `failed`. Otherwise
 
 The design is in the campaign export spec among the
 [design specs](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/docs/superpowers/specs).
+
+## `retry`: starting failed volumes again
+
+```
+htrflow-campaigns retry <campaign> --namespace <ns>
+    [--include-permanent] [--results-url URL] [--user NAME] [--dry-run]
+```
+
+**What it reads.** The campaign's record in the cluster (its volume list and
+its Job's settings) and, from the results proxy, whether each volume has a
+`manifest.json`. A volume without one is unfinished; its run log says
+whether it failed for good (`permanent`), will be tried again (`retry`), or
+never started. Never-started volumes are retried. Volumes that failed for
+good are skipped, and named in the retry's record, unless
+`--include-permanent` takes them.
+
+**Credentials** are the ones `export` takes: `--user`, else `HTRFLOW_USER`,
+else a prompt; the password from `HTRFLOW_PASSWORD` or a prompt, never an
+argument. The results address is `--results-url`, else the `RESULTS_URL` on
+the original Job.
+
+**What it starts.** A new campaign, `<campaign>-retry-<n>`, with one more
+`n` than the highest retry of that campaign. It is the original's Job with
+only its name, volumes and counts changed, so its settings are copied: a
+cause that lives in the settings, such as a too-small `workdir`, is not
+fixed by a retry. A retry of a retry is named after the original, and one of
+a split campaign after its first part (`<name>-part1-retry-<n>`). Its
+ConfigMap records the volumes (`volumes.txt`), the ones left out
+(`skipped.txt`), who ran it and when. A large retry is split into parts the
+way `render` splits a campaign.
+
+```
+campaign kyrk: 4 volumes, 1 done, 3 not done
+  2  retry      the volume never started ...
+  1  permanent  ...  (skipped; --include-permanent takes it)
+started: Job/kyrk-retry-1 with 2 volumes
+```
+
+The summary is the tally, then one line per kind of failure, largest first.
+`--dry-run` prints `would start: Job/<name> with N volumes` instead and
+creates nothing. When every volume is done, or all that are not failed for
+good, it prints `nothing to retry` and starts nothing.
+
+**It refuses**, with one sentence on standard error and nothing created, when:
+
+- the campaign, or an earlier retry of it, is still running;
+- the pipeline's warm-up Job is missing or not complete, or no longer runs
+  the image the campaign ran (a retry runs only what the repo approved: run
+  the volumes as a new campaign file);
+- another running campaign on the pipeline holds one of the volumes, or has
+  no volume list to check;
+- the campaign has no stored Job to copy and its own Job is gone;
+- the cluster's last apply ran a converter whose prune does not know retries.
+
+A campaign applied by a converter older than this feature can be retried only
+while its Job still exists. **Upgrade the Argo CD hook's converter first
+and let it apply once**: until then `retry` refuses, because that apply
+would prune the retry.
+
+**Prune keeps a retry** for as long as the original campaign's file is in
+git, and removes both when that file leaves git.
+
+| Exit | Meaning |
+|---|---|
+| `0` | Started, a dry run, or nothing to retry. |
+| `1` | Refused, or the results or the cluster could not be read. |
+| `2` | No results address, or no credentials. |
 
 ## What `apply` does, in order
 
@@ -513,6 +581,8 @@ The codes are a precedence, highest first: `1` beats `3` beats `0`.
 `export` has its own codes, set out [above](#export-publishing-finished-volumes):
 `0` when no volume failed or was forbidden, `1` when one was or the run
 stopped, `2` when it was refused before any request.
+
+`retry` has its own codes, set out [above](#retry-starting-failed-volumes-again).
 
 `validate` and `render` exit non-zero on any problem, with one line per
 problem ([When something is wrong](campaign-yaml.md#when-something-is-wrong)).
