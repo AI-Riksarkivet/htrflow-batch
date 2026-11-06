@@ -165,25 +165,27 @@ the original Job.
 
 **What it starts.** A new campaign, `<campaign>-retry-<n>`, with one more
 `n` than the highest retry of that campaign. It is the original's Job with
-only its name, volumes and counts changed, so its settings are copied: a
+only its name, labels, volumes and counts changed (and `suspend` dropped, so a paused original does not leave its retry paused), so its settings are copied: a
 cause that lives in the settings, such as a too-small `workdir`, is not
 fixed by a retry. A retry of a retry is named after the original, and one of
 a split campaign after its first part (`<name>-part1-retry-<n>`). Its
 ConfigMap records the volumes (`volumes.txt`), the ones left out
-(`skipped.txt`), who ran it and when. A large retry is split into parts the
+(`skipped.txt`, on the first part's ConfigMap only), who ran it and when. A large retry is split into parts the
 way `render` splits a campaign.
 
 ```
 campaign kyrk: 4 volumes, 1 done, 3 not done
-  2  retry      the volume never started ...
-  1  permanent  ...  (skipped; --include-permanent takes it)
-started: Job/kyrk-retry-1 with 2 volumes
+  2  retry      no run log: the volume never started
+  1  permanent  manifest: canvas 4 has no image (skipped; --include-permanent takes it)
+would start: Job/kyrk-retry-1 with 2 volumes
 ```
 
 The summary is the tally, then one line per kind of failure, largest first.
-`--dry-run` prints `would start: Job/<name> with N volumes` instead and
-creates nothing. When every volume is done, or all that are not failed for
-good, it prints `nothing to retry` and starts nothing.
+`--dry-run` prints the `would start:` line and creates nothing; a real run
+prints `started: Job/kyrk-retry-1 with 2 volumes` instead. With nothing to
+start, the summary is followed by `nothing to retry: all N volumes of
+<campaign> are done`, or `nothing to retry: every volume not done failed for
+good (--include-permanent takes them)`, and the exit code is `0`.
 
 **It refuses**, with one sentence on standard error and nothing created, when:
 
@@ -193,7 +195,9 @@ good, it prints `nothing to retry` and starts nothing.
   the volumes as a new campaign file);
 - another running campaign on the pipeline holds one of the volumes, or has
   no volume list to check;
-- the campaign has no stored Job to copy and its own Job is gone;
+- there is no campaign of that name in the namespace;
+- the campaign has no stored Job to copy and its own Job is gone, or the
+  stored Job cannot be read;
 - the cluster's last apply ran a converter whose prune does not know retries.
 
 A campaign applied by a converter older than this feature can be retried only
@@ -207,8 +211,8 @@ git, and removes both when that file leaves git.
 | Exit | Meaning |
 |---|---|
 | `0` | Started, a dry run, or nothing to retry. |
-| `1` | Refused, or the results or the cluster could not be read. |
-| `2` | No results address, or no credentials. |
+| `1` | Refused, or the cluster could not be read, or the results could not be read (`cannot read the results: ...`). |
+| `2` | `no results URL: ...` (pass `--results-url`), or no credentials. |
 
 ## What `apply` does, in order
 
