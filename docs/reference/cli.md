@@ -165,14 +165,18 @@ the original Job.
 
 **What it starts.** A new campaign, `<campaign>-retry-<n>`, with one more
 `n` than the highest retry of that campaign. It is the original's Job with
-only its name, labels, volumes and counts changed (and `suspend` dropped, so a paused original does not leave its retry paused), so its settings are copied: a
-cause that lives in the settings, such as a too-small `workdir`, is not
+only its name, labels, volumes and counts changed (and `suspend` dropped, so
+a paused original does not leave its retry paused), so its settings are
+copied: a cause that lives in the settings, such as a too-small `workdir`, is not
 fixed by a retry. A retry of a retry is named after the original, and one of
 a split campaign after its first part (`<name>-part1-retry-<n>`). Its
 ConfigMap records the volumes (`volumes.txt`), the ones left out (the
 annotations `htrflow.riksarkivet.se/retry-skipped`, capped at 64 KiB, and
-`retry-skipped-count`, on the first part's ConfigMap only), who ran it and when. A large retry is split into parts the
-way `render` splits a campaign.
+`retry-skipped-count`, on the first part's ConfigMap only), who ran it and
+when. A large retry is split into parts the way `render` splits a campaign.
+If the cluster refuses a write part-way, the ConfigMap just written for that
+part is deleted, and the error names every object already created and still
+live.
 
 ```
 campaign kyrk: 4 volumes, 1 done, 3 not done
@@ -205,6 +209,12 @@ A campaign applied by a converter older than this feature can be retried only
 while its Job still exists. **Upgrade the Argo CD hook's converter first
 and let it apply once**: until then `retry` refuses, because that apply
 would prune the retry.
+
+**Permissions.** The operator running `retry` needs: list and get on Jobs and
+ConfigMaps; get, update and create on the Lease `htrflow-campaigns-apply`;
+create on Jobs and ConfigMaps (dry runs included); delete on ConfigMaps, for
+taking back the one written for a part whose Job was refused; and read on the
+results prefix.
 
 **Prune keeps a retry** for as long as the original campaign's file is in
 git, and removes both when that file leaves git.
