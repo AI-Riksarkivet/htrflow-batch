@@ -888,8 +888,10 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 5127
 # from the results proxy and run logs, the copied Job, parts, the refusals and
 # the cleanup of a part-way write; cli.py +199, the command and its summary;
 # cluster.py +46, the reads, creates and the Lease mark; render.py +6, the
-# job-spec stamp a retry copies).
-check converter "$(count packages/converter/src -name '*.py')" 7123
+# job-spec stamp a retry copies). 7123 -> 7143: apply adds that stamp to a
+# finished campaign's ConfigMap that lacks it (cli._repair_stamp), so a
+# campaign applied before retries existed can be retried once its Job is gone.
+check converter "$(count packages/converter/src -name '*.py')" 7143
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
