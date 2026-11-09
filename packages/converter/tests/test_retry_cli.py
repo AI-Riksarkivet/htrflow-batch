@@ -327,3 +327,43 @@ def test_apply_prune_holds_back_an_unfinished_original_beside_a_running_retry(
     assert ("apply", "Job", "kyrk") not in cluster.calls
     assert not [c for c in cluster.calls if c[0] == "delete"]
     assert snapshot(cluster, ["campaign-kyrk-retry-1", "kyrk-retry-1"]) == kept
+
+
+def test_a_campaign_with_no_job_and_no_stamp_retries_from_a_sibling_on_its_own_word(
+    tmp_path, cluster, monkeypatch, capsys
+):
+    """The first real retry: a campaign applied by a converter older than
+    retries, its Job reaped, and the last apply in the namespace by that old
+    converter too. The settings come from another campaign's Job on the same
+    pipeline and image, and the dry run says so; the old apply is refused
+    until the operator vouches no such apply will run."""
+    from htrflow_converter import render
+
+    serve(monkeypatch, four(tmp_path, cluster))
+    cm = cluster.find("ConfigMap", "campaign-kyrk")
+    cm["metadata"]["annotations"].pop(render.JOB_SPEC_ANNOTATION)
+    cluster.live.remove(cluster.find("Job", "kyrk"))
+    cluster.leases[LEASE]["metadata"]["annotations"] = {}
+    capsys.readouterr()
+
+    assert cli.main(["retry", "kyrk", "--namespace", "htr-test", "--dry-run"]) == 1
+    out, err = capsys.readouterr()
+    assert "settings: copied from campaign loc's Job" in out
+    assert "(or pass --no-old-apply)" in err
+
+    argv = ["retry", "kyrk", "--namespace", "htr-test", "--no-old-apply"]
+    assert cli.main([*argv, "--dry-run"]) == 0
+    out, err = capsys.readouterr()
+    assert "would start: Job/kyrk-retry-1 with 2 volumes" in out
+    assert "--no-old-apply: an apply --prune by a converter older" in err
+    assert started(cluster) == []
+
+    assert cli.main(argv) == 0
+    job = cluster.find("Job", "kyrk-retry-1")
+    assert render._PRIORITY_LABEL not in job["metadata"]["labels"]
+    assert job["metadata"]["labels"][render.RETRY_OF_LABEL] == "kyrk"
+    volumes = job["spec"]["template"]["spec"]["volumes"]
+    assert {"name": "campaign", "configMap": {"name": "campaign-kyrk-retry-1"}} in [
+        {k: v for k, v in vol.items() if k in ("name", "configMap")} for vol in volumes
+    ]
+    assert cluster.leases[LEASE]["metadata"]["annotations"] == {}, "no mark claimed"
