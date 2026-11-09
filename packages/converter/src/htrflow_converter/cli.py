@@ -6,6 +6,7 @@ import argparse
 import contextlib
 import getpass
 import hashlib
+import json
 import os
 import signal
 import subprocess
@@ -16,6 +17,7 @@ from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import httpx
 import yaml
 
 from . import render
@@ -550,6 +552,10 @@ def _applied_by() -> str:
     return (name or "unknown").lower()
 
 
+def _applied_at() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _provenance(repo: Path) -> dict[str, str]:
     """What this apply adds to every campaign ConfigMap it writes. Stamped
     here and not in ``render``: ``rendered/`` has to be a pure function of
@@ -558,9 +564,7 @@ def _provenance(repo: Path) -> dict[str, str]:
     return {
         _COMMIT_ANNOTATION: _git_head(repo),
         _APPLIED_BY_ANNOTATION: _applied_by(),
-        _APPLIED_AT_ANNOTATION: datetime.now(timezone.utc).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        ),
+        _APPLIED_AT_ANNOTATION: _applied_at(),
     }
 
 
@@ -1310,7 +1314,13 @@ def _apply(
         # Imported here, not at module level, for the same reason `_cluster`
         # imports `.cluster` lazily: `validate`/`render` must never pay for
         # importing `kubernetes`.
-        from .cluster import ClusterError, LeaseLost, NotOurs, Unreachable
+        from .cluster import (
+            PRUNES_RETRIES,
+            ClusterError,
+            LeaseLost,
+            NotOurs,
+            Unreachable,
+        )
 
         try:
             # SIGTERM -- how Argo CD stops a hook -- would end the process
@@ -1323,7 +1333,7 @@ def _apply(
             cluster = _cluster(cfg.namespace)
             # One apply at a time, for the whole run: released when this
             # function returns, however it returns (C-12).
-            stack.enter_context(cluster.lease())
+            stack.enter_context(cluster.lease({PRUNES_RETRIES: "1"}))
             # (live object, declared pause) per campaign Job: the live one
             # has the uid Kueue labels the Workload with, the rendered one
             # has what git says. Warm-up Jobs are not campaigns and get no
@@ -1335,6 +1345,13 @@ def _apply(
                 print(moved, file=sys.stderr)
                 return 1
             prov = _provenance(repo)
+            # Taken before the loop sends anything: the Job as rendered,
+            # not as the pause sync or the API server leaves it.
+            job_specs = {
+                _campaign_of(o): json.dumps(o, sort_keys=True, separators=(",", ":"))
+                for o in campaigns
+                if o["kind"] == "Job"
+            }
             # Asked before anything is sent, so a finished campaign's
             # ConfigMap is not re-stamped with a new apply time either.
             # Observe before deciding. The read API writes this record in
@@ -1424,6 +1441,8 @@ def _apply(
                     if is_campaign and obj["kind"] == "ConfigMap":
                         ann = obj["metadata"].setdefault("annotations", {})
                         ann.update(prov)
+                        if campaign in job_specs:
+                            ann[render.JOB_SPEC_ANNOTATION] = job_specs[campaign]
                         ann[_JOB_UID] = _uid(lives.get(campaign))
                         records[_campaign_of(obj)] = obj
                     name = f"{obj['kind']}/{obj['metadata']['name']}"
@@ -1602,6 +1621,162 @@ def _export(args: argparse.Namespace) -> int:
     )
 
 
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
+def _summary(campaign: str, outcomes, include_permanent: bool) -> list[str]:
+    """The campaign's tally, then one line per kind of failure, largest first."""
+    from .retry import reason_group
+
+    groups: dict[tuple[str, str], int] = {}
+    for o in outcomes:
+        if o.state != "done":
+            key = (o.state, reason_group(o.reason))
+            groups[key] = groups.get(key, 0) + 1
+    done = len(outcomes) - sum(groups.values())
+    lines = [
+        f"campaign {campaign}: {_plural(len(outcomes), 'volume')}, {done} done, "
+        f"{sum(groups.values())} not done"
+    ]
+    width = len(str(max(groups.values(), default=0)))
+    # Largest first; on a tie the ones that will be retried come first.
+    for (state, reason), n in sorted(
+        groups.items(), key=lambda kv: (-kv[1], kv[0][0] != "retry", kv[0][1])
+    ):
+        skipped = state == "permanent" and not include_permanent
+        note = " (skipped; --include-permanent takes it)" if skipped else ""
+        lines.append(f"  {n:>{width}}  {state:<9}  {reason}{note}")
+    return lines
+
+
+def _credentials(args: argparse.Namespace) -> tuple[str, str] | None:
+    try:
+        user = args.user or os.environ.get("HTRFLOW_USER") or input("User: ")
+    except EOFError:
+        print("no user name: pass --user or set HTRFLOW_USER", file=sys.stderr)
+        return None
+    try:
+        password = os.environ.get("HTRFLOW_PASSWORD") or getpass.getpass()
+    except EOFError:
+        print("no password: set HTRFLOW_PASSWORD", file=sys.stderr)
+        return None
+    return user, password
+
+
+def _retry(args: argparse.Namespace) -> int:
+    from .cluster import ClusterError
+    from .export_http import Forbidden, Results, ResultsUnavailable, SessionLost
+    from .retry import (
+        find_unfinished,
+        load_original,
+        next_name,
+        old_prune_refusal,
+        refusal,
+        retry_objects,
+        start,
+    )
+
+    try:
+        cluster = _cluster(args.namespace)
+        original = load_original(cluster, args.campaign)
+        env = original.source_job["spec"]["template"]["spec"]["containers"][0]
+        from_job = next(
+            (e.get("value") for e in env.get("env", []) if e["name"] == "RESULTS_URL"),
+            None,
+        )
+        results_url = args.results_url or from_job
+        if not results_url:
+            print(
+                f"no results URL: campaign {args.campaign}'s Job names none; "
+                "pass --results-url",
+                file=sys.stderr,
+            )
+            return 2
+        creds = _credentials(args)
+        if creds is None:
+            return 2
+        # The results fetch can take minutes and does not renew the Lease, so
+        # none is held until the checks and the writes below.
+        with httpx.Client(
+            timeout=httpx.Timeout(60.0, connect=10.0), follow_redirects=False
+        ) as client:
+            results = Results(results_url, *creds, client)
+            try:
+                results.login()
+                outcomes = find_unfinished(
+                    results, args.namespace, original.pipeline, original.lines
+                )
+            except (SessionLost, Forbidden, ResultsUnavailable) as exc:
+                print(f"cannot read the results: {exc}", file=sys.stderr)
+                return 1
+        for line in _summary(args.campaign, outcomes, args.include_permanent):
+            print(line)
+        wanted = ("retry", "permanent") if args.include_permanent else ("retry",)
+        take = [o for o in outcomes if o.state in wanted]
+        if not take:
+            if all(o.state == "done" for o in outcomes):
+                print(
+                    f"nothing to retry: all {_plural(len(outcomes), 'volume')} of "
+                    f"{args.campaign} are done"
+                )
+            else:
+                print(
+                    "nothing to retry: every volume not done failed for good "
+                    "(--include-permanent takes them)"
+                )
+            return 0
+        skipped = [o.id for o in outcomes if o.state == "permanent" and o not in take]
+        ids = {o.id for o in take}
+        lines = [o.line for o in take]
+        prov = {
+            _APPLIED_BY_ANNOTATION: _applied_by(),
+            _APPLIED_AT_ANNOTATION: _applied_at(),
+        }
+        # Refused before the Lease is taken: taking it would write these
+        # marks back, and a refused retry changes nothing.
+        said = old_prune_refusal(cluster)
+        if said:
+            print(said, file=sys.stderr)
+            return 1
+        marks = cluster.lease_marks()
+
+        def plan() -> list[dict] | None:
+            said = refusal(cluster, original, ids)
+            if said:
+                print(said, file=sys.stderr)
+                return None
+            name = next_name(cluster, original.root)
+            return retry_objects(original, name, lines, skipped, prov)
+
+        def jobs(objects: list[dict]) -> list[tuple[str, int]]:
+            return [
+                (o["metadata"]["name"], o["spec"]["completions"])
+                for o in objects
+                if o["kind"] == "Job"
+            ]
+
+        if args.dry_run:
+            objects = plan()
+            if objects is None:
+                return 1
+            for name, n in jobs(objects):
+                print(f"would start: Job/{name} with {_plural(n, 'volume')}")
+            return 0
+        # Held across the checks and the writes: no apply can slip in between.
+        with cluster.lease(marks):
+            objects = plan()
+            if objects is None:
+                return 1
+            start(cluster, objects)
+        for name, n in jobs(objects):
+            print(f"started: Job/{name} with {_plural(n, 'volume')}")
+        return 0
+    except ClusterError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="htrflow-campaigns")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1733,7 +1908,35 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="check and report; write nothing to the target",
     )
+    retry_p = sub.add_parser(
+        "retry",
+        help="start a campaign's unfinished volumes again as a new campaign",
+        description="Reads the results proxy to see which of CAMPAIGN's "
+        "volumes have no manifest, and starts them as CAMPAIGN-retry-N: the "
+        "original's Job with only the volumes changed. Volumes that failed "
+        "for good are left out unless --include-permanent. The password "
+        "comes from HTRFLOW_PASSWORD or a prompt, never an argument.",
+    )
+    retry_p.add_argument("campaign", help="the campaign (Job) name to retry")
+    retry_p.add_argument("--namespace", required=True)
+    retry_p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print what would start; create nothing",
+    )
+    retry_p.add_argument(
+        "--include-permanent",
+        action="store_true",
+        help="retry the volumes that failed for good too",
+    )
+    retry_p.add_argument("--user", help="results login (else HTRFLOW_USER, else asked)")
+    retry_p.add_argument(
+        "--results-url",
+        help="the site's results address (else RESULTS_URL on the campaign's Job)",
+    )
     args = parser.parse_args(argv)
+    if args.command == "retry":
+        return _retry(args)
     if args.command == "export":
         return _export(args)
     if args.command == "init":

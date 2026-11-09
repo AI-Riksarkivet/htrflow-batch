@@ -33,7 +33,7 @@ from kubernetes.client.exceptions import ApiException
 from urllib3.exceptions import HTTPError
 
 from .models import STATUS_SUFFIX
-from .render import CAMPAIGN_SELECTOR, WARMUP_PREFIX
+from .render import CAMPAIGN_SELECTOR, RETRY_OF_LABEL, WARMUP_PREFIX
 
 #: Field manager for every apply: what lets a field this tool stopped
 #: rendering be removed from a live object -- the role `kubectl`'s
@@ -96,6 +96,9 @@ DELETE_WAIT = 60
 #: created. A coordination.k8s.io Lease, the object Kubernetes' own
 #: controllers elect a leader with, held for the apply's whole run.
 LEASE = "htrflow-campaigns-apply"
+#: On ``LEASE``, set by an apply that prunes retry Jobs the repo does not
+#: declare. A retry reads it to know an apply here would delete its Job.
+PRUNES_RETRIES = "htrflow.riksarkivet.se/prunes-retries"
 #: Seconds the Lease holds without a renewal: past it, the holder is taken
 #: for dead (a SIGKILLed pod) and the next apply may take over. The apply
 #: renews before any request once ``LEASE_RENEW`` has passed, so the longest
@@ -370,8 +373,11 @@ class Cluster:
     _clock: tuple[datetime, float] | None = None
 
     @contextlib.contextmanager
-    def lease(self):
+    def lease(self, marks: dict[str, str] | None = None):
         """Hold ``LEASE`` for the ``with`` block, or refuse to start.
+
+        ``marks`` become the Lease's annotations, so whoever reads
+        ``lease_marks`` sees what the holder will do.
 
         A Lease held by someone else and renewed within ``LEASE_SECONDS`` is
         a refusal; past that its holder died, and it is taken over. Both
@@ -388,7 +394,11 @@ class Cluster:
         body = {
             "apiVersion": "coordination.k8s.io/v1",
             "kind": "Lease",
-            "metadata": {"name": LEASE, "namespace": self.namespace},
+            "metadata": {
+                "name": LEASE,
+                "namespace": self.namespace,
+                "annotations": dict(marks or {}),
+            },
             "spec": {
                 "holderIdentity": f"{socket.gethostname()}/{os.getpid()}/"
                 f"{uuid.uuid4().hex[:8]}",
@@ -414,6 +424,11 @@ class Cluster:
                 held["spec"]["holderIdentity"] = None
                 with contextlib.suppress(ClusterError):
                     self._write_ours(held, mine)
+
+    def lease_marks(self) -> dict[str, str]:
+        """The live Lease's annotations; ``{}`` when there is no Lease."""
+        live = self._lease("read")
+        return dict((live or {}).get("metadata", {}).get("annotations") or {})
 
     def _due(self) -> None:
         """Before every request: renew the Lease when ``LEASE_RENEW`` has
@@ -657,6 +672,18 @@ class Cluster:
         self._note(kind, name, live)
         return live
 
+    def delete_configmap(self, name: str) -> None:
+        """Delete ConfigMap ``name``; already gone is done. Only for taking
+        back a ConfigMap this process just wrote (``retry.start``)."""
+        with _errors("delete", "ConfigMap", name, self.namespace):
+            _retrying(
+                self._method("ConfigMap", "delete"),
+                name,
+                self.namespace,
+                gone_is_done=True,
+                _request_timeout=REQUEST_TIMEOUT,
+            )
+
     def labelled(self, kind: str) -> list[dict]:
         """Every converter-labelled ``kind`` in the namespace."""
         return _raw(
@@ -673,6 +700,10 @@ class Cluster:
         """Delete every labelled Job/ConfigMap not in ``rendered``; return
         ``(what, sentence)`` for each object (or kind) it could not.
 
+        A retry made in the cluster (``RETRY_OF_LABEL``) is no campaign
+        file's output, yet is kept while the campaign ConfigMap of the Job it
+        retries is rendered, and pruned when that campaign leaves git.
+
         ``rendered`` is ``(kind, name)`` for **all** rendered objects,
         pipelines included: pruning against the campaigns alone would delete
         the pipeline ConfigMaps and warm-up Jobs the same apply just wrote.
@@ -680,17 +711,27 @@ class Cluster:
         caller reports what is left rather than stopping (3090).
         """
         problems: list[tuple[str, str]] = []
+        listings: dict[str, list[dict]] = {}
         for kind in _KINDS:
             try:
-                listed = self.labelled(kind)
+                listings[kind] = self.labelled(kind)
             except Unreachable:
                 raise
             except ClusterError as e:
                 problems.append((kind, str(e)))
-                continue
+        # A retry (made in the cluster, never rendered from a file) lives as
+        # long as the campaign it retries is in git, and goes with it.
+        kept = set(rendered)
+        for kind, listed in listings.items():
+            for item in listed:
+                meta = item["metadata"]
+                of = (meta.get("labels") or {}).get(RETRY_OF_LABEL)
+                if of and ("ConfigMap", f"campaign-{of}") in rendered:
+                    kept.add((kind, meta["name"]))
+        for kind, listed in listings.items():
             for item in listed:
                 name = item["metadata"]["name"]
-                if (kind, name) in rendered or self._kept_status(kind, name, rendered):
+                if (kind, name) in kept or self._kept_status(kind, name, kept):
                     continue
                 extra = {"propagation_policy": "Background"} if kind == "Job" else {}
                 try:
@@ -712,14 +753,15 @@ class Cluster:
         return problems
 
     @staticmethod
-    def _kept_status(kind: str, name: str, rendered: set[tuple[str, str]]) -> bool:
+    def _kept_status(kind: str, name: str, kept: set[tuple[str, str]]) -> bool:
         """A campaign's status ConfigMap (B76) is written by the read API
         and never rendered, so a prune would delete it on sight. It belongs
         to the campaign ConfigMap it is named after: kept while that one is
-        rendered, pruned with it when the campaign file leaves git."""
+        kept (rendered, or a retry kept with its original), pruned with it
+        when the campaign leaves git."""
         if kind != "ConfigMap" or not name.endswith(STATUS_SUFFIX):
             return False
-        return (kind, name.removesuffix(STATUS_SUFFIX)) in rendered
+        return (kind, name.removesuffix(STATUS_SUFFIX)) in kept
 
     def _workload(self, uid: str) -> dict | None:
         """The Kueue Workload of the Job with ``uid``. Kueue labels it with

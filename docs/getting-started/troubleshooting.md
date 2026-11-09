@@ -144,15 +144,31 @@ so; nothing will run it again in that campaign.
 
 ## Re-run a failed volume
 
-1. Fix the cause: a model, a manifest URL, a pipeline bug.
-2. Add the volume to a **new** campaign file. The old campaign cannot be
-   edited: campaigns are append-only, and removing the volume from it is
-   refused too.
+**Check**: what would be retried, nothing created.
 
-On the same pipeline id, the apply holds the new campaign back while a
-campaign that shares the volume is still running, since both would write
-the same results; it says so and starts once the old one finishes. Under a
-new pipeline id it starts at once.
+```bash
+htrflow-campaigns retry <campaign> --namespace <namespace> --dry-run
+```
+
+It asks for the results login (or reads `HTRFLOW_USER` and
+`HTRFLOW_PASSWORD`) and prints the volumes without results, grouped by
+reason.
+
+**Fix**: fix the cause (a model, a manifest URL, a pipeline bug), then run it
+without `--dry-run`. The unfinished volumes start as `<campaign>-retry-<n>`.
+Volumes that failed for good are skipped; `--include-permanent` takes them.
+The retry copies the campaign's settings, so a cause in the settings (a
+too-small `workdir`, say) needs a new campaign file instead. If `retry`
+refuses, it says why in one sentence. A campaign applied by an older
+converter may need the Argo CD hook's converter upgraded and one apply first
+([`retry`](../reference/cli.md#retry-starting-failed-volumes-again)).
+
+The other way is a **new** campaign file with the volumes. The old campaign
+cannot be edited: campaigns are append-only, and removing the volume from it
+is refused too. On the same pipeline id, the apply holds the new campaign
+back while a campaign that shares the volume is still running, since both
+would write the same results; it says so and starts once the old one
+finishes. Under a new pipeline id it starts at once.
 
 ## Cannot log in
 
