@@ -15,7 +15,7 @@
 # The mount is optional — without it the stock CA set is used.
 
 # ---- Stage 1: the campaign browser (SvelteKit, adapter-static -> dist/) ----
-FROM oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS spa
+FROM oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d AS spa
 WORKDIR /app
 COPY frontend/package.json frontend/bun.lock ./
 # RA hosts sit behind a TLS-intercepting proxy; CI does not — only point bun
@@ -154,7 +154,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # packages a slim base brings along and Trivy keeps flagging (perl,
 # util-linux, ncurses, sqlite, …) are not in it.
 # Nothing execs into this container: the chart probes /healthz over HTTP.
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:b7e81cb1af38d9345680e68bcf564d388f96304e25222030fc8c051faf8565b3
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cc66d222f0a7ec996b78a99fe76a969bc80b539a5016ad866c14d1949bc6d0ab
 LABEL org.opencontainers.image.licenses="EUPL-1.2"
 COPY --from=venv /opt/python /opt/python
 COPY --from=venv /app/.venv /app/.venv
