@@ -179,7 +179,7 @@ copied: a cause that lives in the settings, such as a too-small `workdir`, is no
 fixed by a retry. A retry of a retry is named after the original, and one of
 a split campaign after its first part (`<name>-part1-retry-<n>`). Its
 ConfigMap records the volumes (`volumes.txt`), the ones left out (the
-annotations `htrflow.riksarkivet.se/retry-skipped`, capped at 64 KiB, and
+annotations `<label-domain>/retry-skipped`, capped at 64 KiB, and
 `retry-skipped-count`, on the first part's ConfigMap only), who ran it and
 when. A large retry is split into parts the way `render` splits a campaign.
 If the cluster refuses a write part-way, the ConfigMap just written for that
