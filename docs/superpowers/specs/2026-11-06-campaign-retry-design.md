@@ -190,3 +190,17 @@ called done. Not against production.
   render's sync ConfigMap, and `retry` refuses, naming the version, when the
   last apply in the namespace ran a converter that does not know retries.
   The release notes and the CLI reference say: upgrade the hook first.
+
+## Amendment 2026-11-09: campaigns applied before the stamp
+
+The first real retry met the case this design refused: a campaign applied by
+a converter older than the `job-spec` stamp, whose Job the TTL had reaped. It
+is the common case, not a rare one: a large campaign that failed in bulk is
+usually found after its Job is gone. Every apply renders that campaign's Job
+anyway, and leaves it alone because it has finished. So `apply` now adds the
+rendered Job as the stamp to a finished campaign's ConfigMap that lacks one,
+and adds nothing else: no `job-uid` without a live Job (an empty one makes the
+record unbelieved), no new apply time, no Job. A stamp already there is never
+replaced. The stored Job is the repo's render at that apply, so a setting
+changed since the campaign ran is the one the retry gets. `retry`'s refusal
+for a missing stamp now says that one apply by this converter records it.
