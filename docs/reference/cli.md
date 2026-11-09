@@ -213,10 +213,15 @@ good (--include-permanent takes them)`, and the exit code is `0`.
   stored Job cannot be read;
 - the cluster's last apply ran a converter whose prune does not know retries.
 
-A campaign applied by a converter older than this feature can be retried only
-while its Job still exists. **Upgrade the Argo CD hook's converter first
-and let it apply once**: until then `retry` refuses, because that apply
-would prune the retry.
+A campaign applied by a converter older than this feature has no stored Job.
+**Upgrade the Argo CD hook's converter first and let it apply once**: until
+then `retry` refuses, because that apply would prune the retry. The same
+apply stores the Job on every finished campaign that lacks one and whose
+campaign file is still in the repo: it renders that Job anyway, and adds it
+to the campaign's ConfigMap without running anything again. The stored Job is
+what the repo renders at that apply, so a setting changed since the campaign
+ran, such as a raised `workdir`, is the one a retry gets. A stored Job that
+is already there is never replaced.
 
 **Permissions.** The operator running `retry` needs: list and get on Jobs and
 ConfigMaps; get, update and create on the Lease `htrflow-campaigns-apply`;
@@ -538,6 +543,10 @@ that is fine once the old campaign is over.
   record about another Job, or about a Job never created, is not believed:
   `apply` says so and applies the campaign. A ConfigMap from before the
   stamp existed carries no uid, and its record is believed.
+- **Left alone is not left unrecorded.** A finished campaign's ConfigMap
+  that lacks the stored Job (`job-spec`) a [retry](#retry-starting-failed-volumes-again)
+  copies, or a `job-uid` while its Job is still there, gets the missing one
+  and nothing else: its volumes, its apply time and its Job stay as they were.
 - **A Job or record that cannot be read** leaves that campaign exactly as
   it is, named, with exit `3`.
 - **There is no `--force`.** A campaign that should run again is a new

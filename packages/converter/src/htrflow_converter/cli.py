@@ -695,16 +695,21 @@ def _restamp(cluster, record: dict | None, live: dict) -> None:
         print(f"{_NO_UID.format(name=_campaign_of(record))}{e}", file=sys.stderr)
 
 
-def _repair_stamp(cluster, name: str, job: dict | None) -> None:
+_NO_SPEC = "could not record campaign {name}'s Job settings, continuing without them: "
+
+
+def _repair_stamp(cluster, name: str, job: dict | None, spec: str | None) -> None:
     """A finished campaign is left alone, so its ConfigMap is not re-applied
-    -- and a uid ``_restamp`` failed to write (a refused write, a killed
-    apply) would stay missing, and the record would not be believed once
-    the Job is reaped: the whole campaign run again. While the Job is still
-    there, the live ConfigMap is sent back as it is, with the uid added."""
+    -- and a stamp it lacks would stay missing: a uid ``_restamp`` failed to
+    write, without which the record is not believed once the Job is reaped
+    (the whole campaign run again); or, on a campaign applied before they
+    were stamped, the Job's settings (``spec``, this render's), without which
+    a retry has nothing to copy once the Job is reaped. The live ConfigMap
+    is sent back as it is with what is missing added: the uid only while the
+    Job is there (an empty one would make the record unbelieved), the
+    settings only where none are (a stamp that is there is the campaign's)."""
     from .cluster import ClusterError, Unreachable
 
-    if job is None:
-        return
     try:
         live = cluster.get("ConfigMap", f"campaign-{name}")
     except Unreachable:
@@ -715,11 +720,25 @@ def _repair_stamp(cluster, name: str, job: dict | None) -> None:
     if live is None:
         return
     meta = live["metadata"]
-    keep = {k: meta.get(k) or {} for k in ("labels", "annotations")}
+    ann = dict(meta.get("annotations") or {})
+    missing = {}
+    if spec is not None and render.JOB_SPEC_ANNOTATION not in ann:
+        missing[render.JOB_SPEC_ANNOTATION] = spec
+    if job is not None and ann.get(_JOB_UID) != _uid(job):
+        missing[_JOB_UID] = _uid(job)
+    if not missing:
+        return
     body = {"apiVersion": "v1", "kind": "ConfigMap", "data": live.get("data") or {},
             "metadata": {"name": meta["name"], "namespace": meta.get("namespace"),
-                         **keep}}  # fmt: skip
-    _restamp(cluster, body, job)
+                         "labels": meta.get("labels") or {},
+                         "annotations": {**ann, **missing}}}  # fmt: skip
+    try:
+        cluster.apply(body)
+    except Unreachable:
+        raise
+    except ClusterError as e:
+        said = _NO_UID if _JOB_UID in missing else _NO_SPEC
+        print(f"{said.format(name=name)}{e}", file=sys.stderr)
 
 
 def _record_and_decide(
@@ -1404,7 +1423,7 @@ def _apply(
                 if said is not None:
                     done.add(name)
                     print(said)
-                    _repair_stamp(cluster, name, lives[name])
+                    _repair_stamp(cluster, name, lives[name], job_specs.get(name))
             _claim_volumes(cluster, campaigns, volumes_of, done, blocked, running)
             _check_flavors(cluster, cfg, pipelines, campaigns, done, blocked)
             mounting = _mounts_foreign(cluster, pipelines + campaigns)

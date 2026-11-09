@@ -126,8 +126,9 @@ _CONTROLLER_LABELS = ("controller-uid", "job-name")
 _CONTROLLER_PREFIX = "batch.kubernetes.io/"
 _NO_STAMP = (
     "campaign {name} was applied before retries existed and its Job is gone, "
-    "so there is no Job left to copy its settings from — run its volumes as a "
-    "new campaign file instead"
+    "so its settings are not recorded yet — the next apply by this converter "
+    "version records them while its campaign file is in the repo; let the "
+    "Argo CD hook sync once, then retry"
 )
 _OLD_PRUNE = (
     "the last apply in namespace {ns} ran a converter whose prune does not "

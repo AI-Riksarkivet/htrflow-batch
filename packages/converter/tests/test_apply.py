@@ -427,12 +427,20 @@ def test_a_finished_campaign_whose_job_was_reaped_is_left_alone(
 ):
     """The whole point of B76: the Job is gone (TTL), so an apply would
     recreate it and re-run every volume. The record says it is done and the
-    volume list has not moved, so nothing is sent for it."""
+    volume list has not moved, so no Job is sent for it. Its record gets the
+    one thing it lacks, the Job's settings for a retry, and nothing else."""
     repo, out = _repo(tmp_path), tmp_path / "rendered"
-    cluster.live = [_record("kyrk"), _status("kyrk", "Succeeded")]
+    record = _record("kyrk")
+    cluster.live = [copy.deepcopy(record), _status("kyrk", "Succeeded")]
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
     applied = [c[2] for c in cluster.of("apply")]
-    assert "kyrk" not in applied and "campaign-kyrk" not in applied
+    assert "kyrk" not in applied
+    live = _live(cluster, "campaign-kyrk")
+    assert live["data"] == record["data"]
+    ann = dict(live["metadata"]["annotations"])
+    assert render.JOB_SPEC_ANNOTATION in ann
+    del ann[render.JOB_SPEC_ANNOTATION]
+    assert ann == (record["metadata"].get("annotations") or {})
     assert "loc" in applied, "the other campaign is applied as usual"
     assert "campaign kyrk finished 2026-09-08, unchanged, left alone" in (
         capsys.readouterr().out
@@ -2306,3 +2314,39 @@ def test_apply_stamps_the_rendered_job_on_its_campaign_configmap(tmp_path, clust
         assert (
             json.loads(cm["metadata"]["annotations"][render.JOB_SPEC_ANNOTATION]) == job
         )
+
+
+def test_a_finished_campaign_applied_before_stamps_gets_its_job_spec(tmp_path, cluster):
+    """A campaign applied by a converter older than retry has no job-spec,
+    and once its Job is reaped retry has nothing to copy. The next apply
+    renders that Job anyway and leaves the finished campaign alone -- so it
+    adds the stamp, and only the stamp: no re-run, no new apply time, and no
+    job-uid (an empty one would make its record unbelieved)."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    record = _live(cluster, "campaign-kyrk")
+    ann = record["metadata"]["annotations"]
+    del ann[render.JOB_SPEC_ANNOTATION]
+    del ann[JOB_UID]
+    applied_at = "htrflow.riksarkivet.se/applied-at"
+    before = ann[applied_at]
+    _web_writes(cluster, "kyrk", "PartiallyFailed", "uid-old")
+    _drop_job(cluster, "kyrk")
+    cluster.calls.clear()
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert ("apply", "Job", "kyrk") not in cluster.calls, "left alone"
+    ann = _live(cluster, "campaign-kyrk")["metadata"]["annotations"]
+    rendered = next(
+        o
+        for o in cli._objects(out / "campaigns")
+        if o["kind"] == "Job" and o["metadata"]["name"] == "kyrk"
+    )
+    assert json.loads(ann[render.JOB_SPEC_ANNOTATION]) == rendered
+    assert JOB_UID not in ann
+    assert ann[applied_at] == before
+
+    # A stamp already there is the campaign's own settings: never replaced.
+    ann[render.JOB_SPEC_ANNOTATION] = '{"kept": true}'
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    ann = _live(cluster, "campaign-kyrk")["metadata"]["annotations"]
+    assert ann[render.JOB_SPEC_ANNOTATION] == '{"kept": true}'
