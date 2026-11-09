@@ -127,6 +127,10 @@ _RETRY_N = re.compile(r"-retry-(\d+)$")
 #: original's uid and name. ``spec.selector`` is dropped for the same reason.
 _CONTROLLER_LABELS = ("controller-uid", "job-name")
 _CONTROLLER_PREFIX = "batch.kubernetes.io/"
+#: What Kueue writes on a pod template at admission (render puts none there).
+#: It stays once the Job ends, and Kueue finishes a copy carrying another
+#: workload's name without starting it.
+_KUEUE_PREFIX = "kueue.x-k8s.io/"
 _NO_STAMP = (
     "campaign {name} was applied before retries existed and its Job is gone, "
     "and no other campaign on pipeline {pipeline} with image {digest} has a "
@@ -195,7 +199,8 @@ def _uncontrolled(labels: dict[str, str]) -> dict[str, str]:
 def _as_applied(live: dict) -> dict:
     """A live Job cut back to what an apply sends: no status, no server
     metadata, and none of what the Job controller added to tie the Job to
-    its pods -- a copy sent with those would claim the original's."""
+    its pods, nor what Kueue added on admitting it -- a copy sent with those
+    would claim the original's."""
     meta = live.get("metadata") or {}
     job = {
         "apiVersion": live.get("apiVersion", "batch/v1"),
@@ -213,8 +218,13 @@ def _as_applied(live: dict) -> dict:
     tmeta = job["spec"].get("template", {}).get("metadata")
     if tmeta is not None:
         for key in ("labels", "annotations"):
-            if key in tmeta:
-                tmeta[key] = _uncontrolled(tmeta[key])
+            kept = {
+                k: v
+                for k, v in _uncontrolled(tmeta.pop(key, None) or {}).items()
+                if not k.startswith(_KUEUE_PREFIX)
+            }
+            if kept:
+                tmeta[key] = kept
     return job
 
 

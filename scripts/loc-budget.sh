@@ -895,7 +895,10 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 5127
 # campaign's Job (live or stamped) on the same pipeline and image, its
 # priority dropped (retry._sibling), says so in its summary, and takes
 # --no-old-apply where no hook runs an old converter's prune.
-check converter "$(count packages/converter/src -name '*.py')" 7228
+# 7228 -> 7238: a copied live Job's pod template sheds the keys Kueue wrote
+# on admitting it (retry._KUEUE_PREFIX); with them Kueue finished the retry's
+# workload unstarted, on a conflict with the original's workload name.
+check converter "$(count packages/converter/src -name '*.py')" 7238
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

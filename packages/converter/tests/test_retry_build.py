@@ -129,7 +129,15 @@ def test_load_original_falls_back_to_the_live_job_without_a_stamp(tmp_path, clus
         "controller-uid": "u", "job-name": "kyrk",
         "batch.kubernetes.io/controller-uid": "u",
         "batch.kubernetes.io/job-name": "kyrk",
+        # Kueue's PodSetUpdate at admission, still there once the Job ends;
+        # a copy carrying them is finished by Kueue without ever starting.
+        "kueue.x-k8s.io/podset": "main",
+        "kueue.x-k8s.io/cluster-queue-name": "htr-batch-cq",
+        "kueue.x-k8s.io/local-queue-name": "htr-batch",
     })  # fmt: skip
+    live["spec"]["template"]["metadata"].setdefault("annotations", {})[
+        "kueue.x-k8s.io/workload"
+    ] = "job-kyrk-1a2b3"
     o = load_original(cluster, "kyrk")
     job = o.source_job
     tmpl = job["spec"]["template"]["metadata"].get("labels", {})
