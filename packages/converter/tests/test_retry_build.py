@@ -147,13 +147,71 @@ def test_load_original_falls_back_to_the_live_job_without_a_stamp(tmp_path, clus
     assert job["metadata"] == stamped["metadata"]
 
 
+def _reaped_unstamped(cluster, name: str) -> None:
+    """``name`` as a campaign applied before the stamp, whose Job the TTL
+    reaped."""
+    _annotations(cluster, f"campaign-{name}").pop(JOB_SPEC_ANNOTATION)
+    cluster.live.remove(cluster.find("Job", name))
+
+
 def test_load_original_refuses_with_neither(tmp_path, cluster):
     _applied(tmp_path, cluster)
-    _annotations(cluster, "campaign-kyrk").pop(JOB_SPEC_ANNOTATION)
-    cluster.live.remove(cluster.find("Job", "kyrk"))  # the TTL reaped it
+    _reaped_unstamped(cluster, "kyrk")
+    _reaped_unstamped(cluster, "loc")
     with pytest.raises(
         ClusterError, match="applied before retries existed and its Job is gone"
     ):
+        load_original(cluster, "kyrk")
+
+
+def test_load_original_copies_a_live_campaign_job_on_the_same_pipeline(
+    tmp_path, cluster
+):
+    """Every setting a campaign Job has comes from its pipeline and
+    converter.yaml, except its name, volumes, counts, window and priority.
+    So with its own Job gone and never stamped, a campaign's settings are a
+    sibling's on the same pipeline and image -- without the sibling's
+    priority, which was the sibling's own choice."""
+    _applied(tmp_path, cluster)
+    _reaped_unstamped(cluster, "kyrk")
+    _annotations(cluster, "campaign-loc").pop(JOB_SPEC_ANNOTATION)
+    sibling = copy.deepcopy(cluster.find("Job", "loc"))
+    assert sibling["metadata"]["labels"][render._PRIORITY_LABEL] == "htr-interactive"
+    o = load_original(cluster, "kyrk")
+    assert o.settings_from == "loc"
+    assert render._PRIORITY_LABEL not in o.source_job["metadata"]["labels"]
+    assert o.source_job["spec"]["template"] == sibling["spec"]["template"]
+    cm, job = retry_objects(o, "kyrk-retry-1", o.lines, [], PROV)
+    assert job["metadata"]["name"] == "kyrk-retry-1"
+    assert job["metadata"]["labels"][CAMPAIGN_LABEL] == "kyrk-retry-1"
+    assert job["metadata"]["labels"][RETRY_OF_LABEL] == "kyrk"
+    mounts = [v for v in job["spec"]["template"]["spec"]["volumes"] if "configMap" in v]
+    names = {v["configMap"]["name"] for v in mounts}
+    assert "campaign-kyrk-retry-1" in names and "campaign-loc" not in names
+    assert job["spec"]["completions"] == len(o.lines)
+
+
+def test_load_original_copies_a_sibling_s_stamp_when_its_job_is_gone_too(
+    tmp_path, cluster
+):
+    _applied(tmp_path, cluster)
+    _reaped_unstamped(cluster, "kyrk")
+    stamped = json.loads(_annotations(cluster, "campaign-loc")[JOB_SPEC_ANNOTATION])
+    cluster.live.remove(cluster.find("Job", "loc"))
+    o = load_original(cluster, "kyrk")
+    assert o.settings_from == "loc"
+    assert o.source_job["spec"] == stamped["spec"]
+
+
+def test_load_original_takes_no_sibling_on_another_image(tmp_path, cluster):
+    """A sibling whose image is not the one this campaign ran is another
+    recipe: its settings are not this campaign's."""
+    _applied(tmp_path, cluster)
+    _reaped_unstamped(cluster, "kyrk")
+    _annotations(cluster, "campaign-loc").pop(JOB_SPEC_ANNOTATION)
+    pod = cluster.find("Job", "loc")["spec"]["template"]["spec"]
+    pod["containers"][0]["image"] = "registry.example.org/other@sha256:" + "0" * 64
+    with pytest.raises(ClusterError, match="no other campaign on pipeline demo-v1"):
         load_original(cluster, "kyrk")
 
 
