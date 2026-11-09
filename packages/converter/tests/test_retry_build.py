@@ -135,10 +135,12 @@ def test_load_original_falls_back_to_the_live_job_without_a_stamp(tmp_path, clus
     tmpl = job["spec"]["template"]["metadata"].get("labels", {})
     assert "selector" not in job["spec"] and "manualSelector" not in job["spec"]
     assert "controller-uid" not in tmpl and "job-name" not in tmpl
-    assert not any(k.startswith("batch.kubernetes.io/") for k in tmpl)
-    assert not any(
-        k.startswith("batch.kubernetes.io/") for k in job["metadata"]["labels"]
-    )
+
+    def k8s_owned(labels: dict[str, str]) -> set[str]:
+        return {k for k in labels if k.partition("/")[0] == "batch.kubernetes.io"}
+
+    assert k8s_owned(tmpl) == set()
+    assert k8s_owned(job["metadata"]["labels"]) == set()
     assert set(job) == {"apiVersion", "kind", "metadata", "spec"}
     assert set(job["metadata"]) == {"name", "namespace", "labels", "annotations"}
     assert job["spec"]["template"] == stamped["spec"]["template"]
