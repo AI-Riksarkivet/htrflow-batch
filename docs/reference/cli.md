@@ -155,8 +155,8 @@ The design is in the campaign export spec among the
 
 ```
 htrflow-campaigns retry <campaign> --namespace <ns>
-    [--include-permanent] [--no-old-apply] [--results-url URL] [--user NAME]
-    [--dry-run]
+    [--pipeline ID] [--include-permanent] [--no-old-apply]
+    [--results-url URL] [--user NAME] [--dry-run]
 ```
 
 **What it reads.** The campaign's record in the cluster (its volume list and
@@ -206,7 +206,12 @@ good (--include-permanent takes them)`, and the exit code is `0`.
 - the campaign, or an earlier retry of it, is still running;
 - the pipeline's warm-up Job is missing or not complete, or no longer runs
   the image the campaign ran (a retry runs only what the repo approved: run
-  the volumes as a new campaign file);
+  the volumes with `--pipeline` on the pipeline that replaced it, or as a new
+  campaign file);
+- `--pipeline` names a pipeline whose ConfigMap or warm-up Job is not in the
+  namespace, or, with no campaign on it to copy, one that runs at another
+  size than the campaign's pipeline (or the campaign's pipeline is gone, so
+  its size is not known);
 - another running campaign on the pipeline holds one of the volumes, or has
   no volume list to check;
 - there is no campaign of that name in the namespace;
@@ -237,6 +242,28 @@ to the campaign's ConfigMap without running anything again. The stored Job is
 what the repo renders at that apply, so a setting changed since the campaign
 ran, such as a raised `workdir`, is the one a retry gets. A stored Job that
 is already there is never replaced.
+
+**On another pipeline.** `--pipeline <id>` runs the volumes on a pipeline the
+repo has applied in the namespace, instead of the one the campaign ran on.
+Done means done there: a volume counts as done when that pipeline's results
+hold its `manifest.json`, so the first such retry takes every volume and a
+later one picks up where it stopped. Results are kept per pipeline, so the
+old pipeline's stay where they are. The settings come from a campaign that
+has run on that pipeline and its image, live or stored, the newest first,
+with the campaign's own priority; with none, the campaign's own Job is moved
+onto the pipeline from its warm-up Job: the image, the pipeline ConfigMap,
+the model-cache directory and the warm-up marker. A pipeline file's own
+`max_seconds` and `ttl_seconds_after_finished` are not on the cluster, so a
+moved Job keeps the deadline and TTL it had. The summary says which:
+
+```
+pipeline: demo-v1 -> demo-v2, image <image@digest>
+settings: kyrk's Job moved onto demo-v2; its per-volume deadline and TTL stay as they were, ...
+```
+
+The retry is recorded on the new pipeline, so retrying it again stays there.
+The pipeline's file has to stay in the repo while it runs, as for any
+campaign.
 
 **Permissions.** The operator running `retry` needs: list and get on Jobs and
 ConfigMaps; get, update and create on the Lease `htrflow-campaigns-apply`;

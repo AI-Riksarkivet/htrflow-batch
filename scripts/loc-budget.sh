@@ -898,7 +898,11 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 5127
 # 7228 -> 7238: a copied live Job's pod template sheds the keys Kueue wrote
 # on admitting it (retry._KUEUE_PREFIX); with them Kueue finished the retry's
 # workload unstarted, on a conflict with the original's workload name.
-check converter "$(count packages/converter/src -name '*.py')" 7238
+# 7238 -> 7386: retry --pipeline runs a campaign's volumes on another
+# applied pipeline (retry.on_pipeline): settings from a campaign that ran on
+# it, else the Job moved onto it from its warm-up (retry._moved), refused at
+# another or unknown size; the summary names the move.
+check converter "$(count packages/converter/src -name '*.py')" 7386
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
