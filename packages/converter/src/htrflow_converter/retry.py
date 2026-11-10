@@ -142,7 +142,7 @@ _NO_STAMP = (
 )
 _OLD_PRUNE = (
     "the last apply in namespace {ns} ran a converter whose prune does not "
-    "know retries — upgrade the Argo CD hook's converter and let it apply once"
+    "know {what} — upgrade the Argo CD hook's converter and let it apply once"
 )
 _RUNNING = (
     "campaign {job} is still running in namespace {ns} — let it finish before "
@@ -489,16 +489,26 @@ def _volumes(ids: list[str]) -> str:
     )
 
 
-def old_prune_refusal(cluster: Cluster) -> str | None:
-    """One sentence when the last apply here ran a converter whose prune does
-    not know retries (it would delete the retry), else ``None``. Asked before
-    the Lease is taken, never inside it: a holder writes its own marks back,
-    so inside the Lease they always say yes."""
-    from .cluster import PRUNES_RETRIES
+def is_added(cluster: Cluster, pipeline: str) -> bool:
+    """Whether ``pipeline add`` put ``pipeline`` here, rather than a repo."""
+    cm = cluster.get("ConfigMap", f"htr-pipeline-{pipeline}")
+    return render.ADDED_LABEL in _labels(cm or {})
 
-    if PRUNES_RETRIES in cluster.lease_marks():
-        return None
-    return _OLD_PRUNE.format(ns=cluster.namespace)
+
+def old_prune_refusal(cluster: Cluster, added: bool = False) -> str | None:
+    """One sentence when the last apply here ran a converter whose prune does
+    not know retries (it would delete the retry) or, when ``added``, does not
+    keep a pipeline ``pipeline add`` made (it would delete that), else
+    ``None``. Asked before the Lease is taken, never inside it: a holder
+    writes its own marks back, so inside the Lease they always say yes."""
+    from .cluster import KEEPS_ADDED, PRUNES_RETRIES
+
+    marks = cluster.lease_marks()
+    if PRUNES_RETRIES not in marks:
+        return _OLD_PRUNE.format(ns=cluster.namespace, what="retries")
+    if added and KEEPS_ADDED not in marks:
+        return _OLD_PRUNE.format(ns=cluster.namespace, what="added pipelines")
+    return None
 
 
 def refusal(cluster: Cluster, original: Original, volume_ids: set[str]) -> str | None:

@@ -33,7 +33,7 @@ from kubernetes.client.exceptions import ApiException
 from urllib3.exceptions import HTTPError
 
 from .models import STATUS_SUFFIX
-from .render import CAMPAIGN_SELECTOR, RETRY_OF_LABEL, WARMUP_PREFIX
+from .render import ADDED_LABEL, CAMPAIGN_SELECTOR, RETRY_OF_LABEL, WARMUP_PREFIX
 
 #: Field manager for every apply: what lets a field this tool stopped
 #: rendering be removed from a live object -- the role `kubectl`'s
@@ -99,6 +99,10 @@ LEASE = "htrflow-campaigns-apply"
 #: On ``LEASE``, set by an apply that prunes retry Jobs the repo does not
 #: declare. A retry reads it to know an apply here would delete its Job.
 PRUNES_RETRIES = "htrflow.riksarkivet.se/prunes-retries"
+#: On ``LEASE``, set by an apply whose prune keeps what ``pipeline add`` put
+#: in the cluster (``ADDED_LABEL``). Read before adding one, and before a
+#: retry runs on one.
+KEEPS_ADDED = "htrflow.riksarkivet.se/keeps-added-pipelines"
 #: Seconds the Lease holds without a renewal: past it, the holder is taken
 #: for dead (a SIGKILLed pod) and the next apply may take over. The apply
 #: renews before any request once ``LEASE_RENEW`` has passed, so the longest
@@ -703,6 +707,8 @@ class Cluster:
         A retry made in the cluster (``RETRY_OF_LABEL``) is no campaign
         file's output, yet is kept while the campaign ConfigMap of the Job it
         retries is rendered, and pruned when that campaign leaves git.
+        A pipeline ``pipeline add`` made (``ADDED_LABEL``) is kept too: no
+        file renders it, and the retries on it mount its ConfigMap.
 
         ``rendered`` is ``(kind, name)`` for **all** rendered objects,
         pipelines included: pruning against the campaigns alone would delete
@@ -727,6 +733,8 @@ class Cluster:
                 meta = item["metadata"]
                 of = (meta.get("labels") or {}).get(RETRY_OF_LABEL)
                 if of and ("ConfigMap", f"campaign-{of}") in rendered:
+                    kept.add((kind, meta["name"]))
+                if ADDED_LABEL in (meta.get("labels") or {}):
                     kept.add((kind, meta["name"]))
         for kind, listed in listings.items():
             for item in listed:

@@ -1334,6 +1334,7 @@ def _apply(
         # imports `.cluster` lazily: `validate`/`render` must never pay for
         # importing `kubernetes`.
         from .cluster import (
+            KEEPS_ADDED,
             PRUNES_RETRIES,
             ClusterError,
             LeaseLost,
@@ -1352,7 +1353,7 @@ def _apply(
             cluster = _cluster(cfg.namespace)
             # One apply at a time, for the whole run: released when this
             # function returns, however it returns (C-12).
-            stack.enter_context(cluster.lease({PRUNES_RETRIES: "1"}))
+            stack.enter_context(cluster.lease({PRUNES_RETRIES: "1", KEEPS_ADDED: "1"}))
             # (live object, declared pause) per campaign Job: the live one
             # has the uid Kueue labels the Workload with, the rendered one
             # has what git says. Warm-up Jobs are not campaigns and get no
@@ -1694,6 +1695,7 @@ def _retry(args: argparse.Namespace) -> int:
     from .export_http import Forbidden, Results, ResultsUnavailable, SessionLost
     from .retry import (
         find_unfinished,
+        is_added,
         load_original,
         next_name,
         old_prune_refusal,
@@ -1783,7 +1785,7 @@ def _retry(args: argparse.Namespace) -> int:
         }
         # Refused before the Lease is taken: taking it would write these
         # marks back, and a refused retry changes nothing.
-        said = old_prune_refusal(cluster)
+        said = old_prune_refusal(cluster, is_added(cluster, original.pipeline))
         if said and not args.no_old_apply:
             print(f"{said} (or pass --no-old-apply)", file=sys.stderr)
             return 1
