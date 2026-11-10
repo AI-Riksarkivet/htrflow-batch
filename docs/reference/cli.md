@@ -17,6 +17,7 @@ Source: [`packages/converter/src/htrflow_converter/cli.py`](https://github.com/A
 | `render <repo> --out <dir>` | Writes the rendered objects to `<dir>`. Renders nothing at all if there is one problem. |
 | `apply <repo> [flags]` | Renders into a temporary directory (or `--out`), then applies to the cluster. See below. |
 | `retry <campaign> --namespace <ns> [flags]` | Starts a campaign's unfinished volumes again as a new campaign in the cluster. See [`retry`](#retry-starting-failed-volumes-again). |
+| `pipeline add <file> --namespace <ns> --like <id> [flags]` | Puts a pipeline file in the cluster with no campaigns repo, for `retry --pipeline`. See [`pipeline add`](#pipeline-add-a-pipeline-with-no-repo). |
 | `export --pipeline <id> --namespace <ns> --volumes <ids> --to <dir> [flags]` | Writes finished volumes' ALTO into a publishing folder, one folder per volume. See [`export`](#export-publishing-finished-volumes). |
 
 `make campaigns-apply DIR=<repo>` runs
@@ -219,7 +220,8 @@ good (--include-permanent takes them)`, and the exit code is `0`.
   campaign on the same pipeline and image has one either, or the stored Job
   cannot be read;
 - the cluster's last apply ran a converter whose prune does not know
-  retries, unless `--no-old-apply` is given.
+  retries, or, on a pipeline `pipeline add` added, does not keep added
+  pipelines, unless `--no-old-apply` is given.
 
 **A campaign applied by a converter older than this feature** has no stored
 Job. While its own Job is there, that is copied. Once the TTL has reaped it,
@@ -244,7 +246,8 @@ ran, such as a raised `workdir`, is the one a retry gets. A stored Job that
 is already there is never replaced.
 
 **On another pipeline.** `--pipeline <id>` runs the volumes on a pipeline the
-repo has applied in the namespace, instead of the one the campaign ran on.
+repo has applied in the namespace, or [`pipeline add`](#pipeline-add-a-pipeline-with-no-repo)
+has added there, instead of the one the campaign ran on.
 Done means done there: a volume counts as done when that pipeline's results
 hold its `manifest.json`, so the first such retry takes every volume and a
 later one picks up where it stopped. Results are kept per pipeline, so the
@@ -262,8 +265,8 @@ settings: kyrk's Job moved onto demo-v2; its per-volume deadline and TTL stay as
 ```
 
 The retry is recorded on the new pipeline, so retrying it again stays there.
-The pipeline's file has to stay in the repo while it runs, as for any
-campaign.
+A pipeline the repo applied has to keep its file in the repo while the retry
+runs, as for any campaign.
 
 **Permissions.** The operator running `retry` needs: list and get on Jobs and
 ConfigMaps; get, update and create on the Lease `htrflow-campaigns-apply`;
@@ -279,6 +282,73 @@ git, and removes both when that file leaves git.
 | `0` | Started, a dry run, or nothing to retry. |
 | `1` | Refused, or the cluster could not be read, or the results could not be read (`cannot read the results: ...`). |
 | `2` | `no results URL: ...` (pass `--results-url`), or no credentials. |
+
+## `pipeline add`: a pipeline with no repo
+
+```
+htrflow-campaigns pipeline add <file> --namespace <ns> --like <id>
+    [--no-old-apply] [--dry-run]
+```
+
+Puts one pipeline file in the namespace, so that
+[`retry --pipeline`](#retry-starting-failed-volumes-again) can run a
+campaign's volumes on it, with no campaigns repo and no commit. The file is
+the shape of `pipelines/<id>.yaml`, and its id is the file name without
+`.yaml`.
+
+**What it makes.** The two objects `apply` makes for a pipeline: its
+ConfigMap and its warm-up Job, which downloads the models into the model
+cache. The file is validated as `validate` validates one in a repo. What the
+two objects take from `converter.yaml` (the data volume, the GPU
+RuntimeClass, the node placement, the Hub token's Secret) is the
+namespace's, and on every warm-up Job `apply` made, so the warm-up of the
+pipeline `--like` names is copied, with the new pipeline's id, image, recipe
+and model-cache directory set. The size is `--like`'s too: what a size gives
+a pod is in `converter.yaml`, which is not read here. Both objects carry the
+`<label-domain>/added` label.
+
+```
+pipeline demo-v2: image <image@digest>
+settings: copied from pipeline demo-v1's warm-up Job (data volume, GPU RuntimeClass, node placement, Hub token Secret), and its size
+added: ConfigMap/htr-pipeline-demo-v2
+added: Job/htr-warmup-demo-v2
+next: once Job/htr-warmup-demo-v2 has completed, htrflow-campaigns retry CAMPAIGN --namespace <ns> --pipeline demo-v2
+```
+
+`--dry-run` prints `would add:` lines and creates nothing. Adding a file
+whose pipeline is there already with the same recipe changes nothing.
+
+**It refuses**, with nothing created, when:
+
+- the file does not validate (one line per problem, as `validate` prints);
+- `--like` names a pipeline whose ConfigMap or warm-up Job is not in the
+  namespace, or was not made by `htrflow-campaigns`;
+- the file names a `size:` other than `--like`'s;
+- a pipeline of that id is in the namespace with another recipe, or only one
+  of its two objects is;
+- the cluster's last apply ran a converter whose prune does not keep added
+  pipelines, unless `--no-old-apply` is given.
+
+**Prune keeps an added pipeline.** No file renders it, so an apply's prune
+would delete it, and with its ConfigMap the retries on it could not start
+their pods. A prune by a converter that has `pipeline add` keeps every object
+with the `added` label, and every apply by one marks the Lease
+`htrflow-campaigns-apply` to say so. `pipeline add`, and `retry` on an added
+pipeline, refuse until that mark is there: upgrade the Argo CD hook's
+converter and let it apply once. `--no-old-apply` adds the pipeline anyway,
+on the operator's word that no apply by an older converter runs until the
+retries on it are done.
+
+**Into the repo later.** An apply of a repo that holds the same file takes
+the two objects over, and its render has no `added` label, so from then on
+the pipeline is the repo's like any other. A pipeline id names one recipe
+for good, so the file must be the same; an apply refuses another recipe
+under that id while a Job runs on it.
+
+**Permissions.** As for `retry`: get on ConfigMaps and Jobs; get, update and
+create on the Lease; create on ConfigMaps and Jobs (dry runs included); and
+delete on ConfigMaps, for taking back the ConfigMap when the API server
+refuses the warm-up Job.
 
 ## What `apply` does, in order
 
@@ -478,6 +548,8 @@ the cluster until an apply prunes them:
   campaign is what you mean. `--dry-run` still shows what such a prune
   would delete.
 - **A deleted pipeline file** takes its ConfigMap and warm-up Job with it.
+- **A pipeline `pipeline add` made** is kept: no file renders it. See
+  [`pipeline add`](#pipeline-add-a-pipeline-with-no-repo).
 
 Results in S3 are never touched by a prune, or by anything else here.
 

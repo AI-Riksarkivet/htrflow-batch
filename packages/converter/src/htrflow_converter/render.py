@@ -54,6 +54,11 @@ CAMPAIGN_SELECTOR = f"{_MANAGED_BY_LABEL}=converter"
 CAMPAIGN_LABEL = "htrflow.riksarkivet.se/campaign"
 #: On a retry's Job and ConfigMap: the campaign it restarts the volumes of.
 RETRY_OF_LABEL = "htrflow.riksarkivet.se/retry-of"
+#: On a pipeline ConfigMap and warm-up Job that ``pipeline add`` put in the
+#: cluster from a file no repo holds: a prune keeps them, as nothing renders
+#: them. An apply of a repo that does hold the file takes them over, and its
+#: render has no such label.
+ADDED_LABEL = "htrflow.riksarkivet.se/added"
 _PIPELINE_LABEL = "htrflow.riksarkivet.se/pipeline"
 _QUEUE_LABEL = "kueue.x-k8s.io/queue-name"
 _PRIORITY_LABEL = "kueue.x-k8s.io/priority-class"
@@ -156,12 +161,17 @@ def _mount_cache_dir(job: dict, p: Pipeline) -> None:
 
 
 def _pipeline_configmap(p: Pipeline, cfg: ConverterConfig) -> dict:
+    return pipeline_configmap(p, cfg.namespace, cfg.size_of(p))
+
+
+def pipeline_configmap(p: Pipeline, namespace: str, size: str | None) -> dict:
+    """``p``'s ConfigMap in ``namespace``, at ``size`` (``None``: none)."""
     cm = _load("pipeline-configmap.yaml")
     _set(cm, "metadata.name", f"htr-pipeline-{p.id}")
-    _set(cm, "metadata.namespace", cfg.namespace)
+    _set(cm, "metadata.namespace", namespace)
     cm["metadata"]["labels"][_PIPELINE_LABEL] = label_value(p.id)
     cm["metadata"]["annotations"][_SHA_ANNOTATION] = p.sha256
-    if (size := cfg.size_of(p)) is not None:
+    if size is not None:
         cm["metadata"]["annotations"][_SIZE_ANNOTATION] = size
     cm["data"]["pipeline.yaml"] = p.pipeline_yaml()
     return cm

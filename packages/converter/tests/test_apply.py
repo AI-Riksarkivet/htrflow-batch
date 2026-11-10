@@ -2298,10 +2298,15 @@ def test_an_apply_with_no_flavored_size_reads_no_queue(tmp_path, cluster):
     assert not [c for c in cluster.calls if c[0] == "get"]
 
 
-def test_apply_marks_the_lease_as_pruning_retries(tmp_path, cluster):
+def test_apply_marks_the_lease_as_keeping_retries_and_added_pipelines(
+    tmp_path, cluster
+):
     assert cli.main(["apply", str(_repo(tmp_path)), "--out", str(tmp_path / "r")]) == 0
     lease = cluster.leases[cluster_mod.LEASE]
-    assert lease["metadata"]["annotations"] == {cluster_mod.PRUNES_RETRIES: "1"}
+    assert lease["metadata"]["annotations"] == {
+        cluster_mod.PRUNES_RETRIES: "1",
+        cluster_mod.KEEPS_ADDED: "1",
+    }
 
 
 def test_apply_stamps_the_rendered_job_on_its_campaign_configmap(tmp_path, cluster):
