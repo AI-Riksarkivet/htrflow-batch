@@ -1829,6 +1829,61 @@ def _retry(args: argparse.Namespace) -> int:
         return 1
 
 
+_ADDED_RISK = (
+    "an apply --prune by a converter older than pipeline add deletes this "
+    "pipeline, and with it what a retry on it still has to start; run every "
+    "apply with this version until those are done"
+)
+
+
+def _pipeline_add(args: argparse.Namespace) -> int:
+    from .added import add, load_file, objects
+    from .cluster import ClusterError
+    from .retry import old_prune_refusal
+
+    try:
+        p = load_file(Path(args.file))
+    except ValidationError as e:
+        return _report(e, " — nothing was added")
+    try:
+        cluster = _cluster(args.namespace)
+        made = objects(cluster, p, args.like)
+        if made is None:
+            print(f"pipeline {p.id} is already in namespace {args.namespace}")
+            return 0
+        print(f"pipeline {p.id}: image {p.image}")
+        print(
+            f"settings: copied from pipeline {args.like}'s warm-up Job (data "
+            "volume, GPU RuntimeClass, node placement, Hub token Secret), "
+            f"and its size"
+        )
+        # Before the Lease, as for a retry: taking it writes the marks back.
+        said = old_prune_refusal(cluster, added=True)
+        if said and not args.no_old_apply:
+            print(f"{said} (or pass --no-old-apply)", file=sys.stderr)
+            return 1
+        if said:
+            print(f"--no-old-apply: {_ADDED_RISK}", file=sys.stderr)
+        verb = "would add" if args.dry_run else "added"
+        if not args.dry_run:
+            with cluster.lease(cluster.lease_marks()):
+                # Asked again under the Lease: an apply may have run since.
+                made = objects(cluster, p, args.like)
+                if made is not None:
+                    add(cluster, made)
+        for o in made or []:
+            print(f"{verb}: {o['kind']}/{o['metadata']['name']}")
+        print(
+            f"next: once Job/{render.WARMUP_PREFIX}{p.id} has completed, "
+            f"htrflow-campaigns retry CAMPAIGN --namespace {args.namespace} "
+            f"--pipeline {p.id}"
+        )
+        return 0
+    except ClusterError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="htrflow-campaigns")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1997,7 +2052,38 @@ def main(argv: list[str] | None = None) -> int:
         "--results-url",
         help="the site's results address (else RESULTS_URL on the campaign's Job)",
     )
+    pipeline_p = sub.add_parser(
+        "pipeline", help="put a pipeline file in the cluster, with no repo"
+    )
+    pipeline_sub = pipeline_p.add_subparsers(dest="action", required=True)
+    add_p = pipeline_sub.add_parser(
+        "add",
+        help="add a pipeline file to a namespace, for retry --pipeline",
+        description="Validates FILE (its id is the file name) and creates its "
+        "ConfigMap and warm-up Job in the namespace, with the cluster "
+        "settings and size of the pipeline --like names. A prune by this "
+        "converter keeps them; an apply of a repo that holds the same file "
+        "takes them over.",
+    )
+    add_p.add_argument("file", help="the pipeline file, pipelines/<id>.yaml's shape")
+    add_p.add_argument("--namespace", required=True)
+    add_p.add_argument(
+        "--like",
+        required=True,
+        help="a pipeline applied here, to copy the cluster settings and size from",
+    )
+    add_p.add_argument(
+        "--dry-run", action="store_true", help="print what would be added; add nothing"
+    )
+    add_p.add_argument(
+        "--no-old-apply",
+        action="store_true",
+        help="add although the last apply here ran a converter that does not "
+        "keep added pipelines: you vouch that no such apply runs meanwhile",
+    )
     args = parser.parse_args(argv)
+    if args.command == "pipeline":
+        return _pipeline_add(args)
     if args.command == "retry":
         return _retry(args)
     if args.command == "export":
