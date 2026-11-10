@@ -1697,6 +1697,7 @@ def _retry(args: argparse.Namespace) -> int:
         load_original,
         next_name,
         old_prune_refusal,
+        on_pipeline,
         refusal,
         retry_objects,
         start,
@@ -1705,6 +1706,8 @@ def _retry(args: argparse.Namespace) -> int:
     try:
         cluster = _cluster(args.namespace)
         original = load_original(cluster, args.campaign)
+        if args.pipeline:
+            original = on_pipeline(cluster, original, args.pipeline)
         env = original.source_job["spec"]["template"]["spec"]["containers"][0]
         from_job = next(
             (e.get("value") for e in env.get("env", []) if e["name"] == "RESULTS_URL"),
@@ -1737,7 +1740,21 @@ def _retry(args: argparse.Namespace) -> int:
                 return 1
         for line in _summary(args.campaign, outcomes, args.include_permanent):
             print(line)
-        if original.settings_from:
+        if original.moved_from:
+            print(
+                f"pipeline: {original.moved_from} -> {original.pipeline}, "
+                f"image {original.digest}"
+            )
+            print(
+                f"settings: copied from campaign {original.settings_from}'s Job "
+                f"on {original.pipeline}, with {args.campaign}'s priority"
+                if original.settings_from
+                else f"settings: {args.campaign}'s Job moved onto "
+                f"{original.pipeline}; its per-volume deadline and TTL stay as "
+                "they were, as a pipeline file's own are not on the cluster "
+                "until a campaign has run on it"
+            )
+        elif original.settings_from:
             print(
                 f"settings: copied from campaign {original.settings_from}'s Job, "
                 f"on the same pipeline and image ({args.campaign}'s own is gone "
@@ -1967,6 +1984,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="start although the last apply here ran a converter that does not "
         "know retries: you vouch that no such apply runs until the retry is done",
+    )
+    retry_p.add_argument(
+        "--pipeline",
+        help="run the volumes on this pipeline, which the repo has applied "
+        "here, instead of the one the campaign ran on; done means done there",
     )
     retry_p.add_argument("--user", help="results login (else HTRFLOW_USER, else asked)")
     retry_p.add_argument(

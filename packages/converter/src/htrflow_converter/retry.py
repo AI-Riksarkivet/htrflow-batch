@@ -8,7 +8,7 @@ import copy
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import quote
 
@@ -118,6 +118,9 @@ class Original:
     #: The other campaign whose Job ``source_job`` was copied from, when this
     #: one's own is gone and was never stamped; ``""`` when it is its own.
     settings_from: str = ""
+    #: The pipeline the campaign ran on, when ``on_pipeline`` moved it to
+    #: another; ``""`` when it stays where it ran.
+    moved_from: str = ""
 
 
 _PART = re.compile(r"-part(\d+)$")
@@ -353,6 +356,129 @@ def _sibling(
             job["metadata"].setdefault("labels", {}).pop(render._PRIORITY_LABEL, None)
             return job, name
     return None, ""
+
+
+_NO_PIPELINE = (
+    "no pipeline {pipeline} in namespace {ns}: {missing} is missing — a "
+    "retry runs only a pipeline the repo has applied here"
+)
+_OTHER_SIZE = (
+    "pipeline {pipeline} runs at size {new} and {old} at {old_size}: what a "
+    "size gives a pod is in converter.yaml, which a retry does not read, and "
+    "no campaign has run on {pipeline} to copy it from"
+)
+
+
+def _size_of(cluster: Cluster, pipeline: str) -> str | None:
+    """The size ``pipeline`` runs at, ``"(none)"`` for the skeleton's, and
+    ``None`` when its ConfigMap is gone, so it is not known."""
+    cm = cluster.get("ConfigMap", f"htr-pipeline-{pipeline}")
+    if cm is None:
+        return None
+    annotations = (cm.get("metadata") or {}).get("annotations") or {}
+    return annotations.get(render._SIZE_ANNOTATION) or "(none)"
+
+
+def _moved(job: dict, old: str, new: str, warmup: dict) -> dict:
+    """``job`` with what ``render._campaign_job`` takes from the pipeline set
+    for ``new``, from its warm-up Job: the label, the image, the env that
+    names them, the pipeline ConfigMap, the model-cache directory and the
+    warm-up marker. The deadline and TTL stay: a pipeline file's own are
+    not on the cluster."""
+    job = copy.deepcopy(job)
+    image = _image(warmup)
+    wpod = warmup["spec"]["template"]["spec"]
+    subpath = next(
+        (
+            m.get("subPath")
+            for c in wpod["containers"]
+            for m in c.get("volumeMounts") or []
+            if m.get("name") == "data"
+        ),
+        None,
+    )
+    job["metadata"]["labels"][render._PIPELINE_LABEL] = render.label_value(new)
+    pod = job["spec"]["template"]["spec"]
+    env = {"PIPELINE_ID": new, "IMAGE_DIGEST": image}
+    old_marker, new_marker = f"/data/warmup/{old}.done", f"/data/warmup/{new}.done"
+    # The two render gives the pipeline's image: the wrapper and the gate.
+    pod["containers"][0]["image"] = image
+    if pod.get("initContainers"):
+        pod["initContainers"][0]["image"] = image
+    for c in (pod.get("initContainers") or []) + pod["containers"]:
+        c["command"] = [
+            a.replace(old_marker, new_marker) for a in c.get("command") or []
+        ]
+        for e in c.get("env") or []:
+            if e.get("name") in env:
+                e["value"] = env[e["name"]]
+        for m in c.get("volumeMounts") or []:
+            if m.get("name") == "data":
+                m.pop("subPath", None)
+                if subpath:
+                    m["subPath"] = subpath
+    for volume in pod.get("volumes") or []:
+        if volume.get("name") == "pipeline":
+            volume["configMap"]["name"] = f"htr-pipeline-{new}"
+    return job
+
+
+def on_pipeline(cluster: Cluster, original: Original, pipeline: str) -> Original:
+    """``original`` to run on ``pipeline`` instead, which the repo applied
+    here. Its settings come from a campaign that ran on ``pipeline`` and its
+    image (``_sibling``), as everything the pipeline decides is right there,
+    with ``original``'s priority; else ``original``'s Job is moved onto it
+    (``_moved``), when the size it runs at is the same."""
+    from .cluster import ClusterError
+
+    if pipeline == original.pipeline:
+        return original
+    cm_name, warmup_name = f"htr-pipeline-{pipeline}", f"{WARMUP_PREFIX}{pipeline}"
+    warmup = cluster.get("Job", warmup_name)
+    missing = [f"Job {warmup_name}"] if warmup is None else []
+    if cluster.get("ConfigMap", cm_name) is None:
+        missing.insert(0, f"ConfigMap {cm_name}")
+    if warmup is None or missing:
+        raise ClusterError(
+            _NO_PIPELINE.format(
+                pipeline=pipeline, ns=cluster.namespace, missing=" and ".join(missing)
+            )
+        )
+    digest = _image(warmup)
+    job, settings_from = _sibling(cluster, set(original.parts), pipeline, digest)
+    if job is not None:
+        priority = _labels(original.source_job).get(render._PRIORITY_LABEL)
+        if priority:
+            job["metadata"]["labels"][render._PRIORITY_LABEL] = priority
+    else:
+        old_size, new = (
+            _size_of(cluster, original.pipeline),
+            _size_of(cluster, pipeline),
+        )
+        if old_size != new:
+            raise ClusterError(
+                _OTHER_SIZE.format(
+                    pipeline=pipeline,
+                    new=new,
+                    old=original.pipeline,
+                    old_size=old_size
+                    or "a size no longer known (its ConfigMap is gone)",
+                )
+            )
+        job = _moved(original.source_job, original.pipeline, pipeline, warmup)
+    labels = {
+        **original.record_labels,
+        render._PIPELINE_LABEL: render.label_value(pipeline),
+    }
+    return replace(
+        original,
+        pipeline=pipeline,
+        digest=digest,
+        source_job=job,
+        record_labels=labels,
+        settings_from=settings_from,
+        moved_from=original.pipeline,
+    )
 
 
 def _volumes(ids: list[str]) -> str:
