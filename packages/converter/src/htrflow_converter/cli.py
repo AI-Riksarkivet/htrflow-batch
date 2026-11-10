@@ -1683,6 +1683,12 @@ def _credentials(args: argparse.Namespace) -> tuple[str, str] | None:
     return user, password
 
 
+_OLD_APPLY_RISK = (
+    "an apply --prune by a converter older than retries deletes this retry's "
+    "Jobs and ConfigMaps; run every apply with this version until it is done"
+)
+
+
 def _retry(args: argparse.Namespace) -> int:
     from .cluster import ClusterError
     from .export_http import Forbidden, Results, ResultsUnavailable, SessionLost
@@ -1731,6 +1737,12 @@ def _retry(args: argparse.Namespace) -> int:
                 return 1
         for line in _summary(args.campaign, outcomes, args.include_permanent):
             print(line)
+        if original.settings_from:
+            print(
+                f"settings: copied from campaign {original.settings_from}'s Job, "
+                f"on the same pipeline and image ({args.campaign}'s own is gone "
+                "and was never stored); default priority"
+            )
         wanted = ("retry", "permanent") if args.include_permanent else ("retry",)
         take = [o for o in outcomes if o.state in wanted]
         if not take:
@@ -1755,9 +1767,11 @@ def _retry(args: argparse.Namespace) -> int:
         # Refused before the Lease is taken: taking it would write these
         # marks back, and a refused retry changes nothing.
         said = old_prune_refusal(cluster)
-        if said:
-            print(said, file=sys.stderr)
+        if said and not args.no_old_apply:
+            print(f"{said} (or pass --no-old-apply)", file=sys.stderr)
             return 1
+        if said:
+            print(f"--no-old-apply: {_OLD_APPLY_RISK}", file=sys.stderr)
         marks = cluster.lease_marks()
 
         def plan() -> list[dict] | None:
@@ -1947,6 +1961,12 @@ def main(argv: list[str] | None = None) -> int:
         "--include-permanent",
         action="store_true",
         help="retry the volumes that failed for good too",
+    )
+    retry_p.add_argument(
+        "--no-old-apply",
+        action="store_true",
+        help="start although the last apply here ran a converter that does not "
+        "know retries: you vouch that no such apply runs until the retry is done",
     )
     retry_p.add_argument("--user", help="results login (else HTRFLOW_USER, else asked)")
     retry_p.add_argument(

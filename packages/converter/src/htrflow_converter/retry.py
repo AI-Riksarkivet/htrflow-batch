@@ -115,6 +115,9 @@ class Original:
     source_job: dict
     #: The first part ConfigMap's labels, which a retry's ConfigMaps keep.
     record_labels: dict[str, str] = field(default_factory=dict)
+    #: The other campaign whose Job ``source_job`` was copied from, when this
+    #: one's own is gone and was never stamped; ``""`` when it is its own.
+    settings_from: str = ""
 
 
 _PART = re.compile(r"-part(\d+)$")
@@ -124,11 +127,15 @@ _RETRY_N = re.compile(r"-retry-(\d+)$")
 #: original's uid and name. ``spec.selector`` is dropped for the same reason.
 _CONTROLLER_LABELS = ("controller-uid", "job-name")
 _CONTROLLER_PREFIX = "batch.kubernetes.io/"
+#: What Kueue writes on a pod template at admission (render puts none there).
+#: It stays once the Job ends, and Kueue finishes a copy carrying another
+#: workload's name without starting it.
+_KUEUE_PREFIX = "kueue.x-k8s.io/"
 _NO_STAMP = (
     "campaign {name} was applied before retries existed and its Job is gone, "
-    "so its settings are not recorded yet — the next apply by this converter "
-    "version records them while its campaign file is in the repo; let the "
-    "Argo CD hook sync once, then retry"
+    "and no other campaign on pipeline {pipeline} with image {digest} has a "
+    "Job or a stored one to copy the settings from — the next apply by this "
+    "converter version records them while its campaign file is in the repo"
 )
 _OLD_PRUNE = (
     "the last apply in namespace {ns} ran a converter whose prune does not "
@@ -192,7 +199,8 @@ def _uncontrolled(labels: dict[str, str]) -> dict[str, str]:
 def _as_applied(live: dict) -> dict:
     """A live Job cut back to what an apply sends: no status, no server
     metadata, and none of what the Job controller added to tie the Job to
-    its pods -- a copy sent with those would claim the original's."""
+    its pods, nor what Kueue added on admitting it -- a copy sent with those
+    would claim the original's."""
     meta = live.get("metadata") or {}
     job = {
         "apiVersion": live.get("apiVersion", "batch/v1"),
@@ -210,8 +218,13 @@ def _as_applied(live: dict) -> dict:
     tmeta = job["spec"].get("template", {}).get("metadata")
     if tmeta is not None:
         for key in ("labels", "annotations"):
-            if key in tmeta:
-                tmeta[key] = _uncontrolled(tmeta[key])
+            kept = {
+                k: v
+                for k, v in _uncontrolled(tmeta.pop(key, None) or {}).items()
+                if not k.startswith(_KUEUE_PREFIX)
+            }
+            if kept:
+                tmeta[key] = kept
     return job
 
 
@@ -257,9 +270,16 @@ def load_original(cluster: Cluster, campaign: str) -> Original:
             )
     else:
         live = cluster.get("Job", names[0])
-        if live is None:
-            raise ClusterError(_NO_STAMP.format(name=campaign))
-        source = _as_applied(live)
+        source = None if live is None else _as_applied(live)
+    pipeline = labels.get(render._PIPELINE_LABEL, "")
+    digest = annotations.get(render._DIGEST_ANNOTATION, "")
+    settings_from = ""
+    if source is None:
+        source, settings_from = _sibling(cluster, set(names), pipeline, digest)
+        if source is None:
+            raise ClusterError(
+                _NO_STAMP.format(name=campaign, pipeline=pipeline, digest=digest)
+            )
     containers = (
         (source.get("spec") or {}).get("template", {}).get("spec", {}).get("containers")
     )
@@ -272,12 +292,67 @@ def load_original(cluster: Cluster, campaign: str) -> Original:
     return Original(
         root=labels.get(render.RETRY_OF_LABEL) or names[0],
         parts=names,
-        pipeline=labels.get(render._PIPELINE_LABEL, ""),
-        digest=annotations.get(render._DIGEST_ANNOTATION, ""),
+        pipeline=pipeline,
+        digest=digest,
         lines=[line for cm in parts for line in _lines(cm)],
         source_job=source,
         record_labels=dict(labels),
+        settings_from=settings_from,
     )
+
+
+def _image(job: dict) -> str:
+    pod = (job.get("spec") or {}).get("template", {}).get("spec", {})
+    return ((pod.get("containers") or [{}])[0]).get("image", "")
+
+
+def _sibling(
+    cluster: Cluster, own: set[str], pipeline: str, digest: str
+) -> tuple[dict | None, str]:
+    """Another campaign's Job on the same pipeline and image, as an apply
+    sends it, and its name: a live one, else one stamped on its ConfigMap,
+    the newest first. Everything in a campaign Job but its name, counts,
+    volume list, window and priority comes from the pipeline and
+    converter.yaml, and ``retry_objects`` rewrites the first three. The
+    priority was that campaign's own choice, so it is dropped: the retry
+    runs at the default class."""
+    if not pipeline or not digest:
+        return None, ""
+    label = render.label_value(pipeline)
+
+    def ours(obj: dict) -> bool:
+        lb = _labels(obj)
+        return (
+            lb.get(render._PIPELINE_LABEL) == label
+            and render.CAMPAIGN_LABEL in lb
+            and lb.get(render._KIND_LABEL) != render._STATUS_KIND
+        )
+
+    def newest(obj: dict) -> str:
+        return (obj.get("metadata") or {}).get("creationTimestamp") or ""
+
+    found: list[tuple[dict, str]] = []
+    for job in sorted(cluster.labelled("Job"), key=newest, reverse=True):
+        if ours(job) and job["metadata"]["name"] not in own:
+            found.append((_as_applied(job), job["metadata"]["name"]))
+    for cm in sorted(cluster.labelled("ConfigMap"), key=newest, reverse=True):
+        name = cm["metadata"]["name"].removeprefix("campaign-")
+        stamp = (cm["metadata"].get("annotations") or {}).get(
+            render.JOB_SPEC_ANNOTATION
+        )
+        if not (ours(cm) and stamp and name not in own):
+            continue
+        try:
+            job = json.loads(stamp)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(job, dict) and isinstance(job.get("spec"), dict):
+            found.append((job, name))
+    for job, name in found:
+        if _image(job) == digest:
+            job["metadata"].setdefault("labels", {}).pop(render._PRIORITY_LABEL, None)
+            return job, name
+    return None, ""
 
 
 def _volumes(ids: list[str]) -> str:

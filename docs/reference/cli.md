@@ -155,7 +155,8 @@ The design is in the campaign export spec among the
 
 ```
 htrflow-campaigns retry <campaign> --namespace <ns>
-    [--include-permanent] [--results-url URL] [--user NAME] [--dry-run]
+    [--include-permanent] [--no-old-apply] [--results-url URL] [--user NAME]
+    [--dry-run]
 ```
 
 **What it reads.** The campaign's record in the cluster (its volume list and
@@ -209,14 +210,28 @@ good (--include-permanent takes them)`, and the exit code is `0`.
 - another running campaign on the pipeline holds one of the volumes, or has
   no volume list to check;
 - there is no campaign of that name in the namespace;
-- the campaign has no stored Job to copy and its own Job is gone, or the
-  stored Job cannot be read;
-- the cluster's last apply ran a converter whose prune does not know retries.
+- the campaign has no stored Job to copy, its own Job is gone and no other
+  campaign on the same pipeline and image has one either, or the stored Job
+  cannot be read;
+- the cluster's last apply ran a converter whose prune does not know
+  retries, unless `--no-old-apply` is given.
 
-A campaign applied by a converter older than this feature has no stored Job.
+**A campaign applied by a converter older than this feature** has no stored
+Job. While its own Job is there, that is copied. Once the TTL has reaped it,
+the settings are copied from another campaign's Job, live or stored, on the
+same pipeline and image, the newest first: everything in a campaign Job but
+its name, counts, volume list, window and priority comes from the pipeline
+and `converter.yaml`, and the first three are rewritten anyway. The window is
+that campaign's; the priority is dropped, so the retry runs at the default
+class. The summary says so: `settings: copied from campaign <other>'s Job,
+on the same pipeline and image (...); default priority`.
+
 **Upgrade the Argo CD hook's converter first and let it apply once**: until
-then `retry` refuses, because that apply would prune the retry. The same
-apply stores the Job on every finished campaign that lacks one and whose
+then `retry` refuses, because that apply would prune the retry. Where no
+hook runs and every apply is made by hand, `--no-old-apply` starts the retry
+anyway, on the operator's word that no apply by an older converter runs
+until it is done; it says that on standard error and claims no mark on the
+Lease. An apply by this version stores the Job on every finished campaign that lacks one and whose
 campaign file is still in the repo: it renders that Job anyway, and adds it
 to the campaign's ConfigMap without running anything again. The stored Job is
 what the repo renders at that apply, so a setting changed since the campaign
