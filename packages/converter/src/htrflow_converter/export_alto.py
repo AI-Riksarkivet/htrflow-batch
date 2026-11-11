@@ -72,9 +72,7 @@ def scale_alto(xml: bytes, native: tuple[int, int], stem: str, number: int) -> b
     page.set("WIDTH", str(native_w))
     page.set("HEIGHT", str(native_h))
     page.set("PHYSICAL_IMG_NR", str(number))
-    # The run named the page after its place in the volume ("_0004"); the
-    # published page carries the image id, as its fileName does.
-    page.set("ID", f"_{stem}")
+    page.set("ID", f"_{stem}")  # the image id, not the run's own page name
     _file_name(root).text = stem
     return _serialise(root)
 
