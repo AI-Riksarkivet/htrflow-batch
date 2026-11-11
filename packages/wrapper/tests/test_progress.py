@@ -67,7 +67,7 @@ def test_progress_json_is_written_and_says_done_at_the_end(env, cfg, s3):
     assert body["pages_total"] == 3
     assert body["pages_done"] == 3
     assert body["pages_failed"] == 0
-    assert body["last_page"] == "0003"
+    assert body["last_page"] == "00003"
     assert body["started_at"] <= body["updated_at"]
 
 
@@ -85,7 +85,7 @@ def test_progress_is_readable_while_the_run_is_still_going(env, cfg, s3):
     # Page 1 sees the setup/stream write; page 3 sees page 2's outcome.
     assert seen[0] is not None and seen[0]["pages_done"] == 0
     assert seen[2]["pages_done"] == 2
-    assert seen[2]["last_page"] == "0002"
+    assert seen[2]["last_page"] == "00002"
     assert seen[2]["stage"] == "stream"
 
 
@@ -93,7 +93,7 @@ def test_resumed_pages_count_as_done_from_the_first_write(env, cfg, s3, monkeypa
     """A volume resumed at page 600 of 638 must not report 0 done."""
     for fmt, text in (("alto", ALTO_OK), ("page", PAGE_OK)):
         s3.put_object(
-            Bucket=cfg.s3_bucket, Key=f"{PREFIX}/{fmt}/0001.xml", Body=text.encode()
+            Bucket=cfg.s3_bucket, Key=f"{PREFIX}/{fmt}/00001.xml", Body=text.encode()
         )
     seen = []
     assert (
@@ -116,7 +116,7 @@ def test_the_viewer_manifest_is_published_mid_run(env, cfg, s3, monkeypatch):
     mid = {}
 
     def watch(stem):
-        if stem == "0003":
+        if stem == "00003":
             mid["iiif"] = _get(s3, cfg, "iiif.json")
             mid["keys"] = {
                 o["Key"]
@@ -125,8 +125,8 @@ def test_the_viewer_manifest_is_published_mid_run(env, cfg, s3, monkeypatch):
 
     assert main(env, process_page_factory=_factory_watching(cfg, watch)) == EXIT_OK
     assert [c["id"].rsplit("/", 1)[-1] for c in mid["iiif"]["items"]] == [
-        "0001",
-        "0002",
+        "00001",
+        "00002",
     ]
     # manifest.json keeps its meaning: the completion marker, written last.
     assert f"{PREFIX}/manifest.json" not in mid["keys"]
@@ -172,7 +172,7 @@ def test_interim_publish_is_skipped_when_resumed_dims_lag_done(
     """A volume resumed at page 600 of 638 must not overwrite a complete
     iiif.json with one covering only the pages since resume (finding 3)."""
     monkeypatch.setattr(progress_mod, "PUBLISH_EVERY_PAGES", 1)
-    for stem in ("0001", "0002"):
+    for stem in ("00001", "00002"):
         for fmt, text in (("alto", ALTO_OK), ("page", PAGE_OK)):
             s3.put_object(
                 Bucket=cfg.s3_bucket,
@@ -192,7 +192,7 @@ def test_interim_publish_is_skipped_when_resumed_dims_lag_done(
         seen.append(_get(s3, cfg, "iiif.json"))
 
     assert main(env, process_page_factory=_factory_watching(cfg, watch)) == EXIT_OK
-    # Page 0003 is the only one this run actually processed: the dims it
+    # Page 00003 is the only one this run actually processed: the dims it
     # holds (1) cover fewer pages than `done` (3, two resumed + this one), so
     # the interim publish must not touch the placeholder.
     assert seen == [complete_iiif]
@@ -217,9 +217,9 @@ def test_counts_come_from_the_stream_stats(cfg, s3):
     tracker = Progress(cfg, ResultStore(cfg))
     tracker.stats = StreamStats(
         results={
-            "0001": PageOutcome(status="ok"),
-            "0002": PageOutcome(status="skipped"),
-            "0003": PageOutcome(status="failed", error="boom"),
+            "00001": PageOutcome(status="ok"),
+            "00002": PageOutcome(status="skipped"),
+            "00003": PageOutcome(status="failed", error="boom"),
         }
     )
     body = tracker.body()
@@ -248,17 +248,17 @@ def _failing_factory(cfg, *bad: str):
 def test_progress_carries_the_most_recent_page_failure(env, cfg, s3):
     """ "When we have an exception in the log it would be nice to see some
     notice on the front page": the sentence has to leave the pod."""
-    main(env, process_page_factory=_failing_factory(cfg, "0002"))
+    main(env, process_page_factory=_failing_factory(cfg, "00002"))
     body = _get(s3, cfg, "progress.json")
     assert body["pages_failed"] == 1
-    assert body["last_error"]["page"] == "0002"
+    assert body["last_error"]["page"] == "00002"
     assert "Segmentation worker thread died" in body["last_error"]["error"]
 
 
 def test_a_run_with_a_failed_page_still_ends_at_done(env, cfg, s3):
     """The product owner, 2026-09-14: the page is accounted for, so the volume
     is complete -- the campaign must read "done, 1 failed", not "failed"."""
-    assert main(env, process_page_factory=_failing_factory(cfg, "0002")) == 0
+    assert main(env, process_page_factory=_failing_factory(cfg, "00002")) == 0
     body = _get(s3, cfg, "progress.json")
     assert (body["stage"], body["pages_failed"]) == ("done", 1)
 
@@ -268,7 +268,7 @@ def test_a_failed_run_leaves_a_terminal_stage_not_stuck_at_stream(env, cfg, s3):
     when it stopped -- "stream" forever -- because nothing wrote a last word
     on the failure exit path. main's finally now does. Every page has to fail
     for the run to fail at all now -- one failed page completes the volume."""
-    main(env, process_page_factory=_failing_factory(cfg, "0001", "0002", "0003"))
+    main(env, process_page_factory=_failing_factory(cfg, "00001", "00002", "00003"))
     assert _get(s3, cfg, "progress.json")["stage"] == "failed"
 
 
@@ -281,7 +281,7 @@ def test_a_sigterm_run_leaves_the_stage_it_was_in(env, cfg, s3):
 
     def factory(c):
         def process(path: Path):
-            if path.stem == "0002":
+            if path.stem == "00002":
                 os.kill(os.getpid(), signal.SIGTERM)
             return _write_outputs(cfg, path.stem)
 
@@ -295,22 +295,22 @@ def test_the_last_error_is_redacted_and_bounded(cfg, s3):
     tracker = Progress(cfg, ResultStore(cfg))
     tracker.stats = StreamStats(
         results={
-            "0001": PageOutcome(status="failed", error="early"),
-            "0002": PageOutcome(
+            "00001": PageOutcome(status="failed", error="early"),
+            "00002": PageOutcome(
                 status="failed",
                 error="fetch https://iiif.example/p?token=SECRET failed " + "x" * 900,
             ),
         }
     )
     error = tracker.body()["last_error"]
-    assert error["page"] == "0002"  # the most recent, not the first
+    assert error["page"] == "00002"  # the most recent, not the first
     assert "SECRET" not in error["error"]
     assert len(error["error"]) <= LAST_ERROR_CHARS + 3
 
 
 def test_quality_is_absent_until_set_then_carried(cfg, s3):
     tracker = Progress(cfg, ResultStore(cfg))
-    tracker.stats = StreamStats(results={"0001": PageOutcome(status="ok")})
+    tracker.stats = StreamStats(results={"00001": PageOutcome(status="ok")})
     assert "quality" not in tracker.body()
     tracker.quality = {"target": "bow_f1", "mean": 0.9, "scored": 1}
     assert tracker.body()["quality"] == {"target": "bow_f1", "mean": 0.9, "scored": 1}
@@ -318,7 +318,7 @@ def test_quality_is_absent_until_set_then_carried(cfg, s3):
 
 def test_no_failure_is_no_last_error(cfg, s3):
     tracker = Progress(cfg, ResultStore(cfg))
-    tracker.stats = StreamStats(results={"0001": PageOutcome(status="ok")})
+    tracker.stats = StreamStats(results={"00001": PageOutcome(status="ok")})
     assert tracker.body()["last_error"] is None
     assert tracker.body()["errors"] == 0
 
@@ -359,7 +359,7 @@ def test_sigterm_stops_the_status_writes(env, cfg, s3, monkeypatch):
 
     def factory(c):
         def process(path):
-            if path.stem == "0002":
+            if path.stem == "00002":
                 at_kill.append(len(puts))
                 os.kill(os.getpid(), signal.SIGTERM)
             return _write_outputs(c, path.stem)
@@ -386,7 +386,7 @@ def test_one_unparsable_alto_does_not_disable_the_interim_manifest(
     def factory(c):
         def process(path: Path):
             files = _write_outputs(cfg, path.stem)
-            if path.stem == "0001":
+            if path.stem == "00001":
                 files["alto"].write_text(no_dims)
             return files
 
@@ -407,11 +407,11 @@ def test_one_unparsable_alto_does_not_disable_the_interim_manifest(
         return process
 
     assert main(env, process_page_factory=watching_factory) == EXIT_OK
-    # Nothing before page 0001; by page 0003 the two finished pages are
-    # covered (0002's dimensions plus 0001, known to have none) and the
+    # Nothing before page 00001; by page 00003 the two finished pages are
+    # covered (00002's dimensions plus 00001, known to have none) and the
     # interim manifest is live again.
     assert seen == [False, False, True]
-    assert len(_get(s3, cfg, "iiif.json")["items"]) == 2  # 0001 has no canvas
+    assert len(_get(s3, cfg, "iiif.json")["items"]) == 2  # 00001 has no canvas
 
 
 def _keys_have_iiif(s3, cfg) -> bool:

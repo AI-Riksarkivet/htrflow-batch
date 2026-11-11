@@ -47,7 +47,7 @@ describe("the wrapper's manifest.json", () => {
     const failed = run.failedPages[0];
     expect(failed?.error).toMatch(/worker thread died/);
     expect(failed?.source).toMatch(/^https:\/\//);
-    expect(failed?.alto).toMatch(/\/alto\/0002\.xml$/);
+    expect(failed?.alto).toMatch(/\/alto\/00002\.xml$/);
   });
 });
 
@@ -66,10 +66,10 @@ describe("the wrapper's manifest.json, scored", () => {
     );
     const byId = Object.fromEntries(stats.map((p) => [p.id, p.quality]));
     expect(byId).toEqual({
-      "0001": 0.9123,
-      "0002": undefined,
-      "0003": 0.41,
-      "0004": 0.7,
+      "00001": 0.9123,
+      "00002": undefined,
+      "00003": 0.41,
+      "00004": 0.7,
     });
   });
 });

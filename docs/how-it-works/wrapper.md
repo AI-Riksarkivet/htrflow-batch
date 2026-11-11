@@ -94,7 +94,10 @@ Every stage name can appear in the termination message.
    image; any other query change is. Every page about to be reprocessed
    loses its stored PAGE and ALTO first, and the previous `manifest.json`
    and `iiif.json` go before them, so no marker describes outputs that are
-   gone. Skipped pages are never downloaded. `RESUME=false` reprocesses
+   gone. The same goes for outputs stored under another spelling of a
+   page's number (`0004` beside `00004`): they are deleted and the page is
+   processed again, so a volume never holds two names for one page.
+   Skipped pages are never downloaded. `RESUME=false` reprocesses
    everything.
 3. **load**: starts `stream.PageStream(...)` downloading, **then** calls
    `Pipeline.from_config($PIPELINE_PATH)`, so the model load overlaps the

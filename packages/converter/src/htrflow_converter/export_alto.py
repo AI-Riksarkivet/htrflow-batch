@@ -72,6 +72,7 @@ def scale_alto(xml: bytes, native: tuple[int, int], stem: str, number: int) -> b
     page.set("WIDTH", str(native_w))
     page.set("HEIGHT", str(native_h))
     page.set("PHYSICAL_IMG_NR", str(number))
+    page.set("ID", f"_{number:05d}")  # the image number, not the run's page name
     _file_name(root).text = stem
     return _serialise(root)
 
@@ -98,7 +99,7 @@ def _file_name(root: ET.Element) -> ET.Element:
     return _child(info, "fileName", 0)
 
 
-def empty_alto(native: tuple[int, int], stem: str, number: int, page_key: str) -> bytes:
+def empty_alto(native: tuple[int, int], stem: str, number: int) -> bytes:
     """An ALTO page with no text, at the scan's native size."""
     width, height = native
     root = ET.Element(_q("alto"), {f"{{{_XSI_NS}}}schemaLocation": _SCHEMA_LOCATION})
@@ -114,7 +115,7 @@ def empty_alto(native: tuple[int, int], stem: str, number: int, page_key: str) -
             "WIDTH": str(width),
             "HEIGHT": str(height),
             "PHYSICAL_IMG_NR": str(number),
-            "ID": f"_{page_key}",
+            "ID": f"_{number:05d}",
         },
     )
     ET.SubElement(

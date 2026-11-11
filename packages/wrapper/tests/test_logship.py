@@ -167,7 +167,7 @@ def test_truncation_has_hysteresis():
 
     capture._truncate_locked = counting  # type: ignore[method-assign]
     for i in range(200):
-        capture._append(f"line {i:04d} xxxxxxxxxxxxxxxxxxx\n")  # 30 chars
+        capture._append(f"line {i:05d} xxxxxxxxxxxxxxxxxxx\n")  # 30 chars
     # 6000 chars written, ~600 kept per truncation -> a handful of trims, not ~170
     assert calls["n"] <= 12
     assert capture._size <= 1000

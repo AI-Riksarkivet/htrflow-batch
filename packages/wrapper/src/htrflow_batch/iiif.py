@@ -40,7 +40,7 @@ class PageRef(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     index: int  # 1-based position in manifest order
-    name: str  # zero-padded, e.g. "0001" — S3 key + filename stem
+    name: str  # five digits, e.g. "00001" — S3 key + filename stem
     image_url: str  # width-capped IIIF image request
     canvas: dict  # raw source canvas (for viewer.build_viewer_manifest)
 
@@ -430,7 +430,7 @@ def pages_from_manifest(manifest: dict, width: int) -> list[PageRef]:
         # reach httpx per page (UnsupportedProtocol) and be retried; it is
         # permanent, and named as such, here.
         check_http_url(url, f"canvas {i} image URL")
-        pages.append(PageRef(index=i, name=f"{i:04d}", image_url=url, canvas=canvas))
+        pages.append(PageRef(index=i, name=f"{i:05d}", image_url=url, canvas=canvas))
     if not pages:
         raise ManifestError("manifest has no canvases")
     return pages

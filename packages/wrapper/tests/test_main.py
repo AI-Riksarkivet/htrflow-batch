@@ -67,7 +67,7 @@ def test_default_factory_stamps_provenance_into_each_alto(cfg, monkeypatch):
             "htrflow_base_revision": "v0.2.6-35f48a7",
         }
     )
-    files = main_mod._default_factory(cfg)(Path("/img/0001.jpg"))
+    files = main_mod._default_factory(cfg)(Path("/img/00001.jpg"))
     alto = files["alto"].read_text()
     assert 'ID="htrflow-batch"' in alto
     assert "image=docker.io/x@sha256:abc" in alto
@@ -180,11 +180,11 @@ def test_a_resumed_page_whose_source_changed_gets_the_new_image_not_the_cached(
         return process
 
     assert main(cached, process_page_factory=factory) == EXIT_OK
-    assert b"/mock-vol/" in seen["0001"]
+    assert b"/mock-vol/" in seen["00001"]
     _move_source(sample_manifest, "NEW")
     seen.clear()
     assert main(cached, process_page_factory=factory) == EXIT_OK
-    assert sorted(seen) == ["0001", "0002", "0003"]
+    assert sorted(seen) == ["00001", "00002", "00003"]
     assert all(b"/NEW/" in body for body in seen.values())
     # and the cache now holds the new source's image for the next run
     obj = s3.get_object(Bucket="images-batch", Key="SE-RA-1234/SE-RA-1234_00001.jpg")
@@ -203,7 +203,7 @@ def test_without_the_cache_the_manifest_has_no_image_cache_key(env, cfg, s3):
 
 def test_a_resumed_page_touches_no_cache(env, cfg, s3, monkeypatch, sample_manifest):
     s3.create_bucket(Bucket="images-batch")
-    _put_done(s3, cfg, "0001")
+    _put_done(s3, cfg, "00001")
     _counting_http(monkeypatch, sample_manifest)
     assert (
         main(
@@ -257,7 +257,7 @@ def test_happy_path(env, cfg, s3):
     rc = main(env, process_page_factory=fake_factory)
     assert rc == EXIT_OK
     keys = _keys(s3, cfg)
-    assert "demo-v1/SE-RA-1234/alto/0001.xml" in keys
+    assert "demo-v1/SE-RA-1234/alto/00001.xml" in keys
     assert "demo-v1/SE-RA-1234/iiif.json" in keys
     assert "demo-v1/SE-RA-1234/pipeline.yaml" in keys
     assert "demo-v1/SE-RA-1234/manifest.json" in keys
@@ -267,33 +267,33 @@ def test_happy_path(env, cfg, s3):
         ].read()
     )
     assert body["pages"] == 3
-    assert body["results"]["0001"]["status"] == "ok"
+    assert body["results"]["00001"]["status"] == "ok"
     assert "gpu_stall_seconds" in body and "wall_seconds" in body
     assert body["viewer_url"].endswith("iiif.json")
     # W7: canvas -> source mapping, so a later run can tell a changed page
     assert body["page_sources"] == {
-        f"{i:04d}": f"https://iiif.example/mock-vol/page-{i:05d}/full/2500,/0/default.jpg"
+        f"{i:05d}": f"https://iiif.example/mock-vol/page-{i:05d}/full/2500,/0/default.jpg"
         for i in (1, 2, 3)
     }
     assert body["canvas_ids"] == {
-        f"{i:04d}": f"https://iiif.example/mock-vol/page-{i:05d}/canvas"
+        f"{i:05d}": f"https://iiif.example/mock-vol/page-{i:05d}/canvas"
         for i in (1, 2, 3)
     }
 
 
 def test_resume_skips_done(env, cfg, s3):
-    _put_done(s3, cfg, "0001")
+    _put_done(s3, cfg, "00001")
     calls = []
 
     rc = _attempt(env, calls)
     assert rc == EXIT_OK
-    assert "0001" not in calls and calls == ["0002", "0003"]
+    assert "00001" not in calls and calls == ["00002", "00003"]
     body = json.loads(
         s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
             "Body"
         ].read()
     )
-    assert body["results"]["0001"]["status"] == "skipped"
+    assert body["results"]["00001"]["status"] == "skipped"
 
     iiif = json.loads(
         s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/iiif.json")[
@@ -301,7 +301,7 @@ def test_resume_skips_done(env, cfg, s3):
         ].read()
     )
     canvas_names = {c["id"].rsplit("/", 1)[-1] for c in iiif["items"]}
-    assert canvas_names == {"0001", "0002", "0003"}  # skipped page not omitted
+    assert canvas_names == {"00001", "00002", "00003"}  # skipped page not omitted
 
 
 def _alto_pc(pc: str) -> str:
@@ -317,7 +317,7 @@ def _get_json(s3, cfg, rel):
 
 
 def test_a_scored_run_publishes_its_quality_everywhere(env, cfg, s3):
-    scores = {"0001": "0.9", "0002": "0.4", "0003": "0.7"}
+    scores = {"00001": "0.9", "00002": "0.4", "00003": "0.7"}
 
     def factory(cfg):
         return lambda path: _write_outputs(
@@ -327,12 +327,12 @@ def test_a_scored_run_publishes_its_quality_everywhere(env, cfg, s3):
     assert main(env, process_page_factory=factory) == EXIT_OK
     manifest = _get_json(s3, cfg, "manifest.json")
     assert {n: r["quality"] for n, r in manifest["results"].items()} == {
-        "0001": 0.9,
-        "0002": 0.4,
-        "0003": 0.7,
+        "00001": 0.9,
+        "00002": 0.4,
+        "00003": 0.7,
     }
     assert manifest["quality"]["mean"] == 0.6667
-    assert manifest["quality"]["lowest"][0]["page"] == "0002"
+    assert manifest["quality"]["lowest"][0]["page"] == "00002"
     progress = _get_json(s3, cfg, "progress.json")
     assert progress["stage"] == "done"
     assert progress["quality"] == manifest["quality"]
@@ -341,18 +341,18 @@ def test_a_scored_run_publishes_its_quality_everywhere(env, cfg, s3):
 def test_a_resumed_page_keeps_its_score(env, cfg, s3):
     s3.put_object(
         Bucket=cfg.s3_bucket,
-        Key="demo-v1/SE-RA-1234/alto/0001.xml",
+        Key="demo-v1/SE-RA-1234/alto/00001.xml",
         Body=_alto_pc("0.25").encode(),
     )
-    _put_done(s3, cfg, "0001", formats=("page",))
+    _put_done(s3, cfg, "00001", formats=("page",))
 
     def factory(cfg):
         return lambda path: _write_outputs(cfg, path.stem, alto=_alto_pc("0.75"))
 
     assert main(env, process_page_factory=factory) == EXIT_OK
     manifest = _get_json(s3, cfg, "manifest.json")
-    assert manifest["results"]["0001"]["status"] == "skipped"
-    assert manifest["results"]["0001"]["quality"] == 0.25
+    assert manifest["results"]["00001"]["status"] == "skipped"
+    assert manifest["results"]["00001"]["quality"] == 0.25
     assert manifest["quality"]["scored"] == 3
 
 
@@ -366,7 +366,7 @@ def test_resume_reprocesses_pages_whose_source_changed(env, cfg, s3):
     """W7: resume was by position only; an edited images: list or a
     re-ordered manifest kept stale outputs. The previous manifest.json's
     page_sources are compared with the current image URLs."""
-    for name in ("0001", "0002", "0003"):
+    for name in ("00001", "00002", "00003"):
         _put_done(s3, cfg, name)
     src = "https://iiif.example/mock-vol/page-{:05d}/full/2500,/0/default.jpg"
     s3.put_object(
@@ -376,9 +376,9 @@ def test_resume_reprocesses_pages_whose_source_changed(env, cfg, s3):
             {
                 "pages": 3,
                 "page_sources": {
-                    "0001": src.format(1),
-                    "0002": "https://iiif.example/OLD/page-00002/full/2500,/0/default.jpg",
-                    "0003": src.format(3),
+                    "00001": src.format(1),
+                    "00002": "https://iiif.example/OLD/page-00002/full/2500,/0/default.jpg",
+                    "00003": src.format(3),
                 },
             }
         ).encode(),
@@ -386,15 +386,15 @@ def test_resume_reprocesses_pages_whose_source_changed(env, cfg, s3):
     calls = []
 
     assert _attempt(env, calls) == EXIT_OK
-    assert calls == ["0002"]
+    assert calls == ["00002"]
     body = json.loads(
         s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
             "Body"
         ].read()
     )
-    assert body["results"]["0001"]["status"] == "skipped"
-    assert body["results"]["0002"]["status"] == "ok"
-    assert body["page_sources"]["0002"] == src.format(2)
+    assert body["results"]["00001"]["status"] == "skipped"
+    assert body["results"]["00002"]["status"] == "ok"
+    assert body["page_sources"]["00002"] == src.format(2)
 
 
 def _move_source(manifest: dict, to: str) -> None:
@@ -437,24 +437,24 @@ def test_resume_after_a_changed_source_keeps_what_the_last_attempt_did(
     _move_source(sample_manifest, "NEW")
 
     b: list = []
-    assert _attempt(env, b, stop_at="0002") == EXIT_TRANSIENT
-    assert b == ["0001"]
+    assert _attempt(env, b, stop_at="00002") == EXIT_TRANSIENT
+    assert b == ["00001"]
     # B deleted what it was about to redo: nothing from the old source is
     # left standing for a page it did not reach
     keys = _keys(s3, cfg)
-    assert "demo-v1/SE-RA-1234/alto/0001.xml" in keys
-    assert "demo-v1/SE-RA-1234/alto/0002.xml" not in keys
+    assert "demo-v1/SE-RA-1234/alto/00001.xml" in keys
+    assert "demo-v1/SE-RA-1234/alto/00002.xml" not in keys
 
     c: list = []
     assert _attempt(env, c) == EXIT_OK
-    assert c == ["0002", "0003"]
+    assert c == ["00002", "00003"]
     body = json.loads(
         s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
             "Body"
         ].read()
     )
-    assert body["results"]["0001"]["status"] == "skipped"
-    assert {body["results"][n]["status"] for n in ("0002", "0003")} == {"ok"}
+    assert body["results"]["00001"]["status"] == "skipped"
+    assert {body["results"][n]["status"] for n in ("00002", "00003")} == {"ok"}
 
 
 def test_a_page_made_from_another_source_than_the_manifest_says_is_redone(
@@ -462,15 +462,15 @@ def test_a_page_made_from_another_source_than_the_manifest_says_is_redone(
 ):
     """The page's own record wins over manifest.json's: a source changed and
     changed back leaves manifest.json agreeing with the current source while
-    page 0001 was last made from the other one."""
+    page 00001 was last made from the other one."""
     assert _attempt(env, []) == EXIT_OK
     _move_source(sample_manifest, "NEW")
-    assert _attempt(env, [], stop_at="0002") == EXIT_TRANSIENT
+    assert _attempt(env, [], stop_at="00002") == EXIT_TRANSIENT
     _move_source(sample_manifest, "mock-vol")
 
     calls: list = []
     assert _attempt(env, calls) == EXIT_OK
-    assert calls == ["0001", "0002", "0003"]
+    assert calls == ["00001", "00002", "00003"]
 
 
 def test_every_page_output_records_its_source(env, cfg, s3):
@@ -478,7 +478,7 @@ def test_every_page_output_records_its_source(env, cfg, s3):
     src = "https://iiif.example/mock-vol/page-00001/full/2500,/0/default.jpg"
     for fmt in ("alto", "page"):
         head = s3.head_object(
-            Bucket=cfg.s3_bucket, Key=f"demo-v1/SE-RA-1234/{fmt}/0001.xml"
+            Bucket=cfg.s3_bucket, Key=f"demo-v1/SE-RA-1234/{fmt}/00001.xml"
         )
         assert head["Metadata"] == {"source-digest": source_digest(src)}
 
@@ -490,12 +490,12 @@ def test_a_page_half_uploaded_with_resume_off_is_not_done_on_the_retry(
     PAGE XML landed and whose ALTO PUT then failed kept the previous run's
     ALTO beside it -- and the retry counted that mixed pair as done. Every
     page a run is about to redo loses its stored outputs first."""
-    for name in ("0001", "0002", "0003"):
+    for name in ("00001", "00002", "00003"):
         _put_done(s3, cfg, name)
     real = ResultStore._put
 
     def put(self, key, *args, **kwargs):
-        if key.endswith("alto/0002.xml"):
+        if key.endswith("alto/00002.xml"):
             raise RuntimeError("S3 went away mid-page")
         return real(self, key, *args, **kwargs)
 
@@ -505,12 +505,12 @@ def test_a_page_half_uploaded_with_resume_off_is_not_done_on_the_retry(
         assert main({**env, "RESUME": "false"}, process_page_factory=fake_factory) == (
             EXIT_TRANSIENT
         )
-    assert "demo-v1/SE-RA-1234/alto/0002.xml" not in _keys(s3, cfg)
-    assert "demo-v1/SE-RA-1234/page/0002.xml" not in _keys(s3, cfg)
+    assert "demo-v1/SE-RA-1234/alto/00002.xml" not in _keys(s3, cfg)
+    assert "demo-v1/SE-RA-1234/page/00002.xml" not in _keys(s3, cfg)
 
     calls: list = []
     assert _attempt(env, calls) == EXIT_OK
-    assert calls == ["0002"]
+    assert calls == ["00002"]
 
 
 def test_resume_keeps_done_pages_whose_stored_source_is_redacted(images_env, cfg, s3):
@@ -518,12 +518,12 @@ def test_resume_keeps_done_pages_whose_stored_source_is_redacted(images_env, cfg
     too. A tokenised private IIIF URL otherwise looked "changed" on every
     retry and the whole volume was reprocessed, forever."""
     url = "https://img.example/1.jpg?token=SECRET"
-    _put_done(s3, cfg, "0001")
+    _put_done(s3, cfg, "00001")
     s3.put_object(
         Bucket=cfg.s3_bucket,
         Key="demo-v1/SE-RA-1234/manifest.json",
         Body=json.dumps(
-            {"pages": 1, "page_sources": {"0001": redact_url(url)}}
+            {"pages": 1, "page_sources": {"00001": redact_url(url)}}
         ).encode(),
     )
     calls = []
@@ -535,35 +535,61 @@ def test_resume_keeps_done_pages_whose_stored_source_is_redacted(images_env, cfg
             "Body"
         ].read()
     )
-    assert body["results"]["0001"]["status"] == "skipped"
+    assert body["results"]["00001"]["status"] == "skipped"
 
 
 def test_resume_without_previous_manifest_keeps_done_pages(env, cfg, s3):
     """No manifest.json (the previous attempt never completed) = nothing to
     compare against; done pages stay done."""
-    _put_done(s3, cfg, "0001")
+    _put_done(s3, cfg, "00001")
     calls = []
 
     assert _attempt(env, calls) == EXIT_OK
-    assert calls == ["0002", "0003"]
+    assert calls == ["00002", "00003"]
 
 
 def test_resume_reprocesses_page_with_alto_but_no_page_xml(env, cfg, s3):
     """W2: a previous run that died between the two uploads must not count
     the page as done."""
-    _put_done(s3, cfg, "0001", formats=("alto",))
+    _put_done(s3, cfg, "00001", formats=("alto",))
     calls = []
 
     assert _attempt(env, calls) == EXIT_OK
-    assert calls == ["0001", "0002", "0003"]
-    assert "demo-v1/SE-RA-1234/page/0001.xml" in _keys(s3, cfg)
+    assert calls == ["00001", "00002", "00003"]
+    assert "demo-v1/SE-RA-1234/page/00001.xml" in _keys(s3, cfg)
+
+
+def test_resume_replaces_outputs_stored_under_an_older_page_name(env, cfg, s3):
+    """Page names had four digits once. A volume begun then is not done under
+    the five-digit names, so it is processed again -- and what it stored
+    under the old names goes, markers first, rather than staying in the
+    bucket beside the new for good."""
+    _put_done(s3, cfg, "0001")
+    _put_done(s3, cfg, "0002", formats=("alto",))
+    _put_done(s3, cfg, "0009")  # not a page of this three-page volume: kept
+    for rel in ("manifest.json", "iiif.json", "failed/alto/0003.xml"):
+        s3.put_object(Bucket=cfg.s3_bucket, Key=f"demo-v1/SE-RA-1234/{rel}", Body=b"{}")
+    calls = []
+
+    assert _attempt(env, calls) == EXIT_OK
+    assert calls == ["00001", "00002", "00003"]
+    stored = [k.removeprefix("demo-v1/SE-RA-1234/") for k in _keys(s3, cfg)]
+    assert [k for k in stored if k.startswith(("alto/", "page/", "failed/"))] == [
+        *(f"alto/{n}.xml" for n in ("00001", "00002", "00003", "0009")),
+        *(f"page/{n}.xml" for n in ("00001", "00002", "00003", "0009")),
+    ]
+    assert set(_get_json(s3, cfg, "manifest.json")["results"]) == {
+        "00001",
+        "00002",
+        "00003",
+    }
 
 
 def test_verify_requires_page_xml_too(env, cfg, s3, monkeypatch):
     real = ResultStore.upload_page
 
     def drop_page_for_0002(self, name, files, source=None):
-        if name != "0002":
+        if name != "00002":
             return real(self, name, files, source)
         # simulate a PAGE PUT that never landed, bypassing upload_page's check
         self.client.put_object(
@@ -576,7 +602,7 @@ def test_verify_requires_page_xml_too(env, cfg, s3, monkeypatch):
     rc = main(env, process_page_factory=fake_factory)
     assert rc == EXIT_TRANSIENT
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
-    assert term["stage"] == "verify" and "missing=['0002']" in term["error"]
+    assert term["stage"] == "verify" and "missing=['00002']" in term["error"]
     assert "demo-v1/SE-RA-1234/manifest.json" not in _keys(s3, cfg)
 
 
@@ -587,7 +613,7 @@ def test_malformed_alto_fails_the_page_at_upload(env, cfg, s3):
 
     def factory(c):
         def process(path):
-            if path.stem == "0002":
+            if path.stem == "00002":
                 return _write_outputs(c, path.stem, alto="<alto><Layout></alto>")
             return _write_outputs(c, path.stem)
 
@@ -596,28 +622,28 @@ def test_malformed_alto_fails_the_page_at_upload(env, cfg, s3):
     rc = main(env, process_page_factory=factory)
     assert rc == EXIT_OK
     keys = _keys(s3, cfg)
-    assert "demo-v1/SE-RA-1234/alto/0002.xml" not in keys
-    assert "demo-v1/SE-RA-1234/page/0002.xml" not in keys
+    assert "demo-v1/SE-RA-1234/alto/00002.xml" not in keys
+    assert "demo-v1/SE-RA-1234/page/00002.xml" not in keys
     body = json.loads(
         s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
             "Body"
         ].read()
     )
-    assert body["results"]["0002"]["status"] == "failed"
+    assert body["results"]["00002"]["status"] == "failed"
     # ...but kept aside, as it came out, for whoever debugs it
     failed = s3.get_object(
-        Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/failed/alto/0002.xml"
+        Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/failed/alto/00002.xml"
     )
     assert failed["Body"].read() == b"<alto><Layout></alto>"
-    assert "demo-v1/SE-RA-1234/failed/page/0002.xml" in keys
-    assert not any("/failed/" in k and "0002" not in k for k in keys)
+    assert "demo-v1/SE-RA-1234/failed/page/00002.xml" in keys
+    assert not any("/failed/" in k and "00002" not in k for k in keys)
 
 
 def test_a_rerun_drops_the_kept_copy_of_a_page_it_redoes(env, cfg, s3):
     """failed/ shows what the LAST attempt at a page produced: a page that
     now comes out right loses its old copy, one that fails again gets a new
     one. Done pages are not redone, so nothing else is touched."""
-    for name in ("0001", "0002"):
+    for name in ("00001", "00002"):
         for fmt in ("alto", "page"):
             s3.put_object(
                 Bucket=cfg.s3_bucket,
@@ -627,7 +653,7 @@ def test_a_rerun_drops_the_kept_copy_of_a_page_it_redoes(env, cfg, s3):
 
     def factory(c):
         def process(path):
-            if path.stem == "0002":
+            if path.stem == "00002":
                 return _write_outputs(c, path.stem, alto="<alto><new>")
             return _write_outputs(c, path.stem)
 
@@ -635,10 +661,10 @@ def test_a_rerun_drops_the_kept_copy_of_a_page_it_redoes(env, cfg, s3):
 
     assert main(env, process_page_factory=factory) == EXIT_OK
     keys = _keys(s3, cfg)
-    assert not any(k.endswith("failed/alto/0001.xml") for k in keys)
-    assert not any(k.endswith("failed/page/0001.xml") for k in keys)
+    assert not any(k.endswith("failed/alto/00001.xml") for k in keys)
+    assert not any(k.endswith("failed/page/00001.xml") for k in keys)
     again = s3.get_object(
-        Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/failed/alto/0002.xml"
+        Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/failed/alto/00002.xml"
     )
     assert again["Body"].read() == b"<alto><new>"
 
@@ -658,8 +684,8 @@ def test_default_factory_refuses_an_alto_it_cannot_stamp_with_both_files(
             cfg, image_path.stem, alto='<alto><String CONTENT="&"/></alto>'
         ),
     )
-    with pytest.raises(MalformedOutput, match="0001.xml is not well-formed") as e:
-        main_mod._default_factory(cfg)(Path("/img/0001.jpg"))
+    with pytest.raises(MalformedOutput, match="00001.xml is not well-formed") as e:
+        main_mod._default_factory(cfg)(Path("/img/00001.jpg"))
     assert sorted(e.value.files) == ["alto", "page"]
     assert e.value.files["page"].read_text() == PAGE_OK
 
@@ -672,7 +698,7 @@ def test_a_failed_page_completes_the_volume(env, cfg, s3):
 
     def factory(c):
         def process(path):
-            if path.stem == "0002":
+            if path.stem == "00002":
                 raise RuntimeError("htrflow's Segmentation worker thread died")
             return _write_outputs(c, path.stem)
 
@@ -694,8 +720,8 @@ def test_a_failed_page_completes_the_volume(env, cfg, s3):
             "Body"
         ].read()
     )
-    assert body["results"]["0002"]["status"] == "failed"
-    assert "worker thread died" in body["results"]["0002"]["error"]
+    assert body["results"]["00002"]["status"] == "failed"
+    assert "worker thread died" in body["results"]["00002"]["error"]
     assert not Path(env["TERMINATION_LOG_PATH"]).exists()
 
 
@@ -705,7 +731,7 @@ def test_a_failed_page_is_named_with_its_cause_in_the_run_log(env, cfg, s3, capl
 
     def factory(c):
         def process(path):
-            if path.stem == "0002":
+            if path.stem == "00002":
                 raise RuntimeError("dead thread")
             return _write_outputs(c, path.stem)
 
@@ -716,7 +742,7 @@ def test_a_failed_page_is_named_with_its_cause_in_the_run_log(env, cfg, s3, capl
     verify = [
         r.getMessage() for r in caplog.records if "recorded as failed" in r.getMessage()
     ]
-    assert verify and "0002: " in verify[0] and "dead thread" in verify[0]
+    assert verify and "00002: " in verify[0] and "dead thread" in verify[0]
 
 
 def test_every_processed_page_failing_is_still_a_volume_failure(env, cfg, s3):
@@ -765,7 +791,7 @@ def test_every_page_exported_without_its_text_is_a_permanent_failure(env, cfg, s
     assert (term["stage"], term["permanent"]) == ("verify", True)
     assert term["error"].startswith("all 3 processed pages failed the same way")
     assert term["error"].count("region Segmentation step") == 1
-    assert "0001: recognized text not exported" in term["error"]
+    assert "00001: recognized text not exported" in term["error"]
 
 
 def test_an_export_loss_among_other_failures_stays_transient(env, cfg, s3):
@@ -775,7 +801,7 @@ def test_an_export_loss_among_other_failures_stays_transient(env, cfg, s3):
 
     def factory(c):
         def process(path):
-            if path.stem == "0002":
+            if path.stem == "00002":
                 raise RuntimeError("CUDA error: no kernel image is available")
             raise TextNotExported(_not_exported(3))
 
@@ -791,8 +817,8 @@ def test_the_all_failed_guard_does_not_fire_on_a_resumed_run(env, cfg, s3):
     a volume SIGTERMed at page 637 of 638 whose one remaining page is the dead
     one would otherwise exit 1, retry, and end FailIndex -- the very outcome
     this change removes. Something resumed means the volume is coming out."""
-    _put_done(s3, cfg, "0001")
-    _put_done(s3, cfg, "0002")
+    _put_done(s3, cfg, "00001")
+    _put_done(s3, cfg, "00002")
 
     def factory(c):
         def process(path):
@@ -807,7 +833,7 @@ def test_the_all_failed_guard_does_not_fire_on_a_resumed_run(env, cfg, s3):
         ].read()
     )
     assert (body["pages_ok"], body["pages_failed"]) == (0, 1)
-    assert body["results"]["0001"]["status"] == "skipped"
+    assert body["results"]["00001"]["status"] == "skipped"
 
 
 @pytest.mark.parametrize(
@@ -827,7 +853,7 @@ def test_a_transient_failure_on_the_last_attempt_says_no_retry_follows(
     real = ResultStore.upload_page
 
     def drop_0002(self, name, files, source=None):
-        if name != "0002":
+        if name != "00002":
             return real(self, name, files, source)
 
     monkeypatch.setattr(ResultStore, "upload_page", drop_0002)
@@ -845,7 +871,7 @@ def test_a_missing_page_is_still_a_verify_failure(env, cfg, s3, monkeypatch):
     real = ResultStore.upload_page
 
     def drop_0002(self, name, files, source=None):
-        if name != "0002":
+        if name != "00002":
             return real(self, name, files, source)
 
     monkeypatch.setattr(ResultStore, "upload_page", drop_0002)
@@ -853,7 +879,7 @@ def test_a_missing_page_is_still_a_verify_failure(env, cfg, s3, monkeypatch):
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
     assert term["stage"] == "verify"
     assert (
-        "1 missing, 0 failed" in term["error"] and "missing=['0002']" in term["error"]
+        "1 missing, 0 failed" in term["error"] and "missing=['00002']" in term["error"]
     )
 
 
@@ -873,7 +899,7 @@ def test_the_all_failed_message_reports_why_each_page_failed(env, cfg, s3):
     assert main(env, process_page_factory=factory) == EXIT_TRANSIENT
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
     assert term["stage"] == "verify"
-    assert "0002: " in term["error"] and "went wrong" in term["error"]
+    assert "00002: " in term["error"] and "went wrong" in term["error"]
     assert "SECRET" not in term["error"]
 
 
@@ -881,7 +907,7 @@ def test_verify_failure_detail_is_bounded():
     """Every failed page's error in one field would blow past the 3500-char
     cap terminate truncates at (and the 4 KiB the kubelet keeps): at most 10
     pages, each error clipped, the rest counted."""
-    names = [f"{i:04d}" for i in range(1, 51)]
+    names = [f"{i:05d}" for i in range(1, 51)]
     stats = StreamStats(
         results={n: PageOutcome(status="failed", error="x" * 500) for n in names}
     )
@@ -905,11 +931,11 @@ def test_verify_detail_survives_the_termination_log_truncation(tmp_path):
             return set()
 
     pages = [
-        PageRef(index=i, name=f"{i:04d}", image_url="https://x/p.jpg", canvas={})
+        PageRef(index=i, name=f"{i:05d}", image_url="https://x/p.jpg", canvas={})
         for i in range(1, 601)
     ]
     stats = StreamStats(
-        results={"0001": PageOutcome(status="failed", error="boom: disk full")}
+        results={"00001": PageOutcome(status="failed", error="boom: disk full")}
     )
     with pytest.raises(RuntimeError) as ei:
         main_mod._verify(_NothingUploaded(), pages, stats, main_mod.RunState())
@@ -925,9 +951,9 @@ def test_verify_detail_survives_the_termination_log_truncation(tmp_path):
     term = json.loads(log_path.read_text())  # whole, valid JSON
     assert term["stage"] == "verify"
     assert term["error"].endswith("...(truncated)")
-    # 0001 is recorded as failed, so it is accounted for and not missing
+    # 00001 is recorded as failed, so it is accounted for and not missing
     assert "599 missing, 1 failed" in term["error"]
-    assert "0001: boom: disk full" in term["error"]
+    assert "00001: boom: disk full" in term["error"]
 
 
 class _MissingCachedModel0x(FileNotFoundError, ValueError):
@@ -963,11 +989,11 @@ def test_publish_tolerates_unparseable_previously_uploaded_alto(env, cfg, s3):
     publish: iiif.json simply omits that canvas (with a warning)."""
     s3.put_object(
         Bucket=cfg.s3_bucket,
-        Key="demo-v1/SE-RA-1234/alto/0001.xml",
+        Key="demo-v1/SE-RA-1234/alto/00001.xml",
         Body=b"<alto><Layout></alto>",
     )
     s3.put_object(
-        Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/page/0001.xml", Body=b"<PcGts/>"
+        Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/page/00001.xml", Body=b"<PcGts/>"
     )
     rc = main(env, process_page_factory=fake_factory)
     assert rc == EXIT_OK
@@ -976,7 +1002,7 @@ def test_publish_tolerates_unparseable_previously_uploaded_alto(env, cfg, s3):
             "Body"
         ].read()
     )
-    assert {c["id"].rsplit("/", 1)[-1] for c in iiif["items"]} == {"0002", "0003"}
+    assert {c["id"].rsplit("/", 1)[-1] for c in iiif["items"]} == {"00002", "00003"}
 
 
 class _Uploaded:
@@ -1000,13 +1026,13 @@ def _pages(*names):
     "store,results,sentence",
     [
         (
-            _Uploaded("0001"),
-            {"0001": PageOutcome(status="ok")},
+            _Uploaded("00001"),
+            {"00001": PageOutcome(status="ok")},
             "some pages produced no result; the retry redoes only those",
         ),
         (
             _Uploaded(),
-            {n: PageOutcome(status="failed", error="CUDA") for n in ("0001", "0002")},
+            {n: PageOutcome(status="failed", error="CUDA") for n in ("00001", "00002")},
             "no page produced a result — check the model and the GPU",
         ),
     ],
@@ -1019,7 +1045,7 @@ def test_a_verify_failure_gets_the_advice_for_its_outcome(store, results, senten
     with pytest.raises(RuntimeError) as ei:
         main_mod._verify(
             store,
-            _pages("0001", "0002"),
+            _pages("00001", "00002"),
             StreamStats(results=results),
             main_mod.RunState(),
         )
@@ -1169,7 +1195,7 @@ def test_publish_warns_when_viewer_manifest_incomplete(env, cfg, s3, caplog):
 
     def factory(c):
         def process(path: Path):
-            if path.stem == "0002":  # no WIDTH/HEIGHT
+            if path.stem == "00002":  # no WIDTH/HEIGHT
                 return _write_outputs(
                     c, path.stem, alto="<alto><Layout><Page/></Layout></alto>"
                 )
@@ -1281,7 +1307,7 @@ def test_sigterm_writes_termination_log_ships_final_log_and_exits_143(
         inner = fake_factory(c)
 
         def process(path):
-            if path.stem == "0002":
+            if path.stem == "00002":
                 os.kill(os.getpid(), signal.SIGTERM)
             return inner(path)
 
@@ -1315,14 +1341,14 @@ def test_sigterm_is_not_swallowed_by_the_per_page_handler(env, cfg, s3):
 
         def process(path):
             seen.append(path.stem)
-            if path.stem == "0001":
+            if path.stem == "00001":
                 os.kill(os.getpid(), signal.SIGTERM)
             return inner(path)
 
         return process
 
     assert main(env, process_page_factory=factory) == EXIT_SIGTERM
-    assert seen == ["0001"]  # no further page was processed
+    assert seen == ["00001"]  # no further page was processed
 
 
 def test_store_outage_aborts_in_stream_stage(
@@ -1431,7 +1457,7 @@ def test_manifest_json_page_sources_and_errors_are_redacted(
         "Body"
     ].read()
     assert b"SECRET" not in body
-    assert json.loads(body)["page_sources"]["0001"].startswith(
+    assert json.loads(body)["page_sources"]["00001"].startswith(
         "https://iiif.example/private/p1"
     )
 
@@ -1476,8 +1502,8 @@ def test_images_processes_both_pages_and_publishes_no_source_manifest(
     rc = main(images_env, process_page_factory=fake_factory)
     assert rc == EXIT_OK
     keys = _keys(s3, cfg)
-    assert "demo-v1/SE-RA-1234/alto/0001.xml" in keys
-    assert "demo-v1/SE-RA-1234/alto/0002.xml" in keys
+    assert "demo-v1/SE-RA-1234/alto/00001.xml" in keys
+    assert "demo-v1/SE-RA-1234/alto/00002.xml" in keys
     assert not [k for k in keys if k.startswith("sources/")]
     manifest = json.loads(
         s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
@@ -1546,12 +1572,12 @@ def test_publish_still_reads_back_only_the_pages_a_previous_run_did(
     env, cfg, s3, monkeypatch
 ):
     """The fallback stays for exactly the pages this run skipped."""
-    _put_done(s3, cfg, "0001")
+    _put_done(s3, cfg, "00001")
     reads = _count_alto_reads(monkeypatch)
 
     assert main(env, process_page_factory=fake_factory) == EXIT_OK
 
-    assert reads == ["alto/0001.xml"]
+    assert reads == ["alto/00001.xml"]
 
 
 ALTO_STAMPABLE = (
@@ -1581,7 +1607,7 @@ def test_default_factory_rebuilds_the_pipeline_after_a_dead_worker_thread(
     blocked = threading.Event()
 
     class _Pipeline:
-        """One Inference step whose worker thread dies on page 0002 and whose
+        """One Inference step whose worker thread dies on page 00002 and whose
         run() then never returns, exactly as htrflow's does."""
 
         class Segmentation:  # __str__ is the class name, as htrflow's is
@@ -1601,7 +1627,7 @@ def test_default_factory_rebuilds_the_pipeline_after_a_dead_worker_thread(
             self.steps = [self.segmentation]  # a dead pipeline's list is emptied
 
         def run(self, document):
-            if Path(document).stem == "0002":
+            if Path(document).stem == "00002":
                 self.thread.alive = False
                 blocked.wait(30)
             for fmt, text in (("alto", ALTO_STAMPABLE), ("page", PAGE_OK)):
@@ -1623,11 +1649,11 @@ def test_default_factory_rebuilds_the_pipeline_after_a_dead_worker_thread(
 
     images = []
     for i in (1, 2, 3):
-        image = tmp_path / f"{i:04d}.jpg"
+        image = tmp_path / f"{i:05d}.jpg"
         image.write_bytes(b"jpg")
         images.append(
             FetchResult(
-                page=PageRef(index=i, name=f"{i:04d}", image_url="x", canvas={}),
+                page=PageRef(index=i, name=f"{i:05d}", image_url="x", canvas={}),
                 path=image,
                 error=None,
             )
@@ -1640,11 +1666,11 @@ def test_default_factory_rebuilds_the_pipeline_after_a_dead_worker_thread(
         blocked.set()
 
     assert [r.status for r in stats.results.values()] == ["ok", "failed", "ok"]
-    assert stats.results["0002"].error == (
-        "page 0002: htrflow's Segmentation (model yolov9-regions-1) worker "
+    assert stats.results["00002"].error == (
+        "page 00002: htrflow's Segmentation (model yolov9-regions-1) worker "
         "thread died; the page is marked failed and the pipeline is rebuilt"
     )
-    assert len(built) == 2  # page 0003 ran on a pipeline built from scratch
+    assert len(built) == 2  # page 00003 ran on a pipeline built from scratch
     assert held == ["first build", None]  # its weights were dropped first
 
 
@@ -1654,7 +1680,7 @@ def test_a_reprocessed_page_that_fails_publishes_no_stale_alto(env, cfg, s3):
     -- and publish read that stale ALTO into iiif.json while manifest.json
     said the page had failed. The objects go before the page is reprocessed,
     and a failed page never contributes a canvas."""
-    for name in ("0001", "0002", "0003"):
+    for name in ("00001", "00002", "00003"):
         _put_done(s3, cfg, name)
     src = "https://iiif.example/mock-vol/page-{:05d}/full/2500,/0/default.jpg"
     s3.put_object(
@@ -1664,9 +1690,9 @@ def test_a_reprocessed_page_that_fails_publishes_no_stale_alto(env, cfg, s3):
             {
                 "pages": 3,
                 "page_sources": {
-                    "0001": src.format(1),
-                    "0002": "https://iiif.example/OLD/page-00002/full/2500,/0/default.jpg",
-                    "0003": src.format(3),
+                    "00001": src.format(1),
+                    "00002": "https://iiif.example/OLD/page-00002/full/2500,/0/default.jpg",
+                    "00003": src.format(3),
                 },
             }
         ).encode(),
@@ -1674,7 +1700,7 @@ def test_a_reprocessed_page_that_fails_publishes_no_stale_alto(env, cfg, s3):
 
     def factory(c):
         def process(path):
-            if path.stem == "0002":
+            if path.stem == "00002":
                 raise RuntimeError("htrflow's Segmentation worker thread died")
             return _write_outputs(c, path.stem)
 
@@ -1682,32 +1708,32 @@ def test_a_reprocessed_page_that_fails_publishes_no_stale_alto(env, cfg, s3):
 
     assert main(env, process_page_factory=factory) == EXIT_OK
     keys = _keys(s3, cfg)
-    assert "demo-v1/SE-RA-1234/alto/0002.xml" not in keys
-    assert "demo-v1/SE-RA-1234/page/0002.xml" not in keys
+    assert "demo-v1/SE-RA-1234/alto/00002.xml" not in keys
+    assert "demo-v1/SE-RA-1234/page/00002.xml" not in keys
     iiif = json.loads(
         s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/iiif.json")[
             "Body"
         ].read()
     )
-    assert [c["id"].rsplit("/", 1)[-1] for c in iiif["items"]] == ["0001", "0003"]
+    assert [c["id"].rsplit("/", 1)[-1] for c in iiif["items"]] == ["00001", "00003"]
     body = json.loads(
         s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
             "Body"
         ].read()
     )
-    assert body["results"]["0002"]["status"] == "failed"
+    assert body["results"]["00002"]["status"] == "failed"
 
 
 def test_a_failed_page_keeps_its_stale_alto_out_of_the_viewer(env, cfg, s3):
     """RESUME=off reprocesses every page without a `changed` set to delete
     from, so the failed names are taken out of the uploaded listing publish
     reads dimensions back from (W3)."""
-    for name in ("0001", "0002", "0003"):
+    for name in ("00001", "00002", "00003"):
         _put_done(s3, cfg, name)
 
     def factory(c):
         def process(path):
-            if path.stem == "0002":
+            if path.stem == "00002":
                 raise RuntimeError("htrflow's Segmentation worker thread died")
             return _write_outputs(c, path.stem)
 
@@ -1719,7 +1745,7 @@ def test_a_failed_page_keeps_its_stale_alto_out_of_the_viewer(env, cfg, s3):
             "Body"
         ].read()
     )
-    assert [c["id"].rsplit("/", 1)[-1] for c in iiif["items"]] == ["0001", "0003"]
+    assert [c["id"].rsplit("/", 1)[-1] for c in iiif["items"]] == ["00001", "00003"]
 
 
 def test_resume_reprocesses_a_page_selected_by_its_query(images_env, cfg, s3):
@@ -1727,16 +1753,16 @@ def test_resume_reprocesses_a_page_selected_by_its_query(images_env, cfg, s3):
     source was redacted (query dropped) before it was compared -- so every
     page of such a manifest looked unchanged, forever. The digest beside it
     keeps the query."""
-    _put_done(s3, cfg, "0001")
+    _put_done(s3, cfg, "00001")
     s3.put_object(
         Bucket=cfg.s3_bucket,
         Key="demo-v1/SE-RA-1234/manifest.json",
         Body=json.dumps(
             {
                 "pages": 1,
-                "page_sources": {"0001": "https://img.example/iiif"},
+                "page_sources": {"00001": "https://img.example/iiif"},
                 "page_source_digests": {
-                    "0001": source_digest("https://img.example/iiif?id=OLD")
+                    "00001": source_digest("https://img.example/iiif?id=OLD")
                 },
             }
         ).encode(),
@@ -1745,13 +1771,13 @@ def test_resume_reprocesses_a_page_selected_by_its_query(images_env, cfg, s3):
 
     env = dict(images_env, IMAGES="https://img.example/iiif?id=NEW")
     assert _attempt(env, calls) == EXIT_OK
-    assert calls == ["0001"]
+    assert calls == ["00001"]
     body = json.loads(
         s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
             "Body"
         ].read()
     )
-    assert body["page_source_digests"]["0001"] == source_digest(
+    assert body["page_source_digests"]["00001"] == source_digest(
         "https://img.example/iiif?id=NEW"
     )
 
@@ -1760,7 +1786,7 @@ def test_resume_keeps_a_done_page_whose_token_rotated(images_env, cfg, s3):
     """The credentials are taken out of the digest, so a re-signed URL is not
     a new source -- else the whole volume would be reprocessed on every
     retry (W5)."""
-    _put_done(s3, cfg, "0001")
+    _put_done(s3, cfg, "00001")
     s3.put_object(
         Bucket=cfg.s3_bucket,
         Key="demo-v1/SE-RA-1234/manifest.json",
@@ -1768,7 +1794,7 @@ def test_resume_keeps_a_done_page_whose_token_rotated(images_env, cfg, s3):
             {
                 "pages": 1,
                 "page_source_digests": {
-                    "0001": source_digest("https://img.example/1.jpg?token=OLD")
+                    "00001": source_digest("https://img.example/1.jpg?token=OLD")
                 },
             }
         ).encode(),
@@ -1790,7 +1816,7 @@ def test_a_transient_failure_exits_without_joining_the_downloads(
     real = ResultStore.upload_page
 
     def drop_0002(self, name, files, source=None):
-        if name != "0002":
+        if name != "00002":
             return real(self, name, files, source)
 
     monkeypatch.setattr(ResultStore, "upload_page", drop_0002)
@@ -1837,11 +1863,11 @@ def _dead_pipeline_pages(cfg, tmp_path, monkeypatch, rebuilds: list, pages: int)
     monkeypatch.setattr(driver, "release_pipeline", lambda pipeline: None)
     items = []
     for i in range(1, pages + 1):
-        image = tmp_path / f"{i:04d}.jpg"
+        image = tmp_path / f"{i:05d}.jpg"
         image.write_bytes(b"jpg")
         items.append(
             FetchResult(
-                page=PageRef(index=i, name=f"{i:04d}", image_url="x", canvas={}),
+                page=PageRef(index=i, name=f"{i:05d}", image_url="x", canvas={}),
                 path=image,
                 error=None,
             )
@@ -1923,7 +1949,7 @@ def test_a_rebuilt_pipeline_exports_into_a_directory_of_its_own(cfg, monkeypatch
     process = main_mod._default_factory(cfg)
     for _ in range(2):
         with pytest.raises(driver.PipelineDead):
-            process(Path("/img/0001.jpg"))
+            process(Path("/img/00001.jpg"))
     assert used == built and len(set(built)) == 2
     assert all(d.parent == Path(cfg.workdir) / "outputs" for d in built)
 
@@ -1942,7 +1968,7 @@ def test_the_page_budget_reaches_the_driver(cfg, monkeypatch):
     monkeypatch.setattr(driver, "release_pipeline", lambda pipeline: None)
     cfg = cfg.model_copy(update={"page_timeout_seconds": 42.0})
     with pytest.raises(driver.PipelineDead):
-        main_mod._default_factory(cfg)(Path("/img/0001.jpg"))
+        main_mod._default_factory(cfg)(Path("/img/00001.jpg"))
     assert seen == [42.0]
 
 
@@ -2040,7 +2066,7 @@ def _source_down_for(monkeypatch, sample_manifest, page: str, fetched: list):
         if req.url.path.endswith("manifest.json"):
             return httpx.Response(200, json=sample_manifest)
         fetched.append(req.url.path)
-        if f"page-0{page}/" in req.url.path and down.is_set():
+        if f"page-{page}/" in req.url.path and down.is_set():
             return httpx.Response(503)
         return httpx.Response(200, content=b"\xff\xd8\xff\xe0JPEGDATA")
 
@@ -2061,12 +2087,12 @@ def test_a_page_the_source_could_not_serve_is_redone_by_the_retry(
     page lost although the source was back minutes later. It is missing now:
     exit 1, and the index's retry redoes that page and only that page."""
     fetched: list = []
-    down = _source_down_for(monkeypatch, sample_manifest, "0002", fetched)
+    down = _source_down_for(monkeypatch, sample_manifest, "00002", fetched)
     assert main(env, process_page_factory=fake_factory) == EXIT_TRANSIENT
     assert "demo-v1/SE-RA-1234/manifest.json" not in _keys(s3, cfg)
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
     assert term["stage"] == "verify"
-    assert "missing=['0002']" in term["error"]
+    assert "missing=['00002']" in term["error"]
 
     down.clear()  # the source is back for the retry
     fetched.clear()
@@ -2077,7 +2103,7 @@ def test_a_page_the_source_could_not_serve_is_redone_by_the_retry(
             "Body"
         ].read()
     )
-    assert body["results"]["0002"]["status"] == "ok"
+    assert body["results"]["00002"]["status"] == "ok"
     assert body["pages_failed"] == 0
 
 
@@ -2086,12 +2112,12 @@ def test_a_deferred_page_is_missing_even_with_stale_outputs(
 ):
     """With RESUME off a previous run's objects are still in the bucket; a
     page this run could not fetch must not pass verify on them."""
-    _put_done(s3, cfg, "0002")
-    _source_down_for(monkeypatch, sample_manifest, "0002", [])
+    _put_done(s3, cfg, "00002")
+    _source_down_for(monkeypatch, sample_manifest, "00002", [])
     env = dict(env, RESUME="false")
     assert main(env, process_page_factory=fake_factory) == EXIT_TRANSIENT
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
-    assert "missing=['0002']" in term["error"]
+    assert "missing=['00002']" in term["error"]
 
 
 def test_a_page_whose_upload_failed_once_is_redone_by_the_retry(
@@ -2106,7 +2132,7 @@ def test_a_page_whose_upload_failed_once_is_redone_by_the_retry(
     flaky = {"on": True}
 
     def put(self, key, body, content_type, client=None, metadata=None):
-        if flaky["on"] and key.endswith("alto/0002.xml"):
+        if flaky["on"] and key.endswith("alto/00002.xml"):
             raise ConnectionError("SlowDown")
         return real(self, key, body, content_type, client, metadata)
 
@@ -2114,15 +2140,15 @@ def test_a_page_whose_upload_failed_once_is_redone_by_the_retry(
     assert main(env, process_page_factory=fake_factory) == EXIT_TRANSIENT
     keys = _keys(s3, cfg)
     assert "demo-v1/SE-RA-1234/manifest.json" not in keys
-    assert "demo-v1/SE-RA-1234/page/0002.xml" not in keys
+    assert "demo-v1/SE-RA-1234/page/00002.xml" not in keys
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
-    assert "missing=['0002']" in term["error"]
+    assert "missing=['00002']" in term["error"]
 
     flaky["on"] = False
     calls = []
 
     assert _attempt(env, calls) == EXIT_OK
-    assert calls == ["0002"]
+    assert calls == ["00002"]
 
 
 def test_a_re_signed_azure_url_does_not_undo_the_last_attempt(images_env, cfg, s3):
@@ -2130,7 +2156,7 @@ def test_a_re_signed_azure_url_does_not_undo_the_last_attempt(images_env, cfg, s
     so every attempt saw every page it had not done itself as changed and
     deleted it -- a volume that needed two attempts never completed."""
     sas = (
-        "https://acct.blob.core.windows.net/c/0001.jpg"
+        "https://acct.blob.core.windows.net/c/00001.jpg"
         "?sv=2022-11-02&sp=r&se={d}T10:00:00Z&st={d}T09:00:00Z&sr=b&sig={s}"
     )
     first = dict(images_env, IMAGES=sas.format(d="2026-09-23", s="AAA"))
@@ -2150,7 +2176,7 @@ def test_a_run_that_deletes_stored_pages_takes_the_completion_marker_first(
     a completion marker (and a viewer manifest) describing outputs that no
     longer exist. The marker goes first, the viewer manifest next, the pages
     last -- a reader never sees a manifest.json without its iiif.json."""
-    for name in ("0001", "0002", "0003"):
+    for name in ("00001", "00002", "00003"):
         _put_done(s3, cfg, name)
     for rel in ("manifest.json", "iiif.json"):
         s3.put_object(Bucket=cfg.s3_bucket, Key=f"demo-v1/SE-RA-1234/{rel}", Body=b"{}")
@@ -2183,7 +2209,7 @@ def test_a_resume_that_deletes_nothing_keeps_the_completion_marker(
 ):
     """A run with nothing stale to delete leaves the marker alone until
     publish replaces it: what it describes is still there."""
-    for name in ("0001", "0002", "0003"):
+    for name in ("00001", "00002", "00003"):
         _put_done(s3, cfg, name)
     deleted = []
     monkeypatch.setattr(ResultStore, "delete", lambda self, rels: deleted.extend(rels))
@@ -2203,7 +2229,7 @@ def test_a_page_deferred_on_the_last_attempt_is_failed_not_missing(
     index's last attempt (the pod's failure count has reached
     backoffLimitPerIndex) a deferred page is recorded as failed, with its
     reason, and the volume completes."""
-    _source_down_for(monkeypatch, sample_manifest, "0002", [])
+    _source_down_for(monkeypatch, sample_manifest, "00002", [])
     env = dict(env, INDEX_FAILURE_COUNT=failures, BACKOFF_LIMIT_PER_INDEX="3")
     assert main(env, process_page_factory=fake_factory) == expected
     if expected == EXIT_TRANSIENT:
@@ -2214,9 +2240,9 @@ def test_a_page_deferred_on_the_last_attempt_is_failed_not_missing(
             "Body"
         ].read()
     )
-    assert body["results"]["0002"]["status"] == "failed"
-    assert "HTTP 503" in body["results"]["0002"]["error"]
-    assert "last attempt" in body["results"]["0002"]["error"]
+    assert body["results"]["00002"]["status"] == "failed"
+    assert "HTTP 503" in body["results"]["00002"]["error"]
+    assert "last attempt" in body["results"]["00002"]["error"]
     assert (body["pages_ok"], body["pages_failed"]) == (2, 1)
 
 
@@ -2225,7 +2251,7 @@ def test_without_the_retry_budget_a_deferred_page_stays_missing(
 ):
     """A Job that does not say how many attempts it has (the annotation
     absent, so the variable is empty) never takes an attempt for its last."""
-    _source_down_for(monkeypatch, sample_manifest, "0002", [])
+    _source_down_for(monkeypatch, sample_manifest, "00002", [])
     env = dict(env, INDEX_FAILURE_COUNT="", BACKOFF_LIMIT_PER_INDEX="")
     assert main(env, process_page_factory=fake_factory) == EXIT_TRANSIENT
 

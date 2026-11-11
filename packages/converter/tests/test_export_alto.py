@@ -11,7 +11,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "export" / "alto-2500.xml"
 
 
 def test_empty_alto_is_the_spec_example():
-    xml = empty_alto((3494, 2472), "R0001203_00001", 1, "0001")
+    xml = empty_alto((3494, 2472), "R0001203_00001", 1)
     root = ET.fromstring(xml)
     assert [e.tag.split("}")[1] for e in root.find(f"{{{ALTO_NS}}}Description")] == [
         "MeasurementUnit",
@@ -22,7 +22,7 @@ def test_empty_alto_is_the_spec_example():
         "WIDTH": "3494",
         "HEIGHT": "2472",
         "PHYSICAL_IMG_NR": "1",
-        "ID": "_0001",
+        "ID": "_00001",
     }
     ps = page.find(f"{{{ALTO_NS}}}PrintSpace")
     assert ps.attrib == {"HPOS": "0", "VPOS": "0", "WIDTH": "3494", "HEIGHT": "2472"}
@@ -45,6 +45,9 @@ def test_scaling_reaches_the_native_size_on_every_coordinate():
         "1",
     )
     assert page.get("PC") == "0.87"
+    # the fixture's own ID is "_0001", the run's page name: the published
+    # page carries the image number in five digits, as its fileName does
+    assert page.get("ID") == "_00001"
     s = out.find(f".//{{{ALTO_NS}}}String")
     assert int(s.get("HPOS")) == round(100 * 3494 / 2500)
     assert int(s.get("VPOS")) == round(200 * 2472 / 1769)

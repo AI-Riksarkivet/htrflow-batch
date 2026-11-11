@@ -11,7 +11,7 @@ from htrflow_batch.iiif import (
 
 def test_pages_from_manifest(sample_manifest):
     pages = pages_from_manifest(sample_manifest, width=2500)
-    assert [p.name for p in pages] == ["0001", "0002", "0003"]
+    assert [p.name for p in pages] == ["00001", "00002", "00003"]
     assert pages[0].index == 1
     assert pages[0].image_url == (
         "https://iiif.example/mock-vol/page-00001/full/2500,/0/default.jpg"
@@ -150,7 +150,7 @@ def test_wide_canvas_still_width_capped():
 def test_p2_manifest_yields_pages(p2_manifest):
     pages = pages_from_manifest(p2_manifest, width=2500)
     assert len(pages) == 1
-    assert pages[0].name == "0001"
+    assert pages[0].name == "00001"
     assert pages[0].image_url == "http://ex/img/full/2500,/0/default.jpg"
 
 
@@ -372,48 +372,48 @@ def test_source_digest_ignores_rotating_credentials(credential):
 #: signature on the URL at each manifest fetch (audit 0923 W-2).
 SIGNED_TWICE = {
     "azure-sas": (
-        "https://acct.blob.core.windows.net/c/0001.jpg?sv=2022-11-02&ss=b&srt=o"
+        "https://acct.blob.core.windows.net/c/00001.jpg?sv=2022-11-02&ss=b&srt=o"
         "&sp=r&se=2026-09-23T10:00:00Z&st=2026-09-23T09:00:00Z&spr=https&sig=AAA",
-        "https://acct.blob.core.windows.net/c/0001.jpg?sv=2022-11-02&ss=b&srt=o"
+        "https://acct.blob.core.windows.net/c/00001.jpg?sv=2022-11-02&ss=b&srt=o"
         "&sp=r&se=2026-09-24T10:00:00Z&st=2026-09-24T09:00:00Z&spr=https&sig=BBB",
     ),
     "azure-service-sas": (
-        "https://acct.blob.core.windows.net/c/0001.jpg?sp=r&st=1&se=2&sr=b&sig=AAA",
-        "https://acct.blob.core.windows.net/c/0001.jpg?sp=r&st=3&se=4&sr=b&sig=BBB",
+        "https://acct.blob.core.windows.net/c/00001.jpg?sp=r&st=1&se=2&sr=b&sig=AAA",
+        "https://acct.blob.core.windows.net/c/00001.jpg?sp=r&st=3&se=4&sr=b&sig=BBB",
     ),
     "gcs-v4": (
-        "https://storage.googleapis.com/b/0001.jpg?X-Goog-Algorithm=GOOG4-RSA-SHA256"
+        "https://storage.googleapis.com/b/00001.jpg?X-Goog-Algorithm=GOOG4-RSA-SHA256"
         "&X-Goog-Credential=sa%2F20260923&X-Goog-Date=20260923T090000Z"
         "&X-Goog-Expires=900&X-Goog-SignedHeaders=host&X-Goog-Signature=aaa",
-        "https://storage.googleapis.com/b/0001.jpg?X-Goog-Algorithm=GOOG4-RSA-SHA256"
+        "https://storage.googleapis.com/b/00001.jpg?X-Goog-Algorithm=GOOG4-RSA-SHA256"
         "&X-Goog-Credential=sa%2F20260924&X-Goog-Date=20260924T090000Z"
         "&X-Goog-Expires=900&X-Goog-SignedHeaders=host&X-Goog-Signature=bbb",
     ),
     "gcs-v2": (
-        "https://storage.googleapis.com/b/0001.jpg?GoogleAccessId=sa&Expires=1&Signature=a",
-        "https://storage.googleapis.com/b/0001.jpg?GoogleAccessId=sa&Expires=2&Signature=b",
+        "https://storage.googleapis.com/b/00001.jpg?GoogleAccessId=sa&Expires=1&Signature=a",
+        "https://storage.googleapis.com/b/00001.jpg?GoogleAccessId=sa&Expires=2&Signature=b",
     ),
     "cloudfront-canned": (
-        "https://d1.cloudfront.net/0001.jpg?Expires=1&Signature=a&Key-Pair-Id=K1",
-        "https://d1.cloudfront.net/0001.jpg?Expires=2&Signature=b&Key-Pair-Id=K2",
+        "https://d1.cloudfront.net/00001.jpg?Expires=1&Signature=a&Key-Pair-Id=K1",
+        "https://d1.cloudfront.net/00001.jpg?Expires=2&Signature=b&Key-Pair-Id=K2",
     ),
     "cloudfront-custom": (
-        "https://d1.cloudfront.net/0001.jpg?Policy=p1&Signature=a&Key-Pair-Id=K1",
-        "https://d1.cloudfront.net/0001.jpg?Policy=p2&Signature=b&Key-Pair-Id=K1",
+        "https://d1.cloudfront.net/00001.jpg?Policy=p1&Signature=a&Key-Pair-Id=K1",
+        "https://d1.cloudfront.net/00001.jpg?Policy=p2&Signature=b&Key-Pair-Id=K1",
     ),
     "s3-v2": (
-        "https://b.s3.amazonaws.com/0001.jpg?AWSAccessKeyId=A&Expires=1&Signature=a",
-        "https://b.s3.amazonaws.com/0001.jpg?AWSAccessKeyId=A&Expires=2&Signature=b",
+        "https://b.s3.amazonaws.com/00001.jpg?AWSAccessKeyId=A&Expires=1&Signature=a",
+        "https://b.s3.amazonaws.com/00001.jpg?AWSAccessKeyId=A&Expires=2&Signature=b",
     ),
     "s3-v4": (
-        "https://b.s3.amazonaws.com/0001.jpg?X-Amz-Date=1&X-Amz-Expires=9"
+        "https://b.s3.amazonaws.com/00001.jpg?X-Amz-Date=1&X-Amz-Expires=9"
         "&X-Amz-Security-Token=t1&X-Amz-Signature=a",
-        "https://b.s3.amazonaws.com/0001.jpg?X-Amz-Date=2&X-Amz-Expires=9"
+        "https://b.s3.amazonaws.com/00001.jpg?X-Amz-Date=2&X-Amz-Expires=9"
         "&X-Amz-Security-Token=t2&X-Amz-Signature=b",
     ),
     "akamai": (
-        "https://cdn.example/0001.jpg?hdnts=exp=1~hmac=a",
-        "https://cdn.example/0001.jpg?hdnts=exp=2~hmac=b",
+        "https://cdn.example/00001.jpg?hdnts=exp=1~hmac=a",
+        "https://cdn.example/00001.jpg?hdnts=exp=2~hmac=b",
     ),
 }
 
@@ -436,7 +436,7 @@ def test_source_digest_still_sees_another_image_behind_a_signature(scheme):
     from htrflow_batch.iiif import source_digest
 
     first, _ = SIGNED_TWICE[scheme]
-    assert source_digest(first) != source_digest(first.replace("0001", "0002"))
+    assert source_digest(first) != source_digest(first.replace("00001", "00002"))
 
 
 def test_source_digest_keeps_ordinary_names_outside_their_signing_scheme():
