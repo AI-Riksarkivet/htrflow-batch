@@ -418,7 +418,10 @@ fail=0
 # iiif.json as JSON-LD. Paid down in part: synthetic.py -20 and main.py -11,
 # the image-list manifest no longer published (its canvases have no size),
 # and the search-service stub gone.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 5127
+# 5127 -> 5140: page names have five digits, as the image ids do; resume
+# deletes what a volume stored under names of another width (main._renamed),
+# so no volume holds two names for one page.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 5140
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
@@ -908,7 +911,8 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 5127
 # fields set; labelled added, kept by this converter's prune (cluster.prune,
 # the keeps-added-pipelines Lease mark) and refused, like a retry on it, where
 # the last apply's prune would delete it.
-check converter "$(count packages/converter/src -name '*.py')" 7642
+# 7642 -> 7643: the exported ALTO's Page ID is the image id, as its fileName.
+check converter "$(count packages/converter/src -name '*.py')" 7643
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
