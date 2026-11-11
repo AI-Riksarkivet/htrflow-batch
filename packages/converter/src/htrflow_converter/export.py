@@ -341,7 +341,7 @@ def _build(
         if alto is None:
             if key not in empty_keys:
                 filled += 1
-            data = empty_alto(native, stem, number, key)
+            data = empty_alto(native, stem, number)
         else:
             try:
                 data = scale_alto(alto, native, stem, number)
