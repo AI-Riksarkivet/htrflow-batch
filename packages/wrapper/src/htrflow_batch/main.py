@@ -459,6 +459,17 @@ def _setup(
     return source, url, pages
 
 
+def _renamed(stored: set[str], pages: list[PageRef]) -> set[str]:
+    """Stored names that are an older spelling of one of ``pages``: the same
+    page number at another width, as "0004" is for "00004". Page names had
+    four digits once; a volume begun then and resumed now is processed again
+    under the five-digit names, and what it stored under the old ones would
+    otherwise stay in the bucket beside the new for good."""
+    names = {p.name for p in pages}
+    numbers = {p.index for p in pages}
+    return {n for n in stored - names if n.isdecimal() and int(n) in numbers}
+
+
 def _resume(
     cfg: Config, store: ResultStore, pages: list[PageRef], state: RunState
 ) -> tuple[list[PageRef], set[str]]:
@@ -484,7 +495,8 @@ def _resume(
     # that then fails must leave the page with no outputs at all, else the
     # stale pair answers for it at verify, in the viewer manifest, and as
     # "done" to the next attempt.
-    stale = set().union(*stored.values()) & {p.name for p in todo}
+    held = set().union(*stored.values())
+    stale = (held & {p.name for p in todo}) | _renamed(held, pages)
     if stale:
         # W-5 (audit 0923): the previous run's completion marker describes
         # the pages about to go, so it goes first -- then the viewer manifest
@@ -496,7 +508,8 @@ def _resume(
     # failed/ holds what the LAST attempt at a page produced, so a page about
     # to be redone loses its copy. No manifest points into failed/, so unlike
     # the stale pairs above this needs no marker deleted first.
-    kept = store.quarantined_pages() & {p.name for p in todo}
+    quarantined = store.quarantined_pages()
+    kept = (quarantined & {p.name for p in todo}) | _renamed(quarantined, pages)
     if kept:
         store.delete_quarantined(kept)
     log.info(

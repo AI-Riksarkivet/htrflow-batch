@@ -201,7 +201,7 @@ WRAPPER_QUALITY = {
     "mean": 0.8,
     "min": 0.4,
     "scored": 3,
-    "lowest": [{"page": "0002", "quality": 0.4, "canvas": 1}],
+    "lowest": [{"page": "00002", "quality": 0.4, "canvas": 1}],
 }
 
 #: The API's clock when it read that file: 12 s after it was written.

@@ -60,7 +60,7 @@ def _pages(n: int) -> list[PageRef]:
     return [
         PageRef(
             index=i,
-            name=f"{i:04d}",
+            name=f"{i:05d}",
             image_url=f"https://iiif.example.org/vol0/p{i}/full/2500,/0/default.jpg",
             canvas={"id": f"https://iiif.example.org/vol0/canvas/{i}"},
         )
@@ -87,14 +87,14 @@ def _manifest(work: Path) -> dict:
     )
     stats = StreamStats(
         results={
-            "0001": PageOutcome(status="ok", seconds=4.21),
-            "0002": PageOutcome(
+            "00001": PageOutcome(status="ok", seconds=4.21),
+            "00002": PageOutcome(
                 status="failed",
                 seconds=1.5,
-                error="page 0002: htrflow's Segmentation worker thread died",
+                error="page 00002: htrflow's Segmentation worker thread died",
             ),
-            "0003": PageOutcome(status="skipped"),
-            "0004": PageOutcome(status="ok", seconds=3.9),
+            "00003": PageOutcome(status="skipped"),
+            "00004": PageOutcome(status="ok", seconds=3.9),
         },
         stall_seconds=0.4,
     )
@@ -129,14 +129,14 @@ def _manifest_scored(work: Path) -> dict:
     )
     stats = StreamStats(
         results={
-            "0001": PageOutcome(status="ok", seconds=4.21),
-            "0002": PageOutcome(
+            "00001": PageOutcome(status="ok", seconds=4.21),
+            "00002": PageOutcome(
                 status="failed",
                 seconds=1.5,
-                error="page 0002: htrflow's Segmentation worker thread died",
+                error="page 00002: htrflow's Segmentation worker thread died",
             ),
-            "0003": PageOutcome(status="skipped"),
-            "0004": PageOutcome(status="ok", seconds=3.9),
+            "00003": PageOutcome(status="skipped"),
+            "00004": PageOutcome(status="ok", seconds=3.9),
         },
         stall_seconds=0.4,
     )
@@ -149,8 +149,8 @@ def _manifest_scored(work: Path) -> dict:
             PIPELINE_QP,
             12.5,
             123456,
-            quality={"0001": 0.9123, "0003": 0.41, "0004": 0.7},
-            canvases=["0001", "0003", "0004"],
+            quality={"00001": 0.9123, "00003": 0.41, "00004": 0.7},
+            canvases=["00001", "00003", "00004"],
         )
 
 
@@ -209,13 +209,13 @@ def _terminations(work: Path) -> dict:
         "verifyMissing": _termination(
             work,
             _verify_fails(
-                {"0001", "0004"},
+                {"00001", "00004"},
                 few,
                 StreamStats(
                     results={
-                        **_failed(["0005"]).results,
-                        "0001": PageOutcome(status="ok", seconds=1.0),
-                        "0004": PageOutcome(status="ok", seconds=1.0),
+                        **_failed(["00005"]).results,
+                        "00001": PageOutcome(status="ok", seconds=1.0),
+                        "00004": PageOutcome(status="ok", seconds=1.0),
                     }
                 ),
             ),

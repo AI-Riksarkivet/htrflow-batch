@@ -66,7 +66,7 @@ describe("describeReason", () => {
     // The failed page is accounted for and not named: only the missing ones
     // come back.
     expect(reasonOf(terminations.verifyMissing)).toBe(
-      "2 pages are missing from the results (0002, 0003); the volume is " +
+      "2 pages are missing from the results (00002, 00003); the volume is " +
         "retried automatically and only those pages are redone.",
     );
   });
@@ -148,7 +148,7 @@ describe("describeReason", () => {
     const error = terminations.verifyMissingClipped.error;
     expect(error).toMatch(/\.\.\.\(truncated\)$/);
     expect(reasonOf(terminations.verifyMissingClipped)).toBe(
-      "600 pages are missing from the results (0001, 0002, 0003 and 597 " +
+      "600 pages are missing from the results (00001, 00002, 00003 and 597 " +
         "more); the volume is retried automatically and only those pages " +
         "are redone.",
     );

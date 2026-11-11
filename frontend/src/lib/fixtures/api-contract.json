@@ -103,7 +103,7 @@
           {
             "canvas": 1,
             "iiifUrl": "https://htr.example.org/results/htr-test/demo-v1/vol0/iiif.json",
-            "page": "0002",
+            "page": "00002",
             "quality": 0.4,
             "volume": "vol0"
           }
@@ -140,7 +140,7 @@
               "lowest": [
                 {
                   "canvas": 1,
-                  "page": "0002",
+                  "page": "00002",
                   "quality": 0.4
                 }
               ],

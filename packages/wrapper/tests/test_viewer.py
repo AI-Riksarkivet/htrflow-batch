@@ -13,7 +13,7 @@ ALTO = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 def test_parse_alto_dims(tmp_path):
-    p = tmp_path / "0001.xml"
+    p = tmp_path / "00001.xml"
     p.write_text(ALTO)
     assert parse_alto_dims(safexml.fromstring(p.read_bytes())) == (2500, 3538)
 
@@ -42,7 +42,7 @@ def test_parse_alto_dims_page_priority_over_nested_printspace(tmp_path):
 
 def test_build_viewer_manifest(sample_manifest, cfg):
     pages = pages_from_manifest(sample_manifest, width=2500)
-    dims = {"0001": (2500, 3538), "0002": (2500, 3520)}  # page 3 unprocessed
+    dims = {"00001": (2500, 3538), "00002": (2500, 3520)}  # page 3 unprocessed
     m = build_viewer_manifest(cfg, sample_manifest, pages, dims)
     assert m["type"] == "Manifest"
     assert m["id"] == "http://public/htr-results/demo-v1/SE-RA-1234/iiif.json"
@@ -53,7 +53,7 @@ def test_build_viewer_manifest(sample_manifest, cfg):
     body = c1["items"][0]["items"][0]["body"]
     assert body["service"][0]["id"].endswith("page-00001")
     sa = c1["seeAlso"][0]
-    assert sa["id"] == "http://public/htr-results/demo-v1/SE-RA-1234/alto/0001.xml"
+    assert sa["id"] == "http://public/htr-results/demo-v1/SE-RA-1234/alto/00001.xml"
     assert "alto" in sa["profile"]
 
 
@@ -62,7 +62,7 @@ def test_viewer_manifest_advertises_no_search_service(sample_manifest, cfg):
     honoured the old stub got a 404. The text panel no longer needs one
     (the UV patch's BaseExtension.ts hunk)."""
     pages = pages_from_manifest(sample_manifest, width=2500)
-    m = build_viewer_manifest(cfg, sample_manifest, pages, {"0001": (2500, 3538)})
+    m = build_viewer_manifest(cfg, sample_manifest, pages, {"00001": (2500, 3538)})
     assert "service" not in m
 
 
@@ -70,17 +70,17 @@ def test_each_canvas_offers_its_xml_for_download(sample_manifest, cfg):
     """UV's download dialog lists a canvas's `rendering`, not its
     `seeAlso`: without these the dialog has no way to the page's ALTO."""
     pages = pages_from_manifest(sample_manifest, width=2500)
-    m = build_viewer_manifest(cfg, sample_manifest, pages, {"0001": (2500, 3538)})
+    m = build_viewer_manifest(cfg, sample_manifest, pages, {"00001": (2500, 3538)})
     vol = "http://public/htr-results/demo-v1/SE-RA-1234"
     assert m["items"][0]["rendering"] == [
         {
-            "id": f"{vol}/alto/0001.xml",
+            "id": f"{vol}/alto/00001.xml",
             "type": "Text",
             "format": "application/xml",
             "label": {"none": ["ALTO"]},
         },
         {
-            "id": f"{vol}/page/0001.xml",
+            "id": f"{vol}/page/00001.xml",
             "type": "Text",
             "format": "application/xml",
             "label": {"none": ["PAGE"]},
@@ -90,7 +90,7 @@ def test_each_canvas_offers_its_xml_for_download(sample_manifest, cfg):
 
 def _p2_viewer_manifest(cfg, p2_manifest) -> dict:
     pages = pages_from_manifest(p2_manifest, width=2500)
-    return build_viewer_manifest(cfg, p2_manifest, pages, {"0001": (2500, 3333)})
+    return build_viewer_manifest(cfg, p2_manifest, pages, {"00001": (2500, 3333)})
 
 
 def test_viewer_manifest_normalizes_p2_string_label(cfg, p2_manifest):
@@ -137,7 +137,7 @@ def test_viewer_manifest_label_falls_back_when_empty(cfg, p2_manifest):
     p2_manifest["sequences"][0]["canvases"][0]["label"] = []
     del p2_manifest["label"]
     m = _p2_viewer_manifest(cfg, p2_manifest)
-    assert m["items"][0]["label"] == {"none": ["0001"]}
+    assert m["items"][0]["label"] == {"none": ["00001"]}
     assert m["label"] == {"none": ["SE-RA-1234"]}
 
 
@@ -145,10 +145,10 @@ def test_a_scored_canvas_says_its_predicted_quality(cfg):
     from htrflow_batch.iiif import PageRef
 
     pages = [
-        PageRef(index=1, name="0001", image_url="https://i/1.jpg", canvas={"id": "c1"})
+        PageRef(index=1, name="00001", image_url="https://i/1.jpg", canvas={"id": "c1"})
     ]
     m = build_viewer_manifest(
-        cfg, {}, pages, {"0001": (10, 10)}, quality={"0001": 0.87312}
+        cfg, {}, pages, {"00001": (10, 10)}, quality={"00001": 0.87312}
     )
     assert m["items"][0]["metadata"] == [
         {"label": {"en": ["Predicted quality"]}, "value": {"none": ["0.87"]}}
@@ -160,10 +160,10 @@ def test_the_volume_summary_is_manifest_metadata(cfg):
     from htrflow_batch.iiif import PageRef
 
     pages = [
-        PageRef(index=1, name="0001", image_url="https://i/1.jpg", canvas={"id": "c1"})
+        PageRef(index=1, name="00001", image_url="https://i/1.jpg", canvas={"id": "c1"})
     ]
     summary = {"mean": 0.8123, "min": 0.4, "scored": 12}
-    m = build_viewer_manifest(cfg, {}, pages, {"0001": (10, 10)}, summary=summary)
+    m = build_viewer_manifest(cfg, {}, pages, {"00001": (10, 10)}, summary=summary)
     assert m["metadata"] == [
         {
             "label": {"en": ["Predicted quality"]},
@@ -176,11 +176,11 @@ def test_without_scores_the_viewer_manifest_is_unchanged(cfg):
     from htrflow_batch.iiif import PageRef
 
     pages = [
-        PageRef(index=1, name="0001", image_url="https://i/1.jpg", canvas={"id": "c1"})
+        PageRef(index=1, name="00001", image_url="https://i/1.jpg", canvas={"id": "c1"})
     ]
-    plain = build_viewer_manifest(cfg, {}, pages, {"0001": (10, 10)})
+    plain = build_viewer_manifest(cfg, {}, pages, {"00001": (10, 10)})
     assert plain == build_viewer_manifest(
-        cfg, {}, pages, {"0001": (10, 10)}, quality={}, summary=None
+        cfg, {}, pages, {"00001": (10, 10)}, quality={}, summary=None
     )
     assert "metadata" not in plain and "metadata" not in plain["items"][0]
 
@@ -207,11 +207,11 @@ def test_viewer_manifest_publishes_no_javascript_body(cfg):
     }
     page = PageRef(
         index=1,
-        name="0001",
+        name="00001",
         image_url="https://img/iiif/page-1/full/max/0/default.jpg",
         canvas=canvas,
     )
-    manifest = build_viewer_manifest(cfg, {}, [page], {"0001": (100, 200)})
+    manifest = build_viewer_manifest(cfg, {}, [page], {"00001": (100, 200)})
     assert "javascript:" not in json.dumps(manifest)
 
 
@@ -219,9 +219,9 @@ def _one_page(source, quality=None, summary=None, cfg=None):
     from htrflow_batch.iiif import PageRef
 
     canvas = (source.get("items") or [{}])[0]
-    pages = [PageRef(index=1, name="0001", image_url="https://i/1.jpg", canvas=canvas)]
+    pages = [PageRef(index=1, name="00001", image_url="https://i/1.jpg", canvas=canvas)]
     return build_viewer_manifest(
-        cfg, source, pages, {"0001": (10, 10)}, quality=quality, summary=summary
+        cfg, source, pages, {"00001": (10, 10)}, quality=quality, summary=summary
     )
 
 
