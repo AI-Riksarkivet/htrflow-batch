@@ -911,7 +911,7 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 5140
 # fields set; labelled added, kept by this converter's prune (cluster.prune,
 # the keeps-added-pipelines Lease mark) and refused, like a retry on it, where
 # the last apply's prune would delete it.
-# 7642 -> 7643: the exported ALTO's Page ID is the image id, as its fileName.
+# 7642 -> 7643: the exported ALTO's Page ID is the five-digit image number.
 check converter "$(count packages/converter/src -name '*.py')" 7643
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a

@@ -62,8 +62,8 @@ ignored), or one that is not a volume id, refuses the run.
 **What it writes.** For each volume, a folder `<dir>/<volume id>/` holding
 one ALTO file per image, named `<volume id>_<nnnnn>.xml` after the page's
 own source image id, never after its place in the canvas order. Inside the
-file the same id is the `fileName` and, behind an underscore, the `Page`'s
-`ID`, whatever name the run gave the page. A volume is
+file that id is the `fileName`, and the `Page`'s `ID` is its five-digit image
+number behind an underscore (`_00004`), whatever name the run gave the page. A volume is
 published whole or not at all: it is built beside the target and renamed
 into place only when every page is there, so the real folder name never
 holds a partial volume, and an earlier export of the same volume is replaced
