@@ -682,10 +682,10 @@ slots -- resume would recover the pages, but the queue would thrash.
 
 ```
 htr-batch/demo-v1/R0001203/
-  page/0001.xml       PAGE XML, written first
-  alto/0001.xml       ALTO — "this page is done"
-  page/0002.xml
-  alto/0002.xml
+  page/00001.xml      PAGE XML, written first
+  alto/00001.xml      ALTO — "this page is done"
+  page/00002.xml
+  alto/00002.xml
   …
   iiif.json           open it in the viewer, republished every ten pages
   progress.json       pages done and failed, live

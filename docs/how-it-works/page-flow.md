@@ -18,7 +18,7 @@ Presentation 3 canvas must have a size, and an image's is known only once it
 is fetched, so the only manifest published is the volume's `iiif.json`.
 
 Each canvas becomes a `PageRef` with three fields: a 1-based `index`, a
-zero-padded `name` (`0001`), and the URL to fetch.
+five-digit `name` (`00001`), and the URL to fetch.
 
 A canvas can offer more than one image: several painting annotations, a
 `Choice`, or a list of bodies. **One rule picks the image**, and both the
@@ -162,7 +162,7 @@ The ALTO file has three parts:
   canvas has no image service.
 
 ```xml
-<Page WIDTH="2864" HEIGHT="2288" PHYSICAL_IMG_NR="0" ID="_0001">
+<Page WIDTH="2864" HEIGHT="2288" PHYSICAL_IMG_NR="0" ID="_00001">
   <PrintSpace>
     <TextBlock ID="block_0" HPOS="792" VPOS="286" HEIGHT="1405" WIDTH="1843" CS="false">
       <TextLine ID="block0_line0" HPOS="1583" VPOS="1535" HEIGHT="150" WIDTH="787">
