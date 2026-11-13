@@ -118,8 +118,19 @@ def _to_page(root: ET.Element) -> None:
             word.set("VPOS", str(float(word.attrib["VPOS"]) + by))
 
 
-def scale_alto(xml: bytes, native: tuple[int, int], stem: str, number: int) -> bytes:
-    """Scale every coordinate to the native scan size and name the page."""
+def scale_alto(
+    xml: bytes,
+    native: tuple[int, int],
+    stem: str,
+    number: int,
+    *,
+    fix_positions: bool = False,
+) -> bytes:
+    """Scale every coordinate to the native scan size and name the page.
+
+    With ``fix_positions``, the words and block outlines htrflow writes from
+    the wrong corner are put on the page first (``_to_page``).
+    """
     try:
         root = ET.fromstring(xml)
     except ET.ParseError as exc:
@@ -140,7 +151,8 @@ def scale_alto(xml: bytes, native: tuple[int, int], stem: str, number: int) -> b
         )
     sx, sy = native_w / width, native_h / height
 
-    _to_page(root)
+    if fix_positions:
+        _to_page(root)
     for el in root.iter():
         for names, factor in ((("HPOS", "WIDTH"), sx), (("VPOS", "HEIGHT"), sy)):
             for name in names:

@@ -1629,6 +1629,7 @@ def _export(args: argparse.Namespace) -> int:
         None if args.no_quality_filter else args.min_quality,
         pages,
         manifests=manifests,
+        fix_positions=args.fix_positions,
     )
     return run_export(
         source,
@@ -1998,6 +1999,12 @@ def main(argv: list[str] | None = None) -> int:
         metavar="DIR",
         help="downloaded IIIF manifests, <volume>.json: page sizes from there, "
         "not from the image server",
+    )
+    export_p.add_argument(
+        "--fix-positions",
+        action="store_true",
+        help="put word boxes and block outlines where they are on the page "
+        "(htrflow writes both from the wrong corner)",
     )
     export_p.add_argument(
         "--results-url",

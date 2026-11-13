@@ -8,7 +8,8 @@ import pytest
 from htrflow_converter.export import Options, export_volume, swap_in
 from htrflow_converter.export_http import Results, SessionLost
 
-FIXTURE = (Path(__file__).parent / "fixtures/export/alto-2500.xml").read_bytes()
+FIXTURE_DIR = Path(__file__).parent / "fixtures/export"
+FIXTURE = FIXTURE_DIR.joinpath("alto-2500.xml").read_bytes()
 RESULTS = "https://htr.example/results"
 IMAGES = "https://img.example/iiif"
 PREFIX = "ns/pipe"
@@ -35,12 +36,15 @@ def manifest(**over):
 
 
 class Server:
-    def __init__(self, man=None, status=None, alto_404=(), info_status=None):
+    def __init__(
+        self, man=None, status=None, alto_404=(), info_status=None, alto=FIXTURE
+    ):
         self.man = manifest() if man is None else (man or None)
         self.status = status  # status for the manifest request, if set
         self.alto_404 = set(alto_404)
         self.info_status = info_status or {}
         self.altos = []
+        self.alto = alto
 
     def __call__(self, request):
         path = request.url.path
@@ -57,7 +61,7 @@ class Server:
             self.altos.append(key)
             if key in self.alto_404:
                 return httpx.Response(404)
-            return httpx.Response(200, content=FIXTURE)
+            return httpx.Response(200, content=self.alto)
         if path.endswith("/info.json"):
             n = path.split("_")[-1][:5]
             if n in self.info_status:
@@ -66,13 +70,20 @@ class Server:
         return httpx.Response(500)
 
 
-def run(server, tmp_path, min_quality=0.75, empty=frozenset({1}), dry=False, vid=VID):
+def run(
+    server,
+    tmp_path,
+    min_quality=0.75,
+    empty=frozenset({1}),
+    dry=False,
+    vid=VID,
+    fix_positions=False,
+):
     client = httpx.Client(transport=httpx.MockTransport(server))
     results = Results(RESULTS, "ann", "pw", client)
     results.login()
-    return export_volume(
-        results, client, PREFIX, vid, Options(tmp_path, min_quality, empty), dry
-    )
+    opts = Options(tmp_path, min_quality, empty, fix_positions=fix_positions)
+    return export_volume(results, client, PREFIX, vid, opts, dry)
 
 
 def test_a_good_volume_is_exported_complete(tmp_path):
@@ -94,6 +105,19 @@ def test_a_good_volume_is_exported_complete(tmp_path):
     assert not list(tmp_path.glob(".*"))
     assert "0003" not in srv.altos and "0001" not in srv.altos
     assert b'WIDTH="5000"' in (tmp_path / VID / "V0000001_00002.xml").read_bytes()
+
+
+WORDS_FROM_BLOCK = FIXTURE_DIR.joinpath("alto-words-from-block.xml").read_bytes()
+
+
+@pytest.mark.parametrize(("asked", "hpos"), [(True, "700"), (False, "100")])
+def test_word_positions_are_fixed_only_when_asked_for(tmp_path, asked, hpos):
+    """The first word is 50 px into a block 300 px into the page, and the
+    scan is twice the size: 700 on the page, 100 as htrflow wrote it."""
+    row = run(Server(alto=WORDS_FROM_BLOCK), tmp_path, fix_positions=asked)
+    assert row.outcome == "exported"
+    written = (tmp_path / VID / "V0000001_00002.xml").read_text()
+    assert f'ID="block0_line0_word0" HEIGHT="140" WIDTH="600" HPOS="{hpos}"' in written
 
 
 def test_below_threshold_writes_nothing(tmp_path):

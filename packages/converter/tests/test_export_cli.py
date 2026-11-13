@@ -352,6 +352,20 @@ def test_the_defaults_are_075_and_page_1(repo, tmp_path, monkeypatch):
     assert seen["opts"].min_quality is None
 
 
+def test_positions_are_fixed_only_with_the_flag(repo, tmp_path, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        "htrflow_converter.cli.run_export", lambda *a, **kw: seen.update(kw) or 0
+    )
+    monkeypatch.setenv("HTRFLOW_PASSWORD", "pw")
+    monkeypatch.setenv("HTRFLOW_USER", "ann")
+    (tmp_path / "t").mkdir()
+    assert main(cli(str(tmp_path / "t"))) == 0
+    assert seen["opts"].fix_positions is False
+    assert main(cli(str(tmp_path / "t"), "--fix-positions")) == 0
+    assert seen["opts"].fix_positions is True
+
+
 def test_the_filter_options_exclude_each_other(repo, tmp_path):
     with pytest.raises(SystemExit):
         main(cli("x", "--no-quality-filter", "--min-quality", "0.5"))
