@@ -124,9 +124,10 @@ def test_a_missing_file_name_is_created_in_alto_order(removed, description):
 # htrflow's ALTO template writes two things from the wrong corner (seen at
 # htrflow 34ebd90): a word's box counted from its block's corner instead of
 # the page's, and a block's outline moved by the block's corner once more.
-# The fixture is a document from htrflow's own serializer, with the template
-# as it is.
+# Both fixtures are the same document from htrflow's own serializer:
+# `from-block` with the template as it is, `on-page` with it corrected.
 WORDS_FROM_BLOCK = FIXTURE.with_name("alto-words-from-block.xml")
+WORDS_ON_PAGE = FIXTURE.with_name("alto-words-on-page.xml")
 SAME_SIZE = (2500, 1769)
 
 
@@ -161,6 +162,28 @@ def test_a_block_outline_moved_twice_is_published_on_its_block():
     out = scale_alto(WORDS_FROM_BLOCK.read_bytes(), SAME_SIZE, "X_00001", 1)
     assert _outlines(out, "TextBlock") == ["300,200 1300,200 1300,900 800,950 300,900"]
     assert _boxes(out, "TextBlock")["block_0"] == (300, 200, 1000, 750)
+
+
+def test_a_file_that_is_already_right_is_left_alone():
+    """htrflow with its template corrected writes `on-page`; both forms of
+    the same document must publish as the same file."""
+    right = scale_alto(WORDS_ON_PAGE.read_bytes(), SAME_SIZE, "X_00001", 1)
+    assert _boxes(right, "String") == _boxes(WORDS_ON_PAGE.read_bytes(), "String")
+    assert _outlines(right, "TextBlock") == _outlines(
+        WORDS_ON_PAGE.read_bytes(), "TextBlock"
+    )
+    assert right == scale_alto(WORDS_FROM_BLOCK.read_bytes(), SAME_SIZE, "X_00001", 1)
+
+
+def test_placed_words_and_outlines_scale_with_the_page():
+    out = scale_alto(WORDS_FROM_BLOCK.read_bytes(), (5000, 3538), "X_00001", 1)  # x2
+    assert _boxes(out, "String")["block1_line0_word1"] == (3660, 570, 780, 110)
+    assert _outlines(out, "TextBlock") == [
+        "600,400 2600,400 2600,1800 1600,1900 600,1800"
+    ]
+    # what htrflow gets right stays where it was
+    assert _boxes(out, "TextLine")["block1_line0"] == (2840, 560, 1600, 120)
+    assert _outlines(out, "TextLine") == ["700,600 2300,600 2300,720 1400,740 700,720"]
 
 
 def _page(blocks: str) -> bytes:

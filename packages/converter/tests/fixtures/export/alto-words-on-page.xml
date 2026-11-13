@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<alto xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.loc.gov/standards/alto/ns-v4#" xsi:schemaLocation="http://www.loc.gov/standards/alto/ns-v4# http://www.loc.gov/standards/alto/v4/alto-4-4.xsd">
+    <Description>
+        <MeasurementUnit>pixel</MeasurementUnit>
+        <sourceImageInformation>
+            <fileName>0001</fileName>
+        </sourceImageInformation>
+        <Processing ID="processing">
+            <processingDateTime>2026-01-01T00:00:00</processingDateTime>
+            <processingSoftware>
+                <softwareName>htrflow</softwareName>
+            </processingSoftware>
+        </Processing>
+    </Description>
+    <ReadingOrder>
+        <OrderedGroup ID="ro">
+            <OrderedGroup ID="ro_block0">
+                <ElementRef ID="ro_block0_line0" REF="block0_line0" />
+                <ElementRef ID="ro_block0_line1" REF="block0_line1" />
+            </OrderedGroup>
+            <OrderedGroup ID="ro_block1">
+                <ElementRef ID="ro_block1_line0" REF="block1_line0" />
+            </OrderedGroup>
+        </OrderedGroup>
+    </ReadingOrder>
+   <Layout>
+        <Page WIDTH="2500" HEIGHT="1769" PHYSICAL_IMG_NR="0" ID="_0001">
+            <PrintSpace>
+                <TextBlock ID="block_0" HPOS="300" VPOS="200" HEIGHT="750" WIDTH="1000" CS="false">
+                    <Shape>
+                        <Polygon POINTS="300,200 1300,200 1300,900 800,950 300,900"/>
+                    </Shape>
+                    <TextLine ID="block0_line0"  HPOS="350" VPOS="300" HEIGHT="70" WIDTH="800">
+                        <Shape>
+                            <Polygon POINTS="350,300 1150,300 1150,360 700,370 350,360"/>
+                        </Shape>
+                        <String ID="block0_line0_word0" HEIGHT="70" WIDTH="300" HPOS="350" VPOS="300" CONTENT="alfa" />
+                        <String ID="block0_line0_word1" HEIGHT="60" WIDTH="480" HPOS="670" VPOS="310" CONTENT="beta" />
+                    </TextLine>
+                    <TextLine ID="block0_line1"  HPOS="350" VPOS="400" HEIGHT="60" WIDTH="650">
+                        <String ID="block0_line1_word0" HEIGHT="60" WIDTH="200" HPOS="350" VPOS="400" CONTENT="gamma" />
+                        <String ID="block0_line1_word1" HEIGHT="60" WIDTH="440" HPOS="560" VPOS="400" CONTENT="delta" />
+                    </TextLine>
+                </TextBlock>
+                <TextBlock ID="block_1" HPOS="1400" VPOS="250" HEIGHT="350" WIDTH="900" CS="false">
+                    <TextLine ID="block1_line0"  HPOS="1420" VPOS="280" HEIGHT="60" WIDTH="800">
+                        <String ID="block1_line0_word0" HEIGHT="60" WIDTH="400" HPOS="1420" VPOS="280" CONTENT="epsilon" />
+                        <String ID="block1_line0_word1" HEIGHT="55" WIDTH="390" HPOS="1830" VPOS="285" CONTENT="zeta" />
+                    </TextLine>
+                </TextBlock>
+            </PrintSpace>
+        </Page>
+    </Layout>
+</alto>
