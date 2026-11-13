@@ -45,6 +45,14 @@ def _map_points(points: str, fx: _Axis, fy: _Axis) -> str:
     return _NUMBER.sub(one, points)
 
 
+def _corner(points: str) -> tuple[float, float] | None:
+    """The top-left corner of an outline's bounding box."""
+    numbers = [float(n) for n in _NUMBER.findall(points)]
+    if len(numbers) < 2 or len(numbers) % 2:
+        return None
+    return min(numbers[0::2]), min(numbers[1::2])
+
+
 def _box(el: ET.Element) -> _Box | None:
     """The element's box, or None when it does not state all four numbers."""
     if any(name not in el.attrib for name in _BOX):
@@ -66,17 +74,21 @@ def _within(box: _Box, outer: _Box, dx: float = 0, dy: float = 0) -> bool:
 
 
 def _to_page(root: ET.Element) -> None:
-    """Put every word where it is on the page.
+    """Put every word and every block outline where it is on the page.
 
-    htrflow's ALTO template counts a word's box from the corner of the
-    ``TextBlock`` it belongs to, not from the page's, so a search hit is
-    drawn up and to the left of its word. Blocks' and lines' own boxes are
-    right.
+    htrflow's ALTO template gets two positions wrong, both by the corner of
+    the ``TextBlock`` they belong to. A word's box is counted from that
+    corner, not from the page's, so a search hit is drawn up and to the left
+    of its word. A block's outline is moved by that corner once more, down
+    and to the right, often off the page. Blocks' and lines' own boxes, and
+    lines' outlines, are right.
 
-    A file does not say which form it has; its geometry does. A word lies in
-    its line: the page is read both ways, and its words are moved by their
-    blocks' corners only when that puts more of them in their lines than
-    leaving them does. So a file that is already right is left alone.
+    A file does not say which form it has; its geometry does. An outline
+    belongs on its block: one whose corner is exactly twice the block's is
+    moved back. A word lies in its line: the page is read both ways, and its
+    words are moved by their blocks' corners only when that puts more of
+    them in their lines than leaving them does. So a file that is already
+    right is left alone.
     """
     words: list[tuple[ET.Element, float, float]] = []
     as_written = moved = 0
@@ -85,6 +97,12 @@ def _to_page(root: ET.Element) -> None:
         if corner is None:
             continue
         bx, by = corner[:2]
+        outline = block.find(f"{_q('Shape')}/{_q('Polygon')}")
+        if outline is not None:
+            points = outline.get("POINTS", "")
+            if _corner(points) == (2 * bx, 2 * by):
+                back = _map_points(points, lambda x: x - bx, lambda y: y - by)
+                outline.set("POINTS", back)
         for line in block.iter(_q("TextLine")):
             line_box = _box(line)
             for word in line.iter(_q("String")):

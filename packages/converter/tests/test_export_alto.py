@@ -121,9 +121,11 @@ def test_a_missing_file_name_is_created_in_alto_order(removed, description):
     assert info.find(f"{{{ALTO_NS}}}fileName").text == "X_00001"
 
 
-# htrflow's ALTO template counts a word's box from its block's corner instead
-# of the page's (seen at htrflow 34ebd90). The fixture is a document from
-# htrflow's own serializer, with the template as it is.
+# htrflow's ALTO template writes two things from the wrong corner (seen at
+# htrflow 34ebd90): a word's box counted from its block's corner instead of
+# the page's, and a block's outline moved by the block's corner once more.
+# The fixture is a document from htrflow's own serializer, with the template
+# as it is.
 WORDS_FROM_BLOCK = FIXTURE.with_name("alto-words-from-block.xml")
 SAME_SIZE = (2500, 1769)
 
@@ -133,6 +135,14 @@ def _boxes(xml: bytes, tag: str) -> dict[str, tuple[int, ...]]:
         el.get("ID"): tuple(int(el.get(k)) for k in ("HPOS", "VPOS", "WIDTH", "HEIGHT"))
         for el in ET.fromstring(xml).iter(f"{{{ALTO_NS}}}{tag}")
     }
+
+
+def _outlines(xml: bytes, tag: str) -> list[str]:
+    return [
+        p.get("POINTS")
+        for el in ET.fromstring(xml).iter(f"{{{ALTO_NS}}}{tag}")
+        for p in el.iterfind(f"{{{ALTO_NS}}}Shape/{{{ALTO_NS}}}Polygon")
+    ]
 
 
 def test_words_counted_from_their_block_are_published_on_the_page():
@@ -145,6 +155,12 @@ def test_words_counted_from_their_block_are_published_on_the_page():
         "block1_line0_word0": (1420, 280, 400, 60),
         "block1_line0_word1": (1830, 285, 390, 55),
     }
+
+
+def test_a_block_outline_moved_twice_is_published_on_its_block():
+    out = scale_alto(WORDS_FROM_BLOCK.read_bytes(), SAME_SIZE, "X_00001", 1)
+    assert _outlines(out, "TextBlock") == ["300,200 1300,200 1300,900 800,950 300,900"]
+    assert _boxes(out, "TextBlock")["block_0"] == (300, 200, 1000, 750)
 
 
 def _page(blocks: str) -> bytes:
@@ -187,6 +203,16 @@ def test_a_block_at_the_pages_corner_decides_nothing_for_the_others():
         "wa2": (110, 0, 100, 50),
         "wb": (500, 600, 100, 50),
     }
+
+
+def test_an_outline_anywhere_else_than_twice_its_blocks_corner_is_kept():
+    xml = _page(
+        '<TextBlock ID="b" HPOS="100" VPOS="100" WIDTH="300" HEIGHT="300">'
+        '<Shape><Polygon POINTS="200,150 400,150 400,400 200,400"/></Shape>'
+        "</TextBlock>"
+    )
+    out = scale_alto(xml, (1000, 1000), "X_00001", 1)
+    assert _outlines(out, "TextBlock") == ["200,150 400,150 400,400 200,400"]
 
 
 def test_a_line_of_text_without_word_boxes_is_published_as_it_is():
