@@ -912,7 +912,13 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 5140
 # the keeps-added-pipelines Lease mark) and refused, like a retry on it, where
 # the last apply's prune would delete it.
 # 7642 -> 7643: the exported ALTO's Page ID is the five-digit image number.
-check converter "$(count packages/converter/src -name '*.py')" 7643
+# 7643 -> 7726: the export puts words and block outlines on the page. htrflow
+# writes both from the wrong corner (a word from its block's, an outline moved
+# by its block's once more), and a search hit was drawn off its word.
+# export_alto +83: the two repairs, the rule that tells a file that needs
+# them from one that is already right, and the paragraph saying why the
+# file's geometry has to decide.
+check converter "$(count packages/converter/src -name '*.py')" 7726
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
