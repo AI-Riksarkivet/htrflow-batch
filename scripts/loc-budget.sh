@@ -918,7 +918,9 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 5140
 # export_alto +83: the two repairs, the rule that tells a file that needs
 # them from one that is already right, and the paragraph saying why the
 # file's geometry has to decide.
-check converter "$(count packages/converter/src -name '*.py')" 7726
+# 7726 -> 7752: the repair is an option, export --fix-positions, off unless
+# given: the argument, the Options field and its way down to scale_alto.
+check converter "$(count packages/converter/src -name '*.py')" 7752
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
