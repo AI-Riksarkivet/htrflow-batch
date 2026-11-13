@@ -75,6 +75,9 @@ class Options:
     #: A folder of downloaded IIIF manifests, ``<volume>.json``: page sizes
     #: come from there instead of one info.json request per page.
     manifests: Path | None = None
+    #: ``--fix-positions``: put the words and block outlines htrflow writes
+    #: from the wrong corner where they are on the page. Off unless asked for.
+    fix_positions: bool = False
 
 
 def swap_in(built: Path, final: Path) -> None:
@@ -258,6 +261,7 @@ def _export(
             tmp,
             dry_run,
             on_pages,
+            opts.fix_positions,
         )
         if row.outcome != "exported":
             return row
@@ -318,6 +322,7 @@ def _build(
     tmp,
     dry_run,
     on_pages,
+    fix_positions,
 ) -> Row:  # noqa: PLR0913
     def failed(reason: str) -> Row:
         return Row(volume_id, "failed", pages=expected, reason=reason, **stats)
@@ -344,7 +349,9 @@ def _build(
             data = empty_alto(native, stem, number)
         else:
             try:
-                data = scale_alto(alto, native, stem, number)
+                data = scale_alto(
+                    alto, native, stem, number, fix_positions=fix_positions
+                )
             except AltoMismatch as exc:
                 return failed(f"page {key}: {exc}")
             with_text += 1

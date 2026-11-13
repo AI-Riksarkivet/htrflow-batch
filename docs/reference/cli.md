@@ -46,8 +46,8 @@ renders a suitable ServiceAccount behind `apply.rbac.enabled`
 htrflow-campaigns export --pipeline <id> --namespace <ns>
     (--volumes ID,ID | --volumes-file FILE) --to <dir>
     [--results-url URL] [--min-quality 0.75 | --no-quality-filter]
-    [--empty-pages 1] [--manifests DIR] [--user NAME] [--report FILE]
-    [--dry-run]
+    [--empty-pages 1] [--manifests DIR] [--fix-positions] [--user NAME]
+    [--report FILE] [--dry-run]
 ```
 
 **What it reads.** Each volume's results at
@@ -96,6 +96,19 @@ empty ALTO states only the page's size and its source file name.
 export rewrites every coordinate to the scan's full resolution, read from the
 image server. A volume whose page proportions differ from its scan's by
 more than one per cent fails instead of being published stretched.
+
+**Positions on the page.** htrflow writes two positions from the wrong
+corner: a word's box is counted from the corner of its text block instead of
+the page's, and a block's outline is moved by that corner once more. Word
+boxes come only from a pipeline that recognises word by word; blocks' and
+lines' own boxes are right. Without `--fix-positions` both are published as
+htrflow wrote them, so a search hit is drawn up and to the left of its word.
+With it, the export puts both where they are on the page before it scales.
+It tells the two forms apart by the file's own geometry: an outline whose
+corner is exactly twice its block's is moved back, and a page's words are
+moved by their blocks' corners only when that puts more of them inside their
+lines. A file that is already right is published as it is, so the option is
+safe to pass for every volume. The results themselves are not changed.
 
 **Without the image server.** The full resolution is not in the results, so
 by default each page's size is read from the image server, one request per
