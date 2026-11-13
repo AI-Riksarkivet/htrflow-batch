@@ -9,7 +9,10 @@ _XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
 _SCHEMA_LOCATION = f"{ALTO_NS} http://www.loc.gov/standards/alto/v4/alto-4-4.xsd"
 _ASPECT_TOLERANCE = 0.01
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
+_BOX = ("HPOS", "VPOS", "WIDTH", "HEIGHT")
+_SLACK = 1  # px a word may reach past its line and still count as in it
 _Axis = Callable[[float], float]
+_Box = tuple[float, float, float, float]  # HPOS, VPOS, WIDTH, HEIGHT
 
 ET.register_namespace("", ALTO_NS)
 ET.register_namespace("xsi", _XSI_NS)
@@ -42,6 +45,61 @@ def _map_points(points: str, fx: _Axis, fy: _Axis) -> str:
     return _NUMBER.sub(one, points)
 
 
+def _box(el: ET.Element) -> _Box | None:
+    """The element's box, or None when it does not state all four numbers."""
+    if any(name not in el.attrib for name in _BOX):
+        return None
+    x, y, w, h = (float(el.attrib[name]) for name in _BOX)
+    return x, y, w, h
+
+
+def _within(box: _Box, outer: _Box, dx: float = 0, dy: float = 0) -> bool:
+    """Whether ``box``, moved by ``(dx, dy)``, lies in ``outer``."""
+    x, y, w, h = box
+    ox, oy, ow, oh = outer
+    return (
+        ox - _SLACK <= x + dx
+        and x + dx + w <= ox + ow + _SLACK
+        and oy - _SLACK <= y + dy
+        and y + dy + h <= oy + oh + _SLACK
+    )
+
+
+def _to_page(root: ET.Element) -> None:
+    """Put every word where it is on the page.
+
+    htrflow's ALTO template counts a word's box from the corner of the
+    ``TextBlock`` it belongs to, not from the page's, so a search hit is
+    drawn up and to the left of its word. Blocks' and lines' own boxes are
+    right.
+
+    A file does not say which form it has; its geometry does. A word lies in
+    its line: the page is read both ways, and its words are moved by their
+    blocks' corners only when that puts more of them in their lines than
+    leaving them does. So a file that is already right is left alone.
+    """
+    words: list[tuple[ET.Element, float, float]] = []
+    as_written = moved = 0
+    for block in root.iter(_q("TextBlock")):
+        corner = _box(block)
+        if corner is None:
+            continue
+        bx, by = corner[:2]
+        for line in block.iter(_q("TextLine")):
+            line_box = _box(line)
+            for word in line.iter(_q("String")):
+                box = _box(word)
+                if line_box is None or box is None:
+                    continue
+                words.append((word, bx, by))
+                as_written += _within(box, line_box)
+                moved += _within(box, line_box, bx, by)
+    if moved > as_written:
+        for word, bx, by in words:
+            word.set("HPOS", str(float(word.attrib["HPOS"]) + bx))
+            word.set("VPOS", str(float(word.attrib["VPOS"]) + by))
+
+
 def scale_alto(xml: bytes, native: tuple[int, int], stem: str, number: int) -> bytes:
     """Scale every coordinate to the native scan size and name the page."""
     try:
@@ -64,6 +122,7 @@ def scale_alto(xml: bytes, native: tuple[int, int], stem: str, number: int) -> b
         )
     sx, sy = native_w / width, native_h / height
 
+    _to_page(root)
     for el in root.iter():
         for names, factor in ((("HPOS", "WIDTH"), sx), (("VPOS", "HEIGHT"), sy)):
             for name in names:
