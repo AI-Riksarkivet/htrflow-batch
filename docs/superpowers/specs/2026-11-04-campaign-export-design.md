@@ -71,8 +71,9 @@ pages (for example the cover, page 1) are published without text.
   they are ("relative to their region, a known htrflow bug, tracked
   separately; the export scales what is there and does not repair it").
   The publishing side draws search hits from those boxes, so they landed
-  off their words, by each block's own position. The export now puts words
-  and block outlines on the page; see "Positions on the page" below.
+  off their words, by each block's own position. With `--fix-positions` the
+  export puts words and block outlines on the page; see "Positions on the
+  page" below.
 - No partial volumes, ever, and no per-page quality filtering (a low page
   inside a good volume is published as transcribed).
 
@@ -257,11 +258,16 @@ right):
 - a `TextBlock`'s `Shape/Polygon` is moved by the block's corner once more:
   every point has the block's `HPOS`/`VPOS` added twice.
 
-`TextBlock` and `TextLine` boxes and `TextLine` outlines are right. The
-export repairs both before it scales, and must leave a file alone that is
-already right, since htrflow will be corrected and results made before and
-after that are exported by the same command. A file does not say which form
-it has, so its geometry decides:
+`TextBlock` and `TextLine` boxes and `TextLine` outlines are right. Word
+boxes exist only in results of a pipeline that recognises word by word.
+
+The repair is an option, `--fix-positions`, off unless given (the
+requester's call, 2026-11-13: an explicit switch for now); without it the
+export scales what is there, as before. With it the export repairs both
+before it scales, and must leave a file alone that is already right, since
+htrflow will be corrected and results made before and after that are
+exported by the same command. A file does not say which form it has, so its
+geometry decides:
 
 - an outline whose bounding box starts at exactly twice its block's corner
   is moved back by that corner; any other outline is kept;
@@ -349,5 +355,6 @@ for exported), `pages`, `pages_with_text`,
 - The aspect-ratio guard, and dropping `PC` from empty pages.
 - `PHYSICAL_IMG_NR` set to the page position on every page (htrflow writes 0).
 - `fileName` rewritten to the published stem.
-- Words and block outlines put on the page by the export (2026-11-13), and
-  the rule that tells a file needing it from one that does not.
+- The rule by which `--fix-positions` tells a file that needs its words and
+  block outlines moved from one that does not (2026-11-13). That the repair
+  is an option, and off by default, is the requester's.
