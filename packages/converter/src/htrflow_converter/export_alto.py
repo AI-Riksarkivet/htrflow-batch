@@ -2,12 +2,14 @@
 
 import re
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 
 ALTO_NS = "http://www.loc.gov/standards/alto/ns-v4#"
 _XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
 _SCHEMA_LOCATION = f"{ALTO_NS} http://www.loc.gov/standards/alto/v4/alto-4-4.xsd"
 _ASPECT_TOLERANCE = 0.01
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
+_Axis = Callable[[float], float]
 
 ET.register_namespace("", ALTO_NS)
 ET.register_namespace("xsi", _XSI_NS)
@@ -26,15 +28,16 @@ def _serialise(root: ET.Element) -> bytes:
     return ET.tostring(root, encoding="UTF-8", xml_declaration=True)
 
 
-def _scale_points(points: str, sx: float, sy: float) -> str:
-    """Scale an `x,y x,y` or `x y x y` list, keeping its separators."""
+def _map_points(points: str, fx: _Axis, fy: _Axis) -> str:
+    """Rewrite an `x,y x,y` or `x y x y` list number by number, keeping its
+    separators: ``fx`` on every x, ``fy`` on every y."""
     count = 0
 
     def one(match: re.Match[str]) -> str:
         nonlocal count
-        factor = sx if count % 2 == 0 else sy
+        axis = fx if count % 2 == 0 else fy
         count += 1
-        return str(round(float(match.group()) * factor))
+        return str(axis(float(match.group())))
 
     return _NUMBER.sub(one, points)
 
@@ -67,7 +70,10 @@ def scale_alto(xml: bytes, native: tuple[int, int], stem: str, number: int) -> b
                 if name in el.attrib:
                     el.set(name, str(round(float(el.attrib[name]) * factor)))
         if el.tag == _q("Polygon") and "POINTS" in el.attrib:
-            el.set("POINTS", _scale_points(el.attrib["POINTS"], sx, sy))
+            scaled = _map_points(
+                el.attrib["POINTS"], lambda x: round(x * sx), lambda y: round(y * sy)
+            )
+            el.set("POINTS", scaled)
 
     page.set("WIDTH", str(native_w))
     page.set("HEIGHT", str(native_h))
