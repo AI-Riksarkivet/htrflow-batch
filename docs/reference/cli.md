@@ -97,6 +97,17 @@ export rewrites every coordinate to the scan's full resolution, read from the
 image server. A volume whose page proportions differ from its scan's by
 more than one per cent fails instead of being published stretched.
 
+**Positions on the page.** htrflow writes two positions from the wrong
+corner: a word's box is counted from the corner of its text block instead of
+the page's, and a block's outline is moved by that corner once more. The
+export puts both where they are on the page, as blocks' and lines' boxes
+already are, so a search hit is drawn on its word. It tells the two forms
+apart by the file's own geometry: an outline whose corner is exactly twice
+its block's is moved back, and a page's words are moved by their blocks'
+corners only when that puts more of them inside their lines. A file that is
+already right is published as it is. The results themselves are not
+changed.
+
 **Without the image server.** The full resolution is not in the results, so
 by default each page's size is read from the image server, one request per
 page. Where the export runs without access to the image server, download

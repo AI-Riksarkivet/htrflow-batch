@@ -65,9 +65,14 @@ pages (for example the cover, page 1) are published without text.
   has the share mounted.
 - No PAGE XML, images, IIIF manifests or metadata files in the export —
   ALTO only.
-- No fixing of the transcription itself. In particular, htrflow writes word
-  boxes relative to their region (a known htrflow bug, tracked separately);
-  the export scales what is there and does not repair it.
+- No fixing of the transcription itself: its text, lines and reading order
+  are published as htrflow made them.
+  Amended 2026-11-13: this entry first also left htrflow's word boxes as
+  they are ("relative to their region, a known htrflow bug, tracked
+  separately; the export scales what is there and does not repair it").
+  The publishing side draws search hits from those boxes, so they landed
+  off their words, by each block's own position. The export now puts words
+  and block outlines on the page; see "Positions on the page" below.
 - No partial volumes, ever, and no per-page quality filtering (a low page
   inside a good volume is published as transcribed).
 
@@ -240,6 +245,35 @@ The aspect ratios of the ALTO and the scan should agree to within rounding;
 a page where they do not (by more than ~1%) means the ALTO was made from a
 different image, and fails the volume like an unreadable size.
 
+## Positions on the page
+
+Added 2026-11-13. htrflow's ALTO template writes two positions from the
+wrong corner (measured on 169 pages of results: every one of 7 365 word
+boxes and 119 block outlines; the PAGE XML of the same pages has them
+right):
+
+- a `String`'s `HPOS`/`VPOS` are counted from the corner of its `TextBlock`,
+  not from the page's: they lack the block's `HPOS`/`VPOS`;
+- a `TextBlock`'s `Shape/Polygon` is moved by the block's corner once more:
+  every point has the block's `HPOS`/`VPOS` added twice.
+
+`TextBlock` and `TextLine` boxes and `TextLine` outlines are right. The
+export repairs both before it scales, and must leave a file alone that is
+already right, since htrflow will be corrected and results made before and
+after that are exported by the same command. A file does not say which form
+it has, so its geometry decides:
+
+- an outline whose bounding box starts at exactly twice its block's corner
+  is moved back by that corner; any other outline is kept;
+- a word lies in its line. Over the whole page, the words that lie in their
+  line as written are counted, and those that do once moved by their block's
+  corner (a word may reach one pixel past its line). The words are moved
+  only when moving puts more of them in their lines. A tie, which takes a
+  block at or next to the page's corner, leaves them as written.
+
+Only `String` positions and `TextBlock` outlines change; the results in the
+bucket are not rewritten.
+
 ## Empty ALTO
 
 A valid ALTO v4 document that says nothing about processing: a
@@ -315,3 +349,5 @@ for exported), `pages`, `pages_with_text`,
 - The aspect-ratio guard, and dropping `PC` from empty pages.
 - `PHYSICAL_IMG_NR` set to the page position on every page (htrflow writes 0).
 - `fileName` rewritten to the published stem.
+- Words and block outlines put on the page by the export (2026-11-13), and
+  the rule that tells a file needing it from one that does not.
