@@ -74,6 +74,9 @@ pages (for example the cover, page 1) are published without text.
   off their words, by each block's own position. With `--fix-positions` the
   export puts words and block outlines on the page; see "Positions on the
   page" below.
+  Amended 2026-11-16: with `--join-hyphenation` the export marks a word
+  broken over a line end as one word; see "Words split over a line end"
+  below. No letter of the transcription is changed by it.
 - No partial volumes, ever, and no per-page quality filtering (a low page
   inside a good volume is published as transcribed).
 
@@ -279,6 +282,47 @@ geometry decides:
 
 Only `String` positions and `TextBlock` outlines change; the results in the
 bucket are not rewritten.
+
+## Words split over a line end
+
+Added 2026-11-16. A transcription ends a line inside a word with the break
+mark `¬`. htrflow writes the halves as two `String`s (`Söndher¬`, then
+`manneland,` on the next line) and nothing joins them, so a search built
+on the published files cannot find the whole word. ALTO has attributes for
+exactly this, and Transkribus writes them:
+
+```xml
+<String CONTENT="kort" SUBS_TYPE="HypPart1" SUBS_CONTENT="kortlek"/>
+<HYP CONTENT="¬"/>
+</TextLine>
+<TextLine>
+<String CONTENT="lek" SUBS_TYPE="HypPart2" SUBS_CONTENT="kortlek"/>
+```
+
+The marking is an option, `--join-hyphenation`, off unless given (the
+requester's call, 2026-11-16); without it the export publishes the words as
+transcribed. With it, in each `TextBlock`, for each line and the line after
+it: when the line's last `String` ends in `¬` with a word before the mark,
+and the next line's first `String` is a word, both get `SUBS_TYPE`
+(`HypPart1`, `HypPart2`) and the whole word as `SUBS_CONTENT`, the mark
+leaves the first half's `CONTENT`, and a `HYP` with the mark as its
+`CONTENT` closes the line. The whole word is the two `CONTENT`s joined as
+they are, punctuation included, as `CONTENT` itself carries it.
+
+Left as transcribed, because it is not plainly one word in two halves:
+
+- a line that ends in a plain hyphen (it may be a dash);
+- a `String` with a space in it: a whole line from a pipeline without word
+  boxes, where there is no word to mark;
+- a `String` that already has a `SUBS_TYPE`, so results made after htrflow
+  writes these itself pass through unchanged;
+- the last line of a block: halves are not looked for across blocks;
+- a second half that is itself broken (`op¬`, `bä¬`, `ra`): the first mark
+  stays, and the second pair is joined like any other.
+
+`HYP` gets no position: htrflow gives the first half one box with its mark,
+and that box stays on the half. The results in the bucket are not
+rewritten.
 
 ## Empty ALTO
 

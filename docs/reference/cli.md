@@ -46,8 +46,8 @@ renders a suitable ServiceAccount behind `apply.rbac.enabled`
 htrflow-campaigns export --pipeline <id> --namespace <ns>
     (--volumes ID,ID | --volumes-file FILE) --to <dir>
     [--results-url URL] [--min-quality 0.75 | --no-quality-filter]
-    [--empty-pages 1] [--manifests DIR] [--fix-positions] [--user NAME]
-    [--report FILE] [--dry-run]
+    [--empty-pages 1] [--manifests DIR] [--fix-positions]
+    [--join-hyphenation] [--user NAME] [--report FILE] [--dry-run]
 ```
 
 **What it reads.** Each volume's results at
@@ -109,6 +109,32 @@ corner is exactly twice its block's is moved back, and a page's words are
 moved by their blocks' corners only when that puts more of them inside their
 lines. A file that is already right is published as it is, so the option is
 safe to pass for every volume. The results themselves are not changed.
+
+**Words split over a line end.** A transcription ends a line inside a word
+with the break mark `¬`, and htrflow writes the two halves as two words:
+`Söndher¬` closing one line, `manneland,` opening the next. Nothing in the
+file says they are one word, so a search built on the published files
+cannot find the whole word.
+With `--join-hyphenation` the export says so, in the form Transkribus
+writes:
+
+```xml
+<String CONTENT="Söndher" SUBS_TYPE="HypPart1" SUBS_CONTENT="Söndhermanneland,"/>
+<HYP CONTENT="¬"/>
+</TextLine>
+<TextLine>
+<String CONTENT="manneland," SUBS_TYPE="HypPart2" SUBS_CONTENT="Söndhermanneland,"/>
+```
+
+Both halves carry the whole word, each keeps its own box, and the mark
+moves from the first half's text to a `HYP` closing its line. Only what is
+plainly one word in two halves is marked: the last word of a line that ends
+in `¬` and the first word of the next line in the same text block. A plain
+hyphen at a line end is left alone, since it may be a dash, and so is a
+word that already carries a `SUBS_TYPE`. It needs word boxes: a pipeline
+that recognises line by line writes each line as one piece of text, and
+those lines are published as they are. The results themselves are not
+changed.
 
 **Without the image server.** The full resolution is not in the results, so
 by default each page's size is read from the image server, one request per
