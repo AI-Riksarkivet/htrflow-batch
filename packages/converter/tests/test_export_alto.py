@@ -280,3 +280,87 @@ def test_unasked_the_positions_are_published_as_htrflow_wrote_them():
     out = scale_alto(source, SAME_SIZE, "X_00001", 1)
     assert _boxes(out, "String") == _boxes(source, "String")
     assert _outlines(out, "TextBlock") == _outlines(source, "TextBlock")
+
+
+# A word broken over a line end is two Strings in htrflow's ALTO, the first
+# ending in the break mark "¬", and nothing says they are one word. Asked to
+# (`--join-hyphenation`), the export says so the way Transkribus does: both
+# halves carry the whole word, the mark moves to a HYP closing the line.
+def _lines(xml: bytes) -> list[list[tuple[str, dict[str, str]]]]:
+    return [
+        [(el.tag.split("}")[1], dict(el.attrib)) for el in line]
+        for line in ET.fromstring(xml).iter(f"{{{ALTO_NS}}}TextLine")
+    ]
+
+
+def _block(*lines: str) -> str:
+    def words(line: str) -> str:
+        return "".join(f'<String CONTENT="{w}"/>' for w in line.split("|"))
+
+    return f"<TextBlock>{''.join(f'<TextLine>{words(x)}</TextLine>' for x in lines)}</TextBlock>"
+
+
+def _joined(*blocks: str) -> list[list[tuple[str, dict[str, str]]]]:
+    xml = _page("".join(blocks))
+    return _lines(scale_alto(xml, (1000, 1000), "X_00001", 1, join_hyphenation=True))
+
+
+def test_a_word_split_over_a_line_end_is_marked_as_one_word():
+    whole = {"SUBS_CONTENT": "Söndhermanneland,"}
+    assert _joined(_block("till|Söndher¬", "manneland,|Narichie")) == [
+        [
+            ("String", {"CONTENT": "till"}),
+            ("String", {"CONTENT": "Söndher", "SUBS_TYPE": "HypPart1", **whole}),
+            ("HYP", {"CONTENT": "¬"}),
+        ],
+        [
+            ("String", {"CONTENT": "manneland,", "SUBS_TYPE": "HypPart2", **whole}),
+            ("String", {"CONTENT": "Narichie"}),
+        ],
+    ]
+
+
+def test_unasked_a_split_word_is_published_as_transcribed():
+    xml = _page(_block("till|Söndher¬", "manneland,"))
+    assert _lines(scale_alto(xml, (1000, 1000), "X_00001", 1)) == _lines(xml)
+
+
+def test_a_split_word_is_not_joined_across_text_blocks():
+    blocks = _block("till|Söndher¬"), _block("manneland,")
+    assert _joined(*blocks) == _lines(_page("".join(blocks)))
+
+
+@pytest.mark.parametrize(
+    "lines",
+    [
+        ("Nord-", "och"),  # a plain hyphen may be a dash, not a break
+        ("¬", "och"),  # a mark with no word before it
+        ("en hel rad som slutar med op¬", "bära samma hielp"),  # no word boxes
+    ],
+)
+def test_what_is_not_plainly_one_word_in_two_halves_is_left_alone(lines):
+    assert _joined(_block(*lines)) == _lines(_page(_block(*lines)))
+
+
+def test_a_half_that_is_itself_broken_is_joined_only_with_what_follows_it():
+    """"op¬" / "bä¬" / "ra": "opbä¬" is no word, so the first mark stays as
+    transcribed; "bä" and "ra" are two halves like any other."""
+    first, second, third = _joined(_block("op¬", "bä¬", "ra"))
+    assert first == [("String", {"CONTENT": "op¬"})]
+    assert second[0][1] == {
+        "CONTENT": "bä",
+        "SUBS_TYPE": "HypPart1",
+        "SUBS_CONTENT": "bära",
+    }
+    assert third[0][1]["SUBS_TYPE"] == "HypPart2"
+
+
+def test_words_already_marked_as_halves_are_left_as_they_are():
+    marked = (
+        "<TextBlock><TextLine>"
+        '<String CONTENT="kort" SUBS_TYPE="HypPart1" SUBS_CONTENT="kortlek"/>'
+        '<HYP CONTENT="¬"/></TextLine><TextLine>'
+        '<String CONTENT="lek¬" SUBS_TYPE="HypPart2" SUBS_CONTENT="kortlek"/>'
+        '</TextLine><TextLine><String CONTENT="i"/></TextLine></TextBlock>'
+    )
+    assert _joined(marked) == _lines(_page(marked))
