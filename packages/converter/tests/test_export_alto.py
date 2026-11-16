@@ -297,7 +297,8 @@ def _block(*lines: str) -> str:
     def words(line: str) -> str:
         return "".join(f'<String CONTENT="{w}"/>' for w in line.split("|"))
 
-    return f"<TextBlock>{''.join(f'<TextLine>{words(x)}</TextLine>' for x in lines)}</TextBlock>"
+    text_lines = "".join(f"<TextLine>{words(x)}</TextLine>" for x in lines)
+    return f"<TextBlock>{text_lines}</TextBlock>"
 
 
 def _joined(*blocks: str) -> list[list[tuple[str, dict[str, str]]]]:
