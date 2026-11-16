@@ -344,7 +344,7 @@ def test_what_is_not_plainly_one_word_in_two_halves_is_left_alone(lines):
 
 
 def test_a_half_that_is_itself_broken_is_joined_only_with_what_follows_it():
-    """"op¬" / "bä¬" / "ra": "opbä¬" is no word, so the first mark stays as
+    """ "op¬" / "bä¬" / "ra": "opbä¬" is no word, so the first mark stays as
     transcribed; "bä" and "ra" are two halves like any other."""
     first, second, third = _joined(_block("op¬", "bä¬", "ra"))
     assert first == [("String", {"CONTENT": "op¬"})]
