@@ -2011,7 +2011,9 @@ def main(argv: list[str] | None = None) -> int:
         "--join-hyphenation",
         action="store_true",
         help='mark a word broken over a line end ("¬") as one word: the '
-        "whole word on both halves (SUBS_CONTENT), the mark in a HYP",
+        "whole word on both halves (SUBS_CONTENT), the mark in a HYP. Only "
+        "for results with word boxes; a pipeline that recognises line by "
+        "line has no words to mark, and its pages are published unchanged",
     )
     export_p.add_argument(
         "--results-url",
