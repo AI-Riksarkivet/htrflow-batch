@@ -78,11 +78,18 @@ def run(
     dry=False,
     vid=VID,
     fix_positions=False,
+    join_hyphenation=False,
 ):
     client = httpx.Client(transport=httpx.MockTransport(server))
     results = Results(RESULTS, "ann", "pw", client)
     results.login()
-    opts = Options(tmp_path, min_quality, empty, fix_positions=fix_positions)
+    opts = Options(
+        tmp_path,
+        min_quality,
+        empty,
+        fix_positions=fix_positions,
+        join_hyphenation=join_hyphenation,
+    )
     return export_volume(results, client, PREFIX, vid, opts, dry)
 
 
@@ -118,6 +125,25 @@ def test_word_positions_are_fixed_only_when_asked_for(tmp_path, asked, hpos):
     assert row.outcome == "exported"
     written = (tmp_path / VID / "V0000001_00002.xml").read_text()
     assert f'ID="block0_line0_word0" HEIGHT="140" WIDTH="600" HPOS="{hpos}"' in written
+
+
+SPLIT_WORD = (
+    b'<alto xmlns="http://www.loc.gov/standards/alto/ns-v4#"><Layout>'
+    b'<Page WIDTH="2500" HEIGHT="1769"><PrintSpace><TextBlock>'
+    b'<TextLine><String CONTENT="S\xc3\xb6ndher\xc2\xac"/></TextLine>'
+    b'<TextLine><String CONTENT="manneland,"/></TextLine>'
+    b"</TextBlock></PrintSpace></Page></Layout></alto>"
+)
+
+
+@pytest.mark.parametrize(("asked", "whole_words"), [(True, 2), (False, 0)])
+def test_a_split_word_is_marked_as_one_only_when_asked_for(
+    tmp_path, asked, whole_words
+):
+    row = run(Server(alto=SPLIT_WORD), tmp_path, join_hyphenation=asked)
+    assert row.outcome == "exported"
+    written = (tmp_path / VID / "V0000001_00002.xml").read_text()
+    assert written.count('SUBS_CONTENT="Söndhermanneland,"') == whole_words
 
 
 def test_below_threshold_writes_nothing(tmp_path):

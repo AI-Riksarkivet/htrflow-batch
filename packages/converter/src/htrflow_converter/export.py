@@ -78,6 +78,9 @@ class Options:
     #: ``--fix-positions``: put the words and block outlines htrflow writes
     #: from the wrong corner where they are on the page. Off unless asked for.
     fix_positions: bool = False
+    #: ``--join-hyphenation``: mark a word broken over a line end as one
+    #: word, the way Transkribus writes it. Off unless asked for.
+    join_hyphenation: bool = False
 
 
 def swap_in(built: Path, final: Path) -> None:
@@ -261,7 +264,7 @@ def _export(
             tmp,
             dry_run,
             on_pages,
-            opts.fix_positions,
+            opts,
         )
         if row.outcome != "exported":
             return row
@@ -322,7 +325,7 @@ def _build(
     tmp,
     dry_run,
     on_pages,
-    fix_positions,
+    opts,
 ) -> Row:  # noqa: PLR0913
     def failed(reason: str) -> Row:
         return Row(volume_id, "failed", pages=expected, reason=reason, **stats)
@@ -350,7 +353,12 @@ def _build(
         else:
             try:
                 data = scale_alto(
-                    alto, native, stem, number, fix_positions=fix_positions
+                    alto,
+                    native,
+                    stem,
+                    number,
+                    fix_positions=opts.fix_positions,
+                    join_hyphenation=opts.join_hyphenation,
                 )
             except AltoMismatch as exc:
                 return failed(f"page {key}: {exc}")

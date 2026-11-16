@@ -1630,6 +1630,7 @@ def _export(args: argparse.Namespace) -> int:
         pages,
         manifests=manifests,
         fix_positions=args.fix_positions,
+        join_hyphenation=args.join_hyphenation,
     )
     return run_export(
         source,
@@ -2005,6 +2006,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="put word boxes and block outlines where they are on the page "
         "(htrflow writes both from the wrong corner)",
+    )
+    export_p.add_argument(
+        "--join-hyphenation",
+        action="store_true",
+        help='mark a word broken over a line end ("¬") as one word: the '
+        "whole word on both halves (SUBS_CONTENT), the mark in a HYP. Only "
+        "for results with word boxes; a pipeline that recognises line by "
+        "line has no words to mark, and its pages are published unchanged",
     )
     export_p.add_argument(
         "--results-url",

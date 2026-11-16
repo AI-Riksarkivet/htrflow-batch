@@ -3,6 +3,7 @@
 import re
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
+from itertools import pairwise
 
 ALTO_NS = "http://www.loc.gov/standards/alto/ns-v4#"
 _XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
@@ -11,6 +12,7 @@ _ASPECT_TOLERANCE = 0.01
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 _BOX = ("HPOS", "VPOS", "WIDTH", "HEIGHT")
 _SLACK = 1  # px a word may reach past its line and still count as in it
+_BREAK = "¬"  # the mark a transcription ends a line with inside a word
 _Axis = Callable[[float], float]
 _Box = tuple[float, float, float, float]  # HPOS, VPOS, WIDTH, HEIGHT
 
@@ -125,11 +127,14 @@ def scale_alto(
     number: int,
     *,
     fix_positions: bool = False,
+    join_hyphenation: bool = False,
 ) -> bytes:
     """Scale every coordinate to the native scan size and name the page.
 
     With ``fix_positions``, the words and block outlines htrflow writes from
-    the wrong corner are put on the page first (``_to_page``).
+    the wrong corner are put on the page first (``_to_page``). With
+    ``join_hyphenation``, a word broken over a line end is marked as one
+    word (``_join_hyphenation``).
     """
     try:
         root = ET.fromstring(xml)
@@ -153,6 +158,8 @@ def scale_alto(
 
     if fix_positions:
         _to_page(root)
+    if join_hyphenation:
+        _join_hyphenation(root)
     for el in root.iter():
         for names, factor in ((("HPOS", "WIDTH"), sx), (("VPOS", "HEIGHT"), sy)):
             for name in names:
@@ -170,6 +177,45 @@ def scale_alto(
     page.set("ID", f"_{number:05d}")  # the image number, not the run's page name
     _file_name(root).text = stem
     return _serialise(root)
+
+
+def _half(line: ET.Element, index: int) -> ET.Element | None:
+    """The line's first (0) or last (-1) String, if it is one unmarked word:
+    a String with a space in it is a whole line without word boxes, and one
+    with a SUBS_TYPE has been dealt with by whoever wrote the file."""
+    strings = line.findall(_q("String"))
+    if not strings:
+        return None
+    word = strings[index]
+    content = word.get("CONTENT", "")
+    if "SUBS_TYPE" in word.attrib or not content or any(c.isspace() for c in content):
+        return None
+    return word
+
+
+def _join_hyphenation(root: ET.Element) -> None:
+    """Mark a word broken over a line end as one word, as Transkribus does.
+
+    Where a line's last word ends in the break mark and the next line of the
+    same TextBlock starts with a word, both become halves of the whole word
+    (``SUBS_TYPE``, ``SUBS_CONTENT``) and the mark moves from the first
+    half's ``CONTENT`` to a ``HYP`` closing its line. A second half that is
+    itself broken makes no whole word, so that pair is left as transcribed.
+    """
+    for block in root.iter(_q("TextBlock")):
+        for line, following in pairwise(block.findall(_q("TextLine"))):
+            first, second = _half(line, -1), _half(following, 0)
+            if first is None or second is None:
+                continue
+            start, mark, nothing = first.attrib["CONTENT"].rpartition(_BREAK)
+            rest = second.attrib["CONTENT"]
+            if not (start and mark) or nothing or rest.endswith(_BREAK):
+                continue
+            first.set("CONTENT", start)
+            for half, part in ((first, "HypPart1"), (second, "HypPart2")):
+                half.set("SUBS_TYPE", part)
+                half.set("SUBS_CONTENT", start + rest)
+            ET.SubElement(line, _q("HYP"), {"CONTENT": _BREAK})
 
 
 def _child(parent: ET.Element, name: str, index: int) -> ET.Element:
