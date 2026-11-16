@@ -920,11 +920,12 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 5140
 # file's geometry has to decide.
 # 7726 -> 7752: the repair is an option, export --fix-positions, off unless
 # given: the argument, the Options field and its way down to scale_alto.
-# 7752 -> 7813 (2026-11-16): export --join-hyphenation marks a word broken
+# 7752 -> 7815 (2026-11-16): export --join-hyphenation marks a word broken
 # over a line end as one word (SUBS_TYPE, SUBS_CONTENT, HYP). export_alto
 # +47: the marking and the rules for what is plainly two halves of one word;
-# the rest is the argument and the Options field on their way to scale_alto.
-check converter "$(count packages/converter/src -name '*.py')" 7813
+# the rest is the argument, its help (which says it takes word boxes) and
+# the Options field on their way to scale_alto.
+check converter "$(count packages/converter/src -name '*.py')" 7815
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
