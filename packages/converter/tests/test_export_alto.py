@@ -335,6 +335,7 @@ def test_a_split_word_is_not_joined_across_text_blocks():
     [
         ("Nord-", "och"),  # a plain hyphen may be a dash, not a break
         ("¬", "och"),  # a mark with no word before it
+        ("haf¬wer", "och"),  # a mark inside the word ends no line
         ("en hel rad som slutar med op¬", "bära samma hielp"),  # no word boxes
     ],
 )
