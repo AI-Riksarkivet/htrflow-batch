@@ -1,6 +1,8 @@
 import pytest
 from api_fakes import Signer  # noqa: F401
+from fastapi import APIRouter
 from fastapi.testclient import TestClient
+from starlette.responses import Response
 
 from htrflow_api import MIN_CLIENT
 from htrflow_api.app import CLIENT_HEADER, create_app, too_old
@@ -66,15 +68,110 @@ def test_a_refusal_keeps_its_status_and_two_sentences(client, signer):
     assert r.status_code == 403 and set(r.json()) == {"detail", "hint"}
 
 
-def test_every_v1_route_but_login_refuses_without_a_token(client):
-    # walks app.routes, so a route added later cannot forget the guard
-    seen = 0
-    for route in client.app.routes:
-        path = getattr(route, "path", "")
-        if "/v1/" in path and not path.endswith("/v1/login"):
-            seen += 1
-            assert client.get(path).status_code == 401, path
-    assert seen
+PREFIXES = ["", "/control"]
+METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+
+
+def prefixed(cfg, signer, path):
+    c = cfg.model_copy(update={"path": path})
+    return c, create_app(c, Verifier(c, signer.jwks))
+
+
+@pytest.mark.parametrize("prefix", PREFIXES)
+def test_registration_style_does_not_matter(cfg, signer, prefix):
+    """Routes added after the fact, in every style, sit behind the guard."""
+    cfg, app = prefixed(cfg, signer, prefix)
+    v1, calls = f"{prefix}/v1", []
+
+    @app.post(f"{v1}/x")
+    def post_x():
+        calls.append("post")
+        return {}
+
+    @app.delete(f"{v1}/x")
+    def delete_x():
+        calls.append("delete")
+        return {}
+
+    router = APIRouter()
+
+    @router.get("/r")
+    def routed():
+        calls.append("router")
+        return {}
+
+    app.include_router(router, prefix=f"{v1}/rt")
+
+    async def mounted(scope, receive, send):
+        calls.append("mount")
+        await Response("ok")(scope, receive, send)
+
+    app.mount(f"{v1}/m", mounted)
+    c = TestClient(app)
+    hits = [
+        ("POST", f"{v1}/x"),
+        ("DELETE", f"{v1}/x"),
+        ("GET", f"{v1}/rt/r"),
+        ("GET", f"{v1}/m"),
+        ("GET", f"{v1}/m/deeper"),
+    ]
+    for method, path in hits:
+        assert c.request(method, path).status_code == 401, (method, path)
+    assert calls == []
+    for method, path in hits:
+        r = c.request(
+            method, path, headers=auth(signer.token()), follow_redirects=False
+        )
+        assert r.status_code in (200, 307), (method, path)
+    assert {"post", "delete", "router", "mount"} <= set(calls)
+
+
+@pytest.mark.parametrize("prefix", PREFIXES)
+@pytest.mark.parametrize("method", METHODS)
+@pytest.mark.parametrize("tail", ["/whoami", "/nope", "", "/"])
+def test_every_method_and_path_under_v1_is_401_without_a_token(
+    cfg, signer, prefix, method, tail
+):
+    _, app = prefixed(cfg, signer, prefix)
+    assert TestClient(app).request(method, f"{prefix}/v1{tail}").status_code == 401
+
+
+@pytest.mark.parametrize("prefix", PREFIXES)
+def test_with_a_token_unknown_is_404_and_wrong_method_405(cfg, signer, prefix):
+    _, app = prefixed(cfg, signer, prefix)
+    c, h = TestClient(app), auth(signer.token())
+    assert c.get(f"{prefix}/v1/nope", headers=h).status_code == 404
+    assert c.post(f"{prefix}/v1/whoami", headers=h).status_code == 405
+
+
+@pytest.mark.parametrize("prefix", PREFIXES)
+def test_login_is_open_for_get_and_head_only(cfg, signer, prefix):
+    _, app = prefixed(cfg, signer, prefix)
+    c = TestClient(app)
+    assert c.get(f"{prefix}/v1/login").status_code == 200
+    assert c.head(f"{prefix}/v1/login").status_code == 405  # past the guard
+    for m in ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"]:
+        assert c.request(m, f"{prefix}/v1/login").status_code == 401, m
+
+
+@pytest.mark.parametrize("prefix", PREFIXES)
+@pytest.mark.parametrize(
+    "tail",
+    ["/../v1/whoami", "/login/", "/login/../whoami", "/login;x", "/whoami;x"],
+)
+def test_path_tricks_never_reach_a_handler_without_a_token(cfg, signer, prefix, tail):
+    _, app = prefixed(cfg, signer, prefix)
+    calls = []
+
+    @app.api_route(f"{prefix}/v1/{{rest:path}}", methods=METHODS)
+    def spy(rest: str):
+        calls.append(rest)
+        return {}
+
+    c = TestClient(app)
+    for path in [f"{prefix}/v1{tail}", f"{prefix}//v1/whoami", f"{prefix}/V1/whoami"]:
+        assert c.get(path).status_code in (401, 404), path
+    assert calls == []
 
 
 def test_the_prefix_is_served_and_the_bare_path_is_not(cfg, signer):
@@ -143,6 +240,36 @@ def test_an_unhandled_error_is_json_with_two_sentences(cfg):
     assert r.headers["Cache-Control"] == "no-store"
 
 
+def test_another_client_error_is_not_an_internal_error(cfg, signer):
+    from starlette.exceptions import HTTPException
+
+    _, app = prefixed(cfg, signer, "")
+
+    @app.get("/v1/bad")
+    def bad():
+        raise HTTPException(400)
+
+    r = TestClient(app).get("/v1/bad", headers=auth(signer.token()))
+    assert r.status_code == 400 and r.json()["detail"] != "internal error"
+    assert set(r.json()) == {"detail", "hint"}
+    assert r.headers["Cache-Control"] == "no-store"
+
+
+def test_current_identity_fails_loudly_without_the_guard(cfg, signer):
+    from fastapi import Depends
+
+    from htrflow_api.app import current_identity
+
+    _, app = prefixed(cfg, signer, "")
+
+    @app.get("/open")
+    def open_(who=Depends(current_identity)):
+        return {}
+
+    r = TestClient(app, raise_server_exceptions=False).get("/open")
+    assert r.status_code == 500
+
+
 def test_the_token_is_not_logged(client, signer, caplog):
     token = signer.token(aud="other")
     with caplog.at_level("DEBUG"):
@@ -151,8 +278,8 @@ def test_the_token_is_not_logged(client, signer, caplog):
 
 
 @pytest.mark.parametrize("path", ["/v1/nothing", "/nothing", "/v1/whoami/x"])
-def test_an_unknown_path_is_a_two_sentence_404(client, path):
-    r = client.get(path)
+def test_an_unknown_path_is_a_two_sentence_404(client, signer, path):
+    r = client.get(path, headers=auth(signer.token()))
     assert r.status_code == 404 and set(r.json()) == {"detail", "hint"}
 
 
