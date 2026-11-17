@@ -937,7 +937,10 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 5140
 # provider the server names (every address through the address rule, the
 # wait bounded by the code's lifetime), and the login, logout and whoami
 # commands in cli.py; remote.py gains http_client() so both share one client.
-check converter "$(count packages/converter/src -name '*.py')" 8505
+# 8505 -> 8539 (Task 5 review): one sanitizer (remote.plain) for everything
+# printed from the network, the sign-in service's refusals shown as status and
+# plain code only, a floor on the poll interval, and the post-save whoami.
+check converter "$(count packages/converter/src -name '*.py')" 8539
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

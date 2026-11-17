@@ -1,5 +1,7 @@
 """The device sign-in against a fake provider."""
 
+from urllib.parse import parse_qsl
+
 import httpx
 import pytest
 
@@ -90,7 +92,7 @@ def run(provider, clock=None, said=None):
 
 
 def form(request):
-    return dict(p.split("=", 1) for p in request.content.decode().split("&"))
+    return dict(parse_qsl(request.content.decode(), strict_parsing=True))
 
 
 def test_a_sign_in_prints_the_link_and_the_code_and_returns_the_login():
@@ -101,10 +103,11 @@ def test_a_sign_in_prints_the_link_and_the_code_and_returns_the_login():
     assert "ABCD-EFGH" in text
     assert "DC-secret" not in text and "AT-secret" not in text
     assert form(provider.sent(DEVICE_URL)[0]) == {"client_id": "cli", "scope": "openid"}
-    poll = form(provider.sent(TOKEN_URL)[0])
-    assert poll["grant_type"].endswith("device_code")
-    assert poll["device_code"] == "DC-secret" and poll["client_id"] == "cli"
-    assert "client_secret" not in poll
+    assert form(provider.sent(TOKEN_URL)[0]) == {
+        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+        "device_code": "DC-secret",
+        "client_id": "cli",
+    }
     assert login.server == SERVER and login.issuer == ISSUER
     assert login.client_id == "cli" and login.token_endpoint == TOKEN_URL
     assert (login.access_token, login.refresh_token) == ("AT-secret", "RT-secret")
@@ -115,7 +118,7 @@ def test_without_a_complete_link_it_prints_the_uri_and_the_code():
     provider = Provider([TOKENS], device={"verification_uri_complete": None})
     said = []
     run(provider, said=said)
-    assert any("https://id.example/activate" in s and "ABCD-EFGH" in s for s in said)
+    assert said == ["Open https://id.example/activate and enter the code ABCD-EFGH."]
 
 
 def test_a_missing_refresh_token_is_stored_empty():
@@ -232,21 +235,22 @@ def test_an_unusual_error_ends_it_with_the_code_only_when_it_is_plain():
     assert "Evil" not in e.value.detail and "secret" not in e.value.detail
 
 
-def test_an_answer_that_is_not_json_ends_it():
+def test_an_answer_that_is_not_json_ends_it_at_once():
     provider = Provider([])
-    client = httpx.Client(
-        transport=httpx.MockTransport(
-            lambda r: (
-                httpx.Response(502, text="<html>")
-                if str(r.url) == TOKEN_URL
-                else provider(r)
-            )
-        )
-    )
+    polls = []
+
+    def handler(request):
+        if str(request.url) == TOKEN_URL:
+            polls.append(request)
+            return httpx.Response(502, text="<html>bad gateway</html>")
+        return provider(request)
+
     clock = Clock()
+    client = httpx.Client(transport=httpx.MockTransport(handler))
     with pytest.raises(RemoteError) as e:
         device_login(SERVER, client, lambda s: None, clock.sleep, clock.now)
-    assert "<html>" not in e.value.detail
+    assert "<html>" not in e.value.detail and "cannot read" in e.value.detail
+    assert len(polls) == 1 and clock.slept == [5]
 
 
 def test_a_token_answer_without_an_access_token_is_refused():
@@ -275,3 +279,59 @@ def test_failures_that_are_not_in_a_row_do_not_add_up():
 def test_the_server_must_be_https_or_loopback():
     with pytest.raises(RemoteError):
         device_login("http://h.example", Provider([]).client(), print)
+
+
+def test_a_device_endpoint_refusal_is_the_sign_in_services_with_its_code_only():
+    class P(Provider):
+        def __call__(self, request):
+            if str(request.url) == DEVICE_URL:
+                return httpx.Response(401, json={"error": "invalid_client"})
+            return super().__call__(request)
+
+    with pytest.raises(RemoteError) as e:
+        run(P([TOKENS]))
+    assert "sign-in service" in e.value.detail and "401" in e.value.detail
+    assert "invalid_client" in e.value.detail and "the server" not in e.value.detail
+
+
+def test_nothing_else_of_a_provider_body_is_shown():
+    class P(Provider):
+        def __call__(self, request):
+            if str(request.url) == DEVICE_URL:
+                return httpx.Response(
+                    400,
+                    json={"detail": "\x1b[31mRED" + "y" * 300, "error": "Not Plain!"},
+                )
+            return super().__call__(request)
+
+    with pytest.raises(RemoteError) as e:
+        run(P([TOKENS]))
+    text = e.value.detail + e.value.hint
+    assert "\x1b" not in text and "RED" not in text and "yyy" not in text
+    assert "Not Plain" not in text and "400" in text
+
+
+def test_a_discovery_issuer_with_an_escape_is_not_echoed_raw():
+    provider = Provider([TOKENS], discovery={"issuer": "\x1b]0;pwned\x07https://evil"})
+    with pytest.raises(RemoteError) as e:
+        run(provider)
+    assert "\x1b" not in e.value.detail and "\x07" not in e.value.detail
+    assert len(e.value.detail) < 500
+
+
+@pytest.mark.parametrize("given", [0, -3, 0.001, "NaN", True, "1", None, 4.9, 1e9, 61])
+def test_the_wait_is_never_under_five_seconds_nor_over_sixty(given):
+    clock = Clock()
+    provider = Provider([PENDING] * 1000, device={"interval": given, "expires_in": 600})
+    with pytest.raises(RemoteError):
+        run(provider, clock)
+    assert min(clock.slept) >= 5 and max(clock.slept) <= 60
+    assert len(provider.sent(TOKEN_URL)) <= 600 / 5 + 1
+
+
+def test_slow_down_adds_five_and_stops_at_sixty():
+    clock = Clock()
+    slow = (400, {"error": "slow_down"})
+    run(Provider([slow] * 14 + [TOKENS]), clock)
+    assert clock.slept[:4] == [5, 10, 15, 20]
+    assert max(clock.slept) == 60 and clock.slept[-1] == 60

@@ -60,6 +60,8 @@ htrflow-campaigns logout
   is `--server`, else the environment variable `HTRFLOW_API_URL`; with
   neither, the command stops with exit `2`. A sign-in already stored is
   replaced without a question. It ends with `signed in to <server> as <user>`.
+  If the sign-in works but the server then refuses the account, the sign-in
+  stays stored, the command says so and exits `1`.
   It also stops, before anything is requested from the sign-in service, when
   this client is older than the minimum the server names.
 - **`whoami`** asks the server and prints one `name: value` line each for
@@ -70,11 +72,11 @@ htrflow-campaigns logout
   valid there until it expires. It exits `0` whether or not there was one.
 
 **The address rule.** The server's address, and every address the sign-in
-service hands out, must start with `https://`. `http://` is accepted only
-for `localhost`, `127.0.0.0/8` and `::1`, and never goes through a proxy
-named in the environment. An address with a user name, a query or a
-fragment is refused. Nothing turns this off, and a redirect is never
-followed.
+service hands out, must start with `https://`; `http://` is accepted only for
+`localhost`, `127.0.0.0/8` and `::1`, and never goes through a proxy named in
+the environment. An address with a user name, a query or a fragment is
+refused, except that the link printed for signing in may carry the code as a
+query. Nothing turns this off, and a redirect is never followed.
 
 **Where the sign-in is stored.** In `login.json` under `htrflow/` in
 `$XDG_CONFIG_HOME` (else `~/.config`), in a directory only you can enter and
@@ -89,7 +91,7 @@ the sign-in service; it is never printed or logged.
 | `0` | Done. |
 | `1` | Refused by the server or the sign-in service (including a denied or expired sign-in), or one could not be reached. |
 | `2` | Not signed in (or the stored sign-in no longer works), or no server address. |
-| `130` | You pressed Ctrl-C during `login`. Nothing is stored; the line `sign-in interrupted` is printed. |
+| `130` | You pressed Ctrl-C during `login`. The line `sign-in interrupted` is printed, and nothing is stored unless the sign-in had already finished. |
 
 ## `export`: publishing finished volumes
 

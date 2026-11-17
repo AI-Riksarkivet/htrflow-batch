@@ -1,7 +1,9 @@
 """login, logout and whoami, with the sign-in and the remote faked."""
 
 import json
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -162,11 +164,56 @@ def test_logout_removes_the_login_and_is_fine_without_one(home, capsys):
     assert "not signed in" in capsys.readouterr().out.lower()
 
 
-def test_validate_does_not_import_the_sign_in(monkeypatch):
-    for name in ("htrflow_converter.signin", "htrflow_converter.remote"):
-        monkeypatch.delitem(sys.modules, name, raising=False)
-    from pathlib import Path
-
+def test_validate_does_not_import_the_sign_in_or_the_remote():
+    # in a fresh interpreter, so a module-level import in cli.py is caught
     good = Path(__file__).parent / "fixtures" / "good"
-    assert cli.main(["validate", str(good)]) == 0
-    assert "htrflow_converter.signin" not in sys.modules
+    code = (
+        "import sys\n"
+        "from htrflow_converter import cli\n"
+        f"assert cli.main(['validate', {str(good)!r}]) == 0\n"
+        "bad = [m for m in ('htrflow_converter.signin', 'htrflow_converter.remote')"
+        " if m in sys.modules]\n"
+        "assert not bad, bad\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=False
+    )
+    assert done.returncode == 0, done.stderr
+
+
+def test_a_refusal_prints_sanitized_and_cut(monkeypatch, capsys):
+    fake = FakeRemote(
+        error=RemoteError("\x1b[31mred\nline" + "z" * 2000, "hint\x07" + "h" * 2000)
+    )
+    monkeypatch.setattr(remote, "remote", lambda env=None: fake)
+    assert cli.main(["whoami"]) == 1
+    lines = capsys.readouterr().err.splitlines()
+    assert len(lines) == 2 and all(len(ln) <= 500 for ln in lines)
+    assert "\x1b" not in lines[0] and lines[0].startswith("?[31mred?line")
+    assert "\x07" not in lines[1] and lines[0].endswith("…")
+
+
+def test_login_saved_but_the_account_refused_says_so_and_keeps_the_login(
+    home, monkeypatch, capsys
+):
+    sign_in_as(
+        monkeypatch,
+        fake=FakeRemote(error=RemoteError("No access.", "Ask an admin.", 403)),
+    )
+    assert cli.main(["login", "--server", "https://h.example"]) == 1
+    err = capsys.readouterr()
+    assert err.err.splitlines() == [
+        "signed in to https://h.example, but the server refused this account:",
+        "No access.",
+        "Ask an admin.",
+    ]
+    assert "signed in to" not in err.out and remote.load().access_token == "AT-secret"
+
+
+def test_login_interrupted_after_it_was_saved_exits_130_and_keeps_it(
+    home, monkeypatch, capsys
+):
+    sign_in_as(monkeypatch, fake=FakeRemote(error=KeyboardInterrupt()))
+    assert cli.main(["login", "--server", "https://h.example"]) == 130
+    assert capsys.readouterr().err.strip() == "sign-in interrupted"
+    assert remote.load().access_token == "AT-secret"
