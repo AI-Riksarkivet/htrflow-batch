@@ -1071,7 +1071,7 @@ git commit -m "docs: the campaigns API and signing in, in the READMEs and the ar
 
 ## What the next plans take from this one
 
-- `Depends(current_identity)` in `app.py` is the one guard; every later route uses it.
+- The guard is the middleware in `app.py` (`_Guard`) in front of every `/v1` path: it checks the client version and the token before routing, whatever the method and however a route is registered, with `GET /v1/login` the one exception. `Depends(current_identity)` is not a guard: it only hands a route its verified caller, and raises (a 500) if the guard did not run. Every later route that needs the caller declares it.
 - `Remote.get` and `Remote.request` are the CLI's only way to the service.
 - The Deployment gains a ServiceAccount, the `apply.rbac` Role, the store Secret and the rendered `converter.yaml` in the plan that adds the first call needing them, with `automountServiceAccountToken` turned on there and not before.
 - Task 8's result decides whether later dev-cluster runs keep the port-forward or need an Ingress.
