@@ -8,7 +8,9 @@ from __future__ import annotations
 import importlib.metadata
 import ipaddress
 import json as jsonlib
+import math
 import os
+import tempfile
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, replace
@@ -99,9 +101,26 @@ def login_path(env: Mapping[str, str] | None = None) -> Path:
     return base / "htrflow" / "login.json"
 
 
+def _private(st: os.stat_result) -> bool:
+    return not st.st_mode & 0o077 and st.st_uid == os.getuid()
+
+
+def _read_private(path: Path) -> str:
+    """The file's text, once the open file and its directory are known to be
+    the user's alone; the check is on the descriptor that is then read."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd) as f:
+        if not (_private(os.fstat(f.fileno())) and _private(path.parent.stat())):
+            raise NotSignedIn(
+                "The stored sign-in could be read by others, so it is not used.",
+                _RE_LOGIN,
+            )
+        return f.read()
+
+
 def load(env: Mapping[str, str] | None = None) -> Login:
     try:
-        raw = jsonlib.loads(login_path(env).read_text())
+        raw = jsonlib.loads(_read_private(login_path(env)))
         login = Login(**{k: raw[k] for k in Login.__dataclass_fields__})
         strings = [v for k, v in asdict(login).items() if k != "expires_at"]
         if (
@@ -111,7 +130,9 @@ def load(env: Mapping[str, str] | None = None) -> Login:
         ):
             raise ValueError
         server = checked_address(login.server, "the server")
-    except (OSError, ValueError, TypeError, KeyError, RemoteError):
+    except NotSignedIn:
+        raise
+    except (OSError, ValueError, TypeError, KeyError, RecursionError, RemoteError):
         raise NotSignedIn(
             "No usable sign-in is stored on this machine.", _RE_LOGIN
         ) from None
@@ -122,8 +143,8 @@ def save(login: Login, env: Mapping[str, str] | None = None) -> None:
     path = login_path(env)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     path.parent.chmod(0o700)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    tmp = Path(name)
     try:
         with os.fdopen(fd, "w") as f:
             os.fchmod(f.fileno(), 0o600)
@@ -153,6 +174,16 @@ def _body(response: httpx.Response) -> tuple[str, str]:
     except ValueError:
         pass
     return f"the server answered {response.status_code}", ""
+
+
+def _lifetime(value: Any) -> float:
+    """Seconds a new token lasts; anything unusable is a minute, so the next
+    call refreshes again rather than never."""
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return 60.0
+    return seconds if math.isfinite(seconds) and seconds > 0 else 60.0
 
 
 def _version() -> str:
@@ -207,7 +238,7 @@ class Remote:
         try:
             body = response.json()
             token = body["access_token"]
-            expires = float(body.get("expires_in", 3600))
+            expires = _lifetime(body.get("expires_in", 3600))
             new_refresh = body.get("refresh_token") or login.refresh_token
             if (
                 response.status_code != 200
@@ -238,6 +269,8 @@ class Remote:
         json: object = None,
         params: Mapping[str, str] | None = None,
     ) -> httpx.Response:
+        if not path.startswith("/"):
+            raise ValueError(f"a request path starts with '/', not {path!r}")
         if self.login.expires_at - self._now() < _SKEW:
             self._refresh()
         response = self._send(
@@ -259,8 +292,9 @@ class Remote:
         raise RemoteError(detail, hint, response.status_code)
 
     def get(self, path: str, **params: str) -> dict:
+        response = self.request("GET", path, params=params or None)
         try:
-            body = self.request("GET", path, params=params or None).json()
+            body = response.json()
         except ValueError:
             body = None
         if not isinstance(body, dict):
@@ -280,5 +314,12 @@ def remote(env: Mapping[str, str] | None = None) -> Remote:
             f"{ENV_URL} is {wanted} but you are signed in to {login.server}.",
             _RE_LOGIN,
         )
-    client = httpx.Client(timeout=_TIMEOUT, follow_redirects=False)
+    # Plain http (loopback only) is never sent through a proxy named in the
+    # environment: a token would leave the machine in the clear. https keeps
+    # the environment's proxy and CA settings.
+    client = httpx.Client(
+        timeout=_TIMEOUT,
+        follow_redirects=False,
+        mounts={"http://": httpx.HTTPTransport()},
+    )
     return Remote(login, client, env)

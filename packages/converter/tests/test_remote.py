@@ -116,11 +116,112 @@ def test_the_login_path_falls_back_to_the_home_config(tmp_path):
 def test_no_file_or_a_broken_one_is_not_signed_in(tmp_path, content):
     if content is not None:
         p = login_path(ENV(tmp_path))
-        p.parent.mkdir(parents=True)
+        p.parent.mkdir(parents=True, mode=0o700)
         p.write_text(content)
+        p.chmod(0o600)
     with pytest.raises(NotSignedIn) as e:
         load(ENV(tmp_path))
     assert "htrflow-campaigns login" in e.value.hint
+    assert "read by others" not in e.value.detail
+
+
+def test_a_pathologically_nested_file_is_not_signed_in(tmp_path):
+    save(LOGIN, ENV(tmp_path))
+    login_path(ENV(tmp_path)).write_text("[" * 100_000)
+    with pytest.raises(NotSignedIn):
+        load(ENV(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "which, mode", [("file", 0o644), ("file", 0o640), ("dir", 0o755), ("dir", 0o750)]
+)
+def test_a_login_others_could_read_is_not_used(tmp_path, which, mode):
+    save(LOGIN, ENV(tmp_path))
+    p = login_path(ENV(tmp_path))
+    (p if which == "file" else p.parent).chmod(mode)
+    with pytest.raises(NotSignedIn) as e:
+        load(ENV(tmp_path))
+    assert (
+        e.value.detail
+        == "The stored sign-in could be read by others, so it is not used."
+    )
+    assert e.value.hint == "Sign in again: htrflow-campaigns login"
+    clean(e.value)
+
+
+def test_save_does_not_write_through_a_symlink_at_the_temporary_name(tmp_path):
+    p = login_path(ENV(tmp_path))
+    p.parent.mkdir(parents=True, mode=0o700)
+    victim = tmp_path / "victim"
+    victim.write_text("keep")
+    (p.parent / f".login.json.{os.getpid()}.tmp").symlink_to(victim)
+    save(LOGIN, ENV(tmp_path))
+    assert victim.read_text() == "keep"
+    assert load(ENV(tmp_path)) == LOGIN
+
+
+def test_a_path_that_does_not_start_with_a_slash_is_refused_before_any_request(
+    tmp_path,
+):
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json={})
+
+    r = Remote(LOGIN, client_for(handler), ENV(tmp_path))
+    for path in ("@evil.example/v1", "v1/whoami", ""):
+        with pytest.raises(ValueError):
+            r.get(path)
+    assert seen == []
+
+
+@pytest.mark.parametrize("expires_in", ["inf", "nan", -5, 0, "abc", None, [1]])
+def test_an_odd_expires_in_is_clamped_to_a_minute(tmp_path, expires_in):
+    def handler(request):
+        if request.url == httpx.URL(LOGIN.token_endpoint):
+            return httpx.Response(
+                200, json={"access_token": "NEW-ACCESS", "expires_in": expires_in}
+            )
+        return httpx.Response(200, json={})
+
+    r = Remote(
+        replace(LOGIN, expires_at=5.0),
+        client_for(handler),
+        ENV(tmp_path),
+        now=lambda: 100.0,
+    )
+    r.get("/v1/whoami")
+    assert r.login.expires_at == 160.0
+
+
+def _proxied(monkeypatch):
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+    for name in ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.setenv(name, "http://proxy.example:3128")
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:3128")
+
+
+@pytest.mark.parametrize("server", ["http://localhost:8083", "http://127.0.0.1:8083"])
+def test_plain_http_never_goes_through_a_proxy_but_https_keeps_it(
+    tmp_path, monkeypatch, server
+):
+    _proxied(monkeypatch)
+    save(replace(LOGIN, server=server), ENV(tmp_path))
+    c = remote(ENV(tmp_path))._client
+    # leans on httpx's private transport selection
+    for url in (server + "/v1/whoami", "http://idp.example/token"):
+        assert (
+            c._transport_for_url(httpx.URL(url))
+            is c._mounts[next(k for k in c._mounts if k.pattern == "http://")]
+        )
+        assert c._transport_for_url(httpx.URL(url))._pool.__class__.__name__ == (
+            "ConnectionPool"
+        )
+    assert c._transport_for_url(
+        httpx.URL("https://h.example")
+    )._pool.__class__.__name__ == ("HTTPProxy")
 
 
 def test_a_login_file_with_a_plain_http_server_is_not_signed_in(tmp_path):

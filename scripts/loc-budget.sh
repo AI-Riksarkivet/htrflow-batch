@@ -930,7 +930,10 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 5140
 # stored login (0600 file in a 0700 directory, written whole), and the Remote
 # that refreshes an expiring token and turns every refusal into the server's
 # two sentences. No command yet; cli.py is untouched.
-check converter "$(count packages/converter/src -name '*.py')" 8099
+# 8099 -> 8140 (2026-11-17, Task 4 review): load() refuses a login file or
+# directory others could read, plain http never goes through a proxy, save's
+# temporary file is exclusive, and odd expires_in / request paths are handled.
+check converter "$(count packages/converter/src -name '*.py')" 8140
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
