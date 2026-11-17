@@ -74,7 +74,7 @@ def _object(response: httpx.Response, what: str) -> dict:
     error code are ever shown."""
     try:
         body = response.json()
-    except ValueError:
+    except (ValueError, RecursionError):  # not JSON, or nested past the parser
         body = None
     if response.is_success and isinstance(body, dict):
         return body
@@ -230,7 +230,7 @@ def device_login(
         failures = 0
         try:
             body = response.json()
-        except ValueError:
+        except (ValueError, RecursionError):
             body = None
         if not isinstance(body, dict):
             raise RemoteError(

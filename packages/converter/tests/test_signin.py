@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from htrflow_converter import signin
-from htrflow_converter.remote import RemoteError
+from htrflow_converter.remote import Login, NotSignedIn, Remote, RemoteError
 from htrflow_converter.signin import device_login, too_old
 
 SERVER = "https://h.example"
@@ -380,3 +380,71 @@ def test_slow_down_adds_five_and_stops_at_sixty():
     run(Provider([slow] * 14 + [TOKENS]), clock)
     assert clock.slept[:4] == [5, 10, 15, 20]
     assert max(clock.slept) == 60 and clock.slept[-1] == 60
+
+
+DEEP = b"[" * 100_000
+
+
+def _deep_at(url: str, status: int = 200):
+    """A provider whose answer at ``url`` is JSON nested past the parser."""
+
+    class P(Provider):
+        def __call__(self, request):
+            if str(request.url) == url:
+                self.requests.append(request)
+                return httpx.Response(status, content=DEEP)
+            return super().__call__(request)
+
+    return P([TOKENS])
+
+
+def _remote(handler, expires_at: float = 4e9) -> Remote:
+    login = Login(SERVER, ISSUER, "cli", TOKEN_URL, "AT", "RT", expires_at)
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    return Remote(login, client, {"XDG_CONFIG_HOME": "/nonexistent"}, lambda: 0.0)
+
+
+def _deep(request):
+    return httpx.Response(200, content=DEEP)
+
+
+@pytest.mark.parametrize(
+    "go, detail",
+    [
+        (
+            lambda: run(_deep_at(f"{SERVER}/v1/login")),
+            "the server answered with something this CLI cannot read.",
+        ),
+        (
+            lambda: run(_deep_at(f"{ISSUER}/.well-known/openid-configuration")),
+            "The sign-in service answered with something this CLI cannot read.",
+        ),
+        (
+            lambda: run(_deep_at(DEVICE_URL)),
+            "The sign-in service answered with something this CLI cannot read.",
+        ),
+        (
+            lambda: run(_deep_at(TOKEN_URL)),
+            "The sign-in service answered with something this CLI cannot read.",
+        ),
+        (
+            lambda: _remote(_deep, expires_at=5.0).get("/v1/whoami"),
+            "The sign-in service refused to renew your sign-in.",
+        ),
+        (
+            lambda: _remote(_deep).get("/v1/whoami"),
+            "the server answered with something this CLI cannot read.",
+        ),
+        (
+            lambda: _remote(lambda r: httpx.Response(500, content=DEEP)).get("/v1"),
+            "the server answered 500",
+        ),
+    ],
+    ids=["login", "discovery", "device", "token", "refresh", "answer", "refusal"],
+)
+def test_json_nested_too_deep_is_an_unreadable_answer(go, detail):
+    with pytest.raises(RemoteError) as e:
+        go()
+    assert e.value.detail == detail
+    if "renew" in detail:
+        assert isinstance(e.value, NotSignedIn)

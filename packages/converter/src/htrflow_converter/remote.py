@@ -179,7 +179,7 @@ def _body(response: httpx.Response) -> tuple[str, str]:
         if isinstance(body, dict) and isinstance(body.get("detail"), str):
             hint = body.get("hint")
             return body["detail"], hint if isinstance(hint, str) else ""
-    except ValueError:
+    except (ValueError, RecursionError):  # not JSON, or nested past the parser
         pass
     return f"the server answered {response.status_code}", ""
 
@@ -254,7 +254,7 @@ class Remote:
                 or not isinstance(new_refresh, str)
             ):
                 raise ValueError
-        except (ValueError, KeyError, TypeError):
+        except (ValueError, KeyError, TypeError, RecursionError):
             raise NotSignedIn(
                 "The sign-in service refused to renew your sign-in.", _RE_LOGIN
             ) from None
@@ -303,7 +303,7 @@ class Remote:
         response = self.request("GET", path, params=params or None)
         try:
             body = response.json()
-        except ValueError:
+        except (ValueError, RecursionError):
             body = None
         if not isinstance(body, dict):
             raise RemoteError(
