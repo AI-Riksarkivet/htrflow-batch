@@ -149,14 +149,25 @@ def test_a_login_others_could_read_is_not_used(tmp_path, which, mode):
     clean(e.value)
 
 
-def test_save_does_not_write_through_a_symlink_at_the_temporary_name(tmp_path):
+def test_save_does_not_write_through_a_symlink_at_the_temporary_name(
+    tmp_path, monkeypatch
+):
+    """The first name ``mkstemp`` tries is planted as a symlink to a file
+    the user owns; an exclusive create refuses it and moves on, so the
+    victim is untouched and the login lands."""
+    import tempfile
+
     p = login_path(ENV(tmp_path))
     p.parent.mkdir(parents=True, mode=0o700)
     victim = tmp_path / "victim"
     victim.write_text("keep")
-    (p.parent / f".login.json.{os.getpid()}.tmp").symlink_to(victim)
+    planted = p.parent / ".login.json.planted"
+    planted.symlink_to(victim)
+    names = iter(["planted", "fresh"])
+    monkeypatch.setattr(tempfile, "_get_candidate_names", lambda: names)
     save(LOGIN, ENV(tmp_path))
     assert victim.read_text() == "keep"
+    assert planted.is_symlink() and planted.readlink() == victim
     assert load(ENV(tmp_path)) == LOGIN
 
 
