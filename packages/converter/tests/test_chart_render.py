@@ -2070,6 +2070,7 @@ def test_the_documented_allow_list_admits_every_devstack_image_in_the_namespace(
     copy into their own `<registry>` -- the `<registry>/` the list's own
     sentence adds."""
     page = (REPO / "docs" / "development" / "dev-cluster.md").read_text()
+    assert "docker push <registry>/keycloak:<version>" in page
     listed = re.search(r"security\.allowedImageRepos='\{([^}]*)\}'", page)
     assert listed, "dev-cluster.md no longer documents allowedImageRepos"
     repos = [r.strip().strip("/") for r in listed.group(1).split(",")]

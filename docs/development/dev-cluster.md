@@ -267,6 +267,114 @@ make psa-labels
 The same `--reset-then-reuse-values` rule holds for `charts/htrflow-devstack`
 ([Deploy → Upgrading](../getting-started/deploy.md#upgrading)).
 
+## The campaigns API on the dev cluster
+
+The campaigns API checks a sign-in token on every request
+([CLI → Signing in](../reference/cli.md#signing-in)). On a dev cluster the
+sign-in service is the devstack's Keycloak: a **development** Keycloak, in
+Keycloak's development mode, with its database on an emptyDir and its
+passwords taken from the chart values. Never point real users at it. Its
+realm holds the device sign-in client `htrflow-cli`, the group
+`htr-operators`, the user `htr-dev` in that group and the user
+`htr-outsider` outside it.
+
+**Images.** Build the campaigns image and push it; push a copy of
+upstream's Keycloak too, so that the namespace's image policy, which admits
+`<registry>/`, admits it (or add its repository to
+`security.allowedImageRepos`). Pin both by the digest each push prints:
+
+```bash
+make build-campaigns                         # tags <registry>/htrflow-campaigns:<tag>
+docker push <registry>/htrflow-campaigns:<tag>
+docker pull quay.io/keycloak/keycloak@sha256:<digest>
+docker tag quay.io/keycloak/keycloak@sha256:<digest> <registry>/keycloak:<version>
+docker push <registry>/keycloak:<version>
+```
+
+The Keycloak image must have a build for the node's architecture.
+
+**The Keycloak.** Keep its values in a file outside the repository, with
+two passwords of your own; the chart has no default for either and refuses
+to render without them:
+
+```yaml
+devStack:
+  insecureDefaults: true
+keycloak:
+  enabled: true
+  image: <registry>/keycloak@sha256:<digest>
+  adminPassword: <a password of your own>   # the master realm's admin
+  userPassword: <a password of your own>    # htr-dev and htr-outsider
+```
+
+```bash
+helm upgrade htr-devstack charts/htrflow-devstack -n <namespace> \
+  --reset-then-reuse-values -f <keycloak-values>.yaml
+```
+
+Both passwords end up in the ConfigMap `keycloak-realm` in the namespace,
+readable by anyone who can read ConfigMaps there. That is acceptable for
+this development realm only. A restart of the Keycloak pod imports the realm
+afresh and forgets every session, so you sign in again.
+
+**The API.** Turn it on in the main release, reached by port-forward
+instead of an Ingress:
+
+```bash
+helm upgrade htr charts/htrflow-batch -n <namespace> --reset-then-reuse-values \
+  --set api.enabled=true --set api.allowNoIngress=true \
+  --set api.image=<registry>/htrflow-campaigns@sha256:<digest> \
+  --set api.issuer=<keycloak.hostname>/realms/htrflow \
+  --set api.jwksUrl=http://keycloak:8080/realms/htrflow/protocol/openid-connect/certs \
+  --set api.audience=htrflow-batch --set api.clientId=htrflow-cli \
+  --set api.group=htr-operators \
+  --set api.network.identityInNamespace=true
+```
+
+`<keycloak.hostname>` is the devstack value of that name: by default a
+loopback address on port 18080, the address the port-forward below gives
+your workstation. Keycloak builds every token's issuer from it, however a
+request reaches it, while the API pod reads the signing keys from the
+Keycloak Service (`api.jwksUrl`), which Keycloak answers on the address the
+request came in on. `api.network.identityInNamespace` lets the API pod reach
+the Keycloak pod on 8080, and lets nothing else in; the Keycloak pod reaches
+nothing itself.
+
+**Signing in.** Forward both Services, each in its own terminal:
+
+```bash
+kubectl -n <namespace> port-forward svc/keycloak 18080:8080
+kubectl -n <namespace> port-forward svc/htrflow-api 8083:8083
+```
+
+Then, with `<loopback>` the loopback address the port-forwards listen on:
+
+```bash
+uv run htrflow-campaigns login --server http://<loopback>:8083/control
+uv run htrflow-campaigns whoami
+```
+
+`login` prints a link and a code. Open the link, sign in as `htr-dev` with
+`userPassword`, and accept the access Keycloak asks you to grant; `login`
+then prints `signed in to http://<loopback>:8083/control as htr-dev`.
+`whoami` answers with the user `htr-dev`, the group `htr-operators`, and the
+release's namespace and queue. After `logout`, signing in as `htr-outsider`
+ends with exit code 1 and the sentence `You are not in the group
+htr-operators.`
+
+What this shows about the service:
+
+- A request without a token gets `401`, and the API pod's log holds no
+  token.
+- `whoami` still answers with the Keycloak port-forward stopped: the service
+  checks the token with the signing keys it already read. `login` then
+  fails with a sentence naming the address it could not reach.
+- `kubectl -n <namespace> rollout restart deploy/htrflow-api` needs no new
+  sign-in: the service keeps no state.
+- The API pod mounts no service account token
+  (`automountServiceAccountToken: false`) and runs under the restricted pod
+  security level.
+
 ## Gotchas
 
 - **A node shared with other services may need host-level settings.** Raise
