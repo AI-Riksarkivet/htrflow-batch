@@ -1232,12 +1232,12 @@ check converter "$(count packages/converter/src -name '*.py')" 7815
 # card's chip; app.py +10, the route mounted and /api/v1/version's `search`
 # flag only when HTRFLOW_SOLR_URL is set; kube.py +6, that setting.
 check web       "$(count packages/web/src -name '*.py')" 4154
-# 0 -> 468 (2026-11-17, the campaigns API): a fourth package, the service that
+# 0 -> 501 (2026-11-17, the campaigns API): a fourth package, the service that
 # checks a sign-in token and answers the htrflow-campaigns CLI. It holds the
 # configuration model, the token verifier, and the app: /healthz, /v1/login,
 # /v1/whoami behind one fail-closed guard (an ASGI layer that runs before
-# routing), the error shape and the entry point.
-check api       "$(count packages/api/src -name '*.py')" 468
+# routing, refusing a root path), the error shape and the entry point.
+check api       "$(count packages/api/src -name '*.py')" 501
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
