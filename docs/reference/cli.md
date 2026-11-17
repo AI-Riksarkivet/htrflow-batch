@@ -50,6 +50,9 @@ htrflow-campaigns export --pipeline <id> --namespace <ns>
     [--join-hyphenation] [--user NAME] [--report FILE] [--dry-run]
 ```
 
+The routine for exporting a whole pipeline's volumes, step by step, is in
+[Publish results](../getting-started/export.md).
+
 **What it reads.** Each volume's results at
 `<results-url>/<namespace>/<pipeline>/<volume id>/`, the same place the
 viewer reads them. No campaigns repo is needed: the pipeline is the one the

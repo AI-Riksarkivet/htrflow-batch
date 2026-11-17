@@ -21,6 +21,7 @@ nav = [
     {"Deploy" = "getting-started/deploy.md"},
     {"Run a Campaign" = "getting-started/campaigns.md"},
     {"View Results" = "getting-started/viewing.md"},
+    {"Publish Results" = "getting-started/export.md"},
     {"Troubleshooting" = "getting-started/troubleshooting.md"},
   ]},
   { "How it Works" = [
