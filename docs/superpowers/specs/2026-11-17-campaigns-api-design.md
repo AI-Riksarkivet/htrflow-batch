@@ -1,7 +1,11 @@
 # A campaigns API: people reach the cluster through a service, not a Kubernetes login
 
 Status: design, 2026-11-17. The owner answered its open questions the same
-day; they are in the table below. Not planned, nothing built.
+day; they are in the table below. **Part 1 is built** (the service's
+foundation, signing in and `whoami`; plan
+`docs/superpowers/plans/2026-11-17-campaigns-api-foundation.md`): see
+[Part 1 as built](#part-1-as-built). Reads, the writes, the Kubernetes
+rights and the release are not planned yet.
 
 ## Why
 
@@ -51,6 +55,83 @@ run, and it is the reading the design is built on:
 | Roles | One. Everyone in the group may do everything, removing included. | the owner |
 | Run logs from the command line | In this cut: `campaign logs`. | the owner |
 | The Keycloak client | Shared with htrflow-train. The owner answered "yes" to "shared or its own, and who is asked"; shared is this note's reading of it. The service is the same either way: an issuer, an audience and a group, all chart values. | the owner, as read by this note |
+
+## Part 1 as built
+
+What the first plan built, and what was decided while building it. None of
+these are the owner's rulings; they were made during execution and shown to
+the owner at hand-over. Where this section and the text below differ, this
+section holds.
+
+**Built.** The package `htrflow-api` (settings, the token check, a guard in
+front of every `/v1` path, `GET /v1/login`, `GET /v1/whoami`); in the CLI,
+the stored sign-in, the device sign-in and `login`, `logout`, `whoami`; the
+service as a second program in the `htrflow-campaigns` image; the chart's
+`api.*` values and objects; a development Keycloak in the devstack chart;
+the reference pages, two diagrams and the READMEs. The sign-in was run end
+to end on a local cluster. In this part the service holds no Kubernetes
+rights and mounts no Secret.
+
+**Decided while building.**
+
+- **The guard runs before routing.** Every request at or under `/v1` passes
+  the version check and then the token check, however its route was
+  registered; only `GET /v1/login` is let through. So an unknown `/v1` path
+  or a wrong method without a token is a 401, and a 404 or 405 only with
+  one. A route reads its caller with `Depends(current_identity)`, which
+  raises if the guard did not run.
+- **The service serves its own path prefix** (`HTRFLOW_API_PATH`, the
+  chart's `api.path`, `/control` by default) and refuses any request that
+  arrives with an ASGI root path. The prefix is empty or `/` segments of
+  letters, digits, `-` and `_`, in the service and in the chart alike.
+- **`/healthz` is at the root**, never under the prefix.
+- **`logout` exists.** It removes the stored sign-in and does not call the
+  sign-in service.
+- **The stored sign-in is refused when others could read it** (the file or
+  its directory), and plain-http requests never go through a proxy from the
+  environment.
+- **Everything the CLI prints that came from the network is made plain**
+  (no control characters, a length cap), and an answer from the sign-in
+  service is shown as its status and a short error code only.
+- **The wait between sign-in polls is held to 5 to 60 seconds**, whatever
+  the sign-in service asks for.
+- **The CLI asks for the scopes `openid profile`.**
+- **Thirty seconds of clock tolerance** on a token's expiry and
+  not-before; `iat` is not checked. A token not yet valid says the clocks
+  disagree.
+- **Addresses.** The issuer is `https://`, or `http://` to a loopback
+  address only; no user name, query or fragment. The key address, when
+  set, is `https://` unless the sign-in service is in the namespace.
+  Service, chart and CLI hold the same rules, and a test holds the chart
+  to the service.
+- **A client version the service cannot read is not "too old"**; one older
+  than the minimum is refused with 426 and both versions.
+- **A 500 is logged by the error's type and place only**, never its
+  message, so nothing a request carried can reach the log.
+- **Who may reach the development Keycloak is the devstack chart's to
+  say**: its own NetworkPolicy admits the API's pods; the main chart only
+  gives the API pod the way out.
+- **The release gate lists `htrflow-api`** among the programs the pinned
+  `htrflow-campaigns` image must hold. Until a release re-pins that image,
+  the published-images check is red on `main`.
+
+**Left open from part 1's reviews**, small, for whoever writes the next
+plan:
+
+- A 500's log line names only the innermost frame; every frame as
+  `file:line in function`, without messages, would find a bug sooner.
+- The chart and the service still disagree on a few edge inputs (unusual
+  whitespace in an address, a port above 65535): the chart renders and the
+  pod then refuses to start.
+- The CLI has no cap on the size of an answer, and a server that trickles
+  one holds a request open for the timeout of each read.
+- `api.path` may be set to one of the page's static prefixes.
+- The development Keycloak's admin password sits in a ConfigMap.
+- The `helm upgrade` commands on the dev-cluster page have not been run;
+  the same templates were applied on their own.
+- The user name from the token is the sign-in service's text. Before it
+  becomes `applied-by` on an object, it has to fit a label or annotation
+  value; names put into request paths have to be quoted.
 
 ## Goals
 
@@ -360,7 +441,9 @@ sign-in later.
   then runs the device sign-in: it prints a link and a code and waits, so
   it works over SSH. The token and its refresh token are stored
   in the user's configuration directory, readable by the user only. The
-  server address is stored beside them, or read from `HTRFLOW_API_URL`.
+  server address is stored beside them. `HTRFLOW_API_URL` names the server
+  for `login`; afterwards, when it is set, it must equal the stored server
+  or the CLI says to sign in again.
 - **If Keycloak is down**, nobody can sign in, and tokens the service can
   still verify from cached keys work until they expire.
 
@@ -401,11 +484,16 @@ address. Through the service none of it is a person's to send.
   in under one new block. The test that holds a repo's `converter.yaml` to
   the chart has nothing to hold for the service.
 - New chart values: on/off, the image, the address path, the issuer, the
-  audience, the group, the body size cap.
+  key address (when the pod reaches the provider elsewhere than people do),
+  the audience, the client id, the group, the two claim names, and, with
+  the writes, the body size cap.
 - **The address is the web front's Ingress, with TLS, and nothing else.**
   The Service is ClusterIP and has no NodePort, because a token must not
   travel unencrypted. The chart refuses to turn the service on without
-  `web.ingress.enabled` and a TLS Secret. The path is a chart value and
+  `web.ingress.enabled` and a TLS Secret, unless `api.allowNoIngress` is
+  set, which renders no Ingress at all (a port-forward is then the only way
+  in). The service has an Ingress object of its own on the web front's
+  host. The path is a chart value and
   collides with nothing the web front serves (`/api/v1`, `/results`, the
   page's own routes).
 - **The CLI refuses a server address that is not HTTPS**, with one
@@ -460,11 +548,13 @@ Direct mode is not changed, and the two models can meet in one namespace.
 - **On the dev cluster** the devstack chart gains a Keycloak with one
   imported realm (the client, the group, a test user), behind the same
   switch as the devstack's other insecure defaults. The service is reached
-  by port-forward. One thing is not known and is step 1's to find out: a
-  token's issuer has to read the same from the developer's machine and
-  from the service's pod, and the devstack has no ingress controller. A
-  fixed host name for Keycloak may do; if not, the devstack gains an
-  Ingress with TLS. The whole path is run there: `login`, add a pipeline, start a campaign on the demo example
+  by port-forward. A token's issuer has to read the same from the
+  developer's machine and from the service's pod. Part 1 settled how: the
+  Keycloak is given a fixed host name, the loopback address of the
+  developer's port-forward, and answers back-channel requests on the
+  address they came in on, so the pod reads the keys from the in-cluster
+  Service (`api.jwksUrl`). No Ingress is needed in the devstack. The whole
+  path is run there: `login`, add a pipeline, start a campaign on the demo example
   images, list, pause, resume, retry, remove.
 - **`make ci`** passes before any push.
 
