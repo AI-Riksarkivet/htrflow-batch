@@ -89,7 +89,9 @@ spec:
         - name: build-dir
           image: {{ $kc.image }}
           imagePullPolicy: {{ include "htrflow-devstack.pullPolicy" $kc.image }}
-          command: ["/bin/sh", "-c", "cp -a /opt/keycloak/lib/quarkus/. /build/"]
+          # Plain -R: the emptyDir's root belongs to root, so preserving its
+          # times or owner (cp -a) is refused under a non-root uid.
+          command: ["/bin/sh", "-c", "cp -R /opt/keycloak/lib/quarkus/. /build/"]
           securityContext:
             {{- include "htrflow-devstack.restrictedContainer" . | nindent 12 }}
           volumeMounts:
