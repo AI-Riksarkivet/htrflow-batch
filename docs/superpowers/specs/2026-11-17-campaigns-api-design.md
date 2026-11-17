@@ -1,6 +1,7 @@
 # A campaigns API: people reach the cluster through a service, not a Kubernetes login
 
-Status: design, 2026-11-17. Proposed, not approved, not planned, nothing built.
+Status: design, 2026-11-17. The owner answered its open questions the same
+day; they are in the table below. Not planned, nothing built.
 
 ## Why
 
@@ -46,7 +47,10 @@ run, and it is the reading the design is built on:
 | Does it keep state? | No. Every answer is read from Jobs, ConfigMaps, Kueue and the results store at request time. | this note |
 | Whose is `converter.yaml`? | The chart's, whole. The service reads the one the chart renders; nobody uploads one. | this note |
 | Direct mode | Kept, unchanged: `apply`, `retry` and `pipeline add` with a kubeconfig, and the Argo CD hook. The new commands exist only through the service. | this note |
-| Changing a running campaign | Not through the service in this cut. More volumes are a new campaign. | this note, **open for the owner** |
+| Changing a running campaign | Not through the service in this cut. More volumes are a new campaign. | this note, accepted by the owner |
+| Roles | One. Everyone in the group may do everything, removing included. | the owner |
+| Run logs from the command line | In this cut: `campaign logs`. | the owner |
+| The Keycloak client | Shared with htrflow-train. The owner answered "yes" to "shared or its own, and who is asked"; shared is this note's reading of it. The service is the same either way: an issuer, an audience and a group, all chart values. | the owner, as read by this note |
 
 ## Goals
 
@@ -72,8 +76,8 @@ run, and it is the reading the design is built on:
 - The shared pool's upload and job API of the multi-tenant design (T03,
   T04). This service is one namespace's door, for its own team.
 - Changing a running campaign (appending volumes, changing its window).
-- A `logs` command. The run log stays where it is read today, on the web
-  page.
+- A warm-up's log. It is not shipped to the store; the warm-up's state and
+  reason are on the pipeline's row.
 - Building or pushing images.
 
 ## Anti-goals
@@ -145,6 +149,7 @@ htrflow-campaigns pipeline remove high-prio-v5
 htrflow-campaigns campaign start  campaigns/low-prio.yaml
 htrflow-campaigns campaign list
 htrflow-campaigns campaign show   low-prio [--failed]
+htrflow-campaigns campaign logs   low-prio VOLUME [--follow]
 htrflow-campaigns campaign pause  low-prio
 htrflow-campaigns campaign resume low-prio
 htrflow-campaigns campaign retry  low-prio [--pipeline ID] [--include-permanent]
@@ -193,6 +198,7 @@ check, and the sign-in details `login` has to read before it has one.
 | `DELETE /v1/pipelines/{id}` | removes the ConfigMap and warm-up Job | `pipeline remove` |
 | `GET /v1/campaigns` | the rows `htrflow-web` serves at `/api/v1/jobs` | `campaign list` |
 | `GET /v1/campaigns/{name}` | the detail `htrflow-web` serves, for each part of the campaign: volumes, states, reasons | `campaign show` |
+| `GET /v1/campaigns/{name}/volumes/{volume}/log` | that volume's run log from the store, as text, streamed | `campaign logs` |
 | `PUT /v1/campaigns/{name}` | body: a campaign file. Validates, renders, applies | `campaign start` |
 | `POST /v1/campaigns/{name}/pause` | stops admitting its pods | `campaign pause` |
 | `POST /v1/campaigns/{name}/resume` | admits them again | `campaign resume` |
@@ -313,6 +319,24 @@ the command line cannot disagree. Four things are not simply reuse:
 
 `pipeline list` has no projection today; it is new, and small: the
 pipeline ConfigMaps, their warm-up Jobs, and which campaigns name them.
+
+**`campaign logs`.** A volume's run log is one object in the store,
+`<namespace>/status/logs/<pipeline>/<volume>.txt`, which the pod writes
+every 15 seconds while it runs and once more when it ends. It is the log
+the web page shows.
+
+- The service finds the campaign's pipeline, refuses a volume the campaign
+  does not list, builds the key itself and streams the object. The client
+  names a campaign and a volume, never a key.
+- The key is per pipeline and volume, not per campaign. A volume run again
+  on the same pipeline (a retry) has one log, the latest run's, and the
+  command says which campaign it was asked about, not which wrote it.
+- A volume that has not started has no log, and the answer says so.
+- `--follow` asks again as the pod writes and prints what is new, until
+  the volume ends. The log is capped by the pod, which drops the middle of
+  a very long one; how `--follow` behaves across that is the builder's.
+- The log is what the pod shipped, with URLs already redacted there. The
+  service adds and removes nothing.
 
 ## Identity
 
@@ -448,7 +472,7 @@ Direct mode is not changed, and the two models can meet in one namespace.
 
 1. A spike on the dev cluster: Keycloak in the devstack, the token check,
    `login` and `whoami`, and the issuer question under Testing settled.
-2. The read calls and commands.
+2. The read calls and commands, `campaign logs` among them.
 3. `pipeline add` and `pipeline remove`, with the stored pipeline file.
 4. `campaign start` and `campaign remove`.
 5. `campaign pause` and `campaign resume`.
@@ -472,14 +496,8 @@ Direct mode is not changed, and the two models can meet in one namespace.
   more than needed.
 - The exact JSON of each answer, beyond "the rows `htrflow-web` serves".
 
-## Open questions for the owner
+## Still to ask
 
-1. **Changing a running campaign.** Direct `apply` can append volumes and
-   change a window. This cut offers neither through the service. Is that
-   acceptable, or is one of them needed from the start?
-2. **The Keycloak client.** One shared with htrflow-train, or one of its
-   own? And who is asked for it.
-3. **One role or two.** Everyone in the group may remove. Is a read-only
-   group wanted?
-4. **`logs` from the command line.** Left out; the web page has the run
-   log. Wanted in this cut?
+- **Who creates the Keycloak client and the group.** Whoever runs the
+  organisation's Keycloak, asked by the owner. It is needed for the first
+  cluster (step 9), not for the work before it.
