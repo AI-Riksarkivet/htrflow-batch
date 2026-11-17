@@ -66,8 +66,9 @@ run, and it is the reading the design is built on:
 - `export`. It reads results through the results proxy and writes to the
   publishing share from the person's machine.
 - Deleting or moving anything in the results store.
-- Buttons on the web page. `htrflow-web` and the front end do not change,
-  and the page keeps its store login.
+- Buttons on the web page. The page keeps its store login, and
+  `htrflow-web` changes in one place only: how it tells a paused campaign
+  from a queued one (see Reads).
 - The shared pool's upload and job API of the multi-tenant design (T03,
   T04). This service is one namespace's door, for its own team.
 - Changing a running campaign (appending volumes, changing its window).
@@ -152,36 +153,46 @@ htrflow-campaigns campaign remove low-prio
 
 ```text
 $ htrflow-campaigns campaign list
-NAME          PIPELINE       STATE     DONE  FAILED  TOTAL  STARTED BY  STARTED
-low-prio      high-prio-v5   running    412       3    958  <user>      2026-11-10 09:14
-medium-prio   high-prio-v5   paused    1630    1023   2653  <user>      2026-10-22 15:02
-printed-1     printed-v2     finished    30       0     30  <user>      2026-10-21 11:40
+CAMPAIGN      PART  PIPELINE       STATE     DONE  FAILED  TOTAL  STARTED BY  STARTED
+low-prio         -  high-prio-v5   running    412       3    958  <user>      2026-11-10 09:14
+medium-prio      1  high-prio-v5   paused    1630     370   2000  <user>      2026-10-22 15:02
+medium-prio      2  high-prio-v5   queued       0       0    653  <user>      2026-10-22 15:02
+printed-1        -  printed-v2     finished    30       0     30  <user>      2026-10-21 11:40
 ```
+
+A row is a Job, as on the web page: a campaign split into parts has one row
+per part. The commands take the campaign's name and act on every part.
 
 - Every command that changes something takes `--dry-run`, which prints what
   would be done and changes nothing.
 - `remove` (both kinds) prints what it would delete and asks; `--yes`
   answers for a script.
 - `--json` on the read commands prints what the service sent.
-- The top-level `retry CAMPAIGN` stays as a second spelling of
-  `campaign retry`, so nobody's habit breaks. Through the service it needs
-  no `--namespace` and no results login.
-- `pipeline add` through the service takes no `--like` (see below).
+- **Two commands exist in both modes: `retry` and `pipeline add`.** The
+  rule is `--namespace`. Given, the command runs directly with a
+  kubeconfig, exactly as today (both require the flag today, so every
+  existing script keeps its meaning). Left out, it goes through the
+  service, and with no server known it is refused with both ways named.
+  `--like` and `--user` belong to the direct form only. `campaign retry`
+  is a second spelling of the service form.
+- Every other new command exists only through the service.
 - `validate` and `render` stay offline commands on a folder, as today.
 
 ## The interface
 
-HTTPS and JSON under `/v1`. Every call but the health check needs a token.
+HTTPS and JSON under `/v1`. Every call needs a token but two: the health
+check, and the sign-in details `login` has to read before it has one.
 
 | Call | What it does | Command |
 |---|---|---|
+| `GET /v1/login` | no token: the issuer, the client id, the audience, the server's version and the oldest client it accepts. Nothing in it is secret | `login` |
 | `GET /v1/whoami` | user, groups, namespace, queue, server version | `whoami` |
 | `GET /v1/pipelines` | every pipeline in the namespace: id, image, size, warm-up state, whether campaigns use it | `pipeline list` |
 | `GET /v1/pipelines/{id}` | the same row, plus the pipeline file as stored | `pipeline show` |
 | `PUT /v1/pipelines/{id}` | body: a pipeline file. Validates, renders the ConfigMap and warm-up Job, applies them | `pipeline add` |
 | `DELETE /v1/pipelines/{id}` | removes the ConfigMap and warm-up Job | `pipeline remove` |
 | `GET /v1/campaigns` | the rows `htrflow-web` serves at `/api/v1/jobs` | `campaign list` |
-| `GET /v1/campaigns/{name}` | the detail `htrflow-web` serves for one campaign: volumes, states, reasons | `campaign show` |
+| `GET /v1/campaigns/{name}` | the detail `htrflow-web` serves, for each part of the campaign: volumes, states, reasons | `campaign show` |
 | `PUT /v1/campaigns/{name}` | body: a campaign file. Validates, renders, applies | `campaign start` |
 | `POST /v1/campaigns/{name}/pause` | stops admitting its pods | `campaign pause` |
 | `POST /v1/campaigns/{name}/resume` | admits them again | `campaign resume` |
@@ -205,7 +216,9 @@ HTTPS and JSON under `/v1`. Every call but the health check needs a token.
 
 Each write takes the Lease `apply` takes today
 (`htrflow-campaigns-apply`), so two writes, or a write and a direct apply,
-never interleave. Each one first sends its objects as a server-side dry
+never interleave. Taking it replaces the Lease's marks, so the service
+writes back the marks it found, as `retry` does today: it neither wipes
+them nor vouches for an install it has not seen. Each write first sends its objects as a server-side dry
 run, so an admission refusal (Kyverno, quota, an immutable field) is
 reported before anything exists.
 
@@ -269,12 +282,37 @@ the answer names them.
 
 The rows come from the code `htrflow-web` already runs
 (`htrflow_web.projection` over the same Kubernetes reads), so the page and
-the command line cannot disagree. Two limits:
+the command line cannot disagree. Four things are not simply reuse:
 
-- The service's reads write nothing. `htrflow-web` remains the only writer
-  of the status record.
-- `pipeline list` has no projection today; it is new, and small: the
-  pipeline ConfigMaps, their warm-up Jobs, and which campaigns name them.
+- **The unit is the Job.** The page's rows and detail are per Job, and
+  there is no per-campaign total to reuse. The service adds none: `list`
+  prints the rows as they are, and `show` prints each part's detail in
+  turn (`--failed` runs through all parts).
+- **The service writes the status record, as `apply` does.** A campaign
+  whose Job has been removed by its time-to-live is listed only from its
+  status record. Today two things write that record: the page, while
+  someone has it open, and every `apply`. Through the service nobody
+  applies, so the service writes it on `campaign list`, on
+  `campaign show` and before every write to a campaign, with the
+  converter's own function. A campaign that finishes and is removed by its
+  time-to-live with no page view and no call in between leaves no record.
+  That gap exists today and is not closed here.
+- **Paused is read from the Workload, in one place.** The page calls a
+  suspended Job with nothing done "Queued" and one with something done
+  "Paused", which is a guess. After `campaign pause` a person has to see
+  "paused". The projection gains the one fact that decides it
+  (`Workload.spec.active`), and both the page and the service use it. For
+  `htrflow-web` that is one more read, and `list` on Workloads in its
+  Role.
+- **Page counts come from the store with the namespace's Secret.** The
+  page reads each volume's progress through the results proxy with the
+  viewer's own login. The service has no such login, so its store reader
+  feeds the detail rows as well as `retry`. A group member therefore sees
+  counts and failure reasons, never result files, whatever their store
+  account may read.
+
+`pipeline list` has no projection today; it is new, and small: the
+pipeline ConfigMaps, their warm-up Jobs, and which campaigns name them.
 
 ## Identity
 
@@ -291,8 +329,12 @@ sign-in later.
   include it may make every call. A valid token without it is refused with
   the group's name in the sentence. There is one role in this cut: reading
   and removing need the same group.
-- **`login`.** The device sign-in: the CLI prints a link and a code and
-  waits, so it works over SSH. The token and its refresh token are stored
+- **The claims.** The user name is `preferred_username` and the groups are
+  the `groups` claim, a list of names. Both claim names are chart values
+  with those defaults.
+- **`login`.** The CLI reads `GET /v1/login` from the server it is given,
+  then runs the device sign-in: it prints a link and a code and waits, so
+  it works over SSH. The token and its refresh token are stored
   in the user's configuration directory, readable by the user only. The
   server address is stored beside them, or read from `HTRFLOW_API_URL`.
 - **If Keycloak is down**, nobody can sign in, and tokens the service can
@@ -313,7 +355,8 @@ all chart values.
   chart's `rbac-scope` policy holds this identity to its own objects, as it
   does today.
 - **The results store.** It mounts the namespace's store Secret and only
-  ever reads with it: the per-volume files `retry` and the rows need.
+  ever reads with it: the per-volume files `retry` and the rows need
+  (`manifest.json`, `progress.json`, the run log's outcome).
 - **Network.** In from the ingress controller only. Out to the Kubernetes
   API, the results store, Keycloak's key endpoint and DNS.
 - **The pod** meets what the namespace demands of every pod: the pod
@@ -335,9 +378,15 @@ address. Through the service none of it is a person's to send.
   the chart has nothing to hold for the service.
 - New chart values: on/off, the image, the address path, the issuer, the
   audience, the group, the body size cap.
-- The address is on the web front's host and ingress, under a path of its
-  own that collides with nothing the web front serves (`/api/v1`,
-  `/results`, the page's own routes). The path is a chart value.
+- **The address is the web front's Ingress, with TLS, and nothing else.**
+  The Service is ClusterIP and has no NodePort, because a token must not
+  travel unencrypted. The chart refuses to turn the service on without
+  `web.ingress.enabled` and a TLS Secret. The path is a chart value and
+  collides with nothing the web front serves (`/api/v1`, `/results`, the
+  page's own routes).
+- **The CLI refuses a server address that is not HTTPS**, with one
+  exception: a loopback address, which is how the dev cluster is reached
+  (`kubectl port-forward` to the Service).
 
 ## Beside a direct apply
 
@@ -386,21 +435,26 @@ Direct mode is not changed, and the two models can meet in one namespace.
   refusal named under "What each write does".
 - **On the dev cluster** the devstack chart gains a Keycloak with one
   imported realm (the client, the group, a test user), behind the same
-  switch as the devstack's other insecure defaults. The whole path is run
-  there: `login`, add a pipeline, start a campaign on the demo example
+  switch as the devstack's other insecure defaults. The service is reached
+  by port-forward. One thing is not known and is step 1's to find out: a
+  token's issuer has to read the same from the developer's machine and
+  from the service's pod, and the devstack has no ingress controller. A
+  fixed host name for Keycloak may do; if not, the devstack gains an
+  Ingress with TLS. The whole path is run there: `login`, add a pipeline, start a campaign on the demo example
   images, list, pause, resume, retry, remove.
 - **`make ci`** passes before any push.
 
 ## Order of work
 
-1. Keycloak in the devstack, the token check, `login` and `whoami`.
+1. A spike on the dev cluster: Keycloak in the devstack, the token check,
+   `login` and `whoami`, and the issuer question under Testing settled.
 2. The read calls and commands.
 3. `pipeline add` and `pipeline remove`, with the stored pipeline file.
 4. `campaign start` and `campaign remove`.
 5. `campaign pause` and `campaign resume`.
 6. `campaign retry` with the store reader.
 7. The chart: Deployment, Service, ingress path, NetworkPolicy, the
-   rendered `converter.yaml`, the Role's added read.
+   rendered `converter.yaml`, the added reads in both Roles.
 8. Documentation: a getting-started page for the commands, the CLI and
    chart references, and the security page's account of who may write.
 9. A release, then the first cluster: the Keycloak client and group, the
