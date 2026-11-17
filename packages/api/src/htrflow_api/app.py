@@ -54,11 +54,25 @@ def _refusal(status: int, detail: str, hint: str, headers=None) -> JSONResponse:
     )
 
 
+_root_path_logged = False
+
+
+def route_path(scope: Scope) -> str:
+    """The path the router matches: ``path`` with ``root_path`` removed, as
+    Starlette's ``get_route_path`` does."""
+    path, root = scope["path"], scope.get("root_path", "")
+    if not root or not path.startswith(root):
+        return path
+    if path == root:
+        return ""
+    return path[len(root) :] if path[len(root)] == "/" else path
+
+
 class _Guard:
     """Runs before routing, for every request at ``v1`` or under ``v1/``,
     whatever the method and however the route was registered (decorator,
     router, mount): the version check, then the token check, then the route.
-    The one exception is ``GET`` or ``HEAD`` on ``v1/login``. Fail-closed: a
+    The one exception is ``GET`` on ``v1/login``. Fail-closed: a
     route added later is guarded without anyone remembering to ask for it."""
 
     def __init__(self, app: ASGIApp, v1: str, verifier: Verifier) -> None:
@@ -68,22 +82,41 @@ class _Guard:
         return path == self.v1 or path.startswith(self.v1 + "/")
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "lifespan" or not self.under_v1(scope["path"]):
+        global _root_path_logged
+        if scope["type"] == "lifespan":
+            return await self.app(scope, receive, send)
+        if scope.get("root_path"):
+            # This service has its own prefix setting and no use for ASGI
+            # root_path; refuse everything, /healthz too, so a pod started
+            # that way never turns ready.
+            if not _root_path_logged:
+                _root_path_logged = True
+                log.error(
+                    "started with a root path (%r), which this service does "
+                    "not support; use HTRFLOW_API_PATH",
+                    scope["root_path"],
+                )
+            if scope["type"] != "http":
+                return await send({"type": "websocket.close", "code": 1011})
+            return await _refusal(500, *_BROKEN)(scope, receive, send)
+        path = route_path(scope)  # the value the router will match
+        if not self.under_v1(path):
             return await self.app(scope, receive, send)
         if scope["type"] != "http":  # nothing here speaks websocket
             return await send({"type": "websocket.close", "code": 1008})
 
         async def no_store(message) -> None:
             if message["type"] == "http.response.start":
-                message.setdefault("headers", []).append(
-                    (b"cache-control", b"no-store")
-                )
+                kept = [
+                    (k, v)
+                    for k, v in message.get("headers", [])
+                    if k.lower() != b"cache-control"
+                ]
+                message["headers"] = [*kept, (b"cache-control", b"no-store")]
             await send(message)
 
         request = Request(scope, receive)
-        open_door = (
-            scope["method"] in ("GET", "HEAD") and scope["path"] == self.v1 + "/login"
-        )
+        open_door = scope["method"] == "GET" and path == self.v1 + "/login"
         if not open_door:
             try:
                 check_client(request)

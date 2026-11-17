@@ -145,12 +145,12 @@ def test_with_a_token_unknown_is_404_and_wrong_method_405(cfg, signer, prefix):
 
 
 @pytest.mark.parametrize("prefix", PREFIXES)
-def test_login_is_open_for_get_and_head_only(cfg, signer, prefix):
+def test_login_is_open_for_get_only(cfg, signer, prefix):
     _, app = prefixed(cfg, signer, prefix)
     c = TestClient(app)
     assert c.get(f"{prefix}/v1/login").status_code == 200
-    assert c.head(f"{prefix}/v1/login").status_code == 405  # past the guard
-    for m in ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"]:
+    assert c.head(f"{prefix}/v1/login").status_code == 401
+    for m in ["HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]:
         assert c.request(m, f"{prefix}/v1/login").status_code == 401, m
 
 
@@ -308,3 +308,90 @@ def test_main_exits_with_the_config_message(monkeypatch):
     with pytest.raises(SystemExit) as e:
         main()
     assert "HTRFLOW_API_ISSUER" in str(e.value)
+
+
+@pytest.mark.parametrize("prefix", PREFIXES)
+def test_a_root_path_is_refused_and_no_handler_runs(cfg, signer, prefix):
+    _, app = prefixed(cfg, signer, prefix)
+    calls = []
+
+    @app.post(f"{prefix}/v1/jobs")
+    def jobs():
+        calls.append("jobs")
+        return {"started": True}
+
+    c = TestClient(app, root_path="/x", raise_server_exceptions=False)
+    for method, path in [
+        ("POST", f"/x{prefix}/v1/jobs"),
+        ("GET", f"/x{prefix}/v1/whoami"),
+        ("POST", f"{prefix}/v1/jobs"),
+        ("GET", "/healthz"),
+    ]:
+        r = c.request(method, path)
+        assert r.status_code == 500 and r.json()["detail"] == "internal error", path
+        assert set(r.json()) == {"detail", "hint"}
+    r = c.post(f"/x{prefix}/v1/jobs", headers=auth(signer.token()))
+    assert r.status_code == 500
+    assert calls == []
+
+
+@pytest.mark.parametrize("prefix", PREFIXES)
+def test_a_hand_built_scope_with_a_root_path_reaches_no_handler(cfg, signer, prefix):
+    import asyncio
+
+    _, app = prefixed(cfg, signer, prefix)
+    calls = []
+
+    @app.get(f"{prefix}/v1/whoami2")
+    def spy():
+        calls.append(1)
+        return {}
+
+    sent = []
+
+    async def send(m):
+        sent.append(m)
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": f"/x{prefix}/v1/whoami2",
+        "raw_path": b"",
+        "query_string": b"",
+        "root_path": "/x",
+        "headers": [],
+        "server": ("t", 80),
+        "client": ("c", 1),
+    }
+    asyncio.run(app(scope, receive, send))
+    assert sent[0]["status"] == 500 and calls == []
+
+
+@pytest.mark.parametrize(
+    "path, root",
+    [("/v1/a", ""), ("/x/v1/a", "/x"), ("/y/v1/a", "/x"), ("/x/v1/a", "/x/"),
+     ("/x", "/x"), ("/xy/v1", "/x")],
+)  # fmt: skip
+def test_the_guards_path_is_the_routers_path(path, root):
+    from starlette._utils import get_route_path
+
+    from htrflow_api.app import route_path
+
+    scope = {"type": "http", "path": path, "root_path": root}
+    assert route_path(scope) == get_route_path(scope)
+
+
+def test_a_route_that_sets_its_own_cache_control_gets_one_no_store(cfg, signer):
+    _, app = prefixed(cfg, signer, "")
+
+    @app.get("/v1/cached")
+    def cached():
+        return Response("x", headers={"Cache-Control": "max-age=60"})
+
+    r = TestClient(app).get("/v1/cached", headers=auth(signer.token()))
+    assert r.headers.get_list("cache-control") == ["no-store"]
