@@ -2937,6 +2937,17 @@ def test_outside_the_namespace_the_chart_takes_no_key_address_the_service_refuse
     assert not chart or _service_takes("HTRFLOW_API_JWKS_URL", value), value
 
 
+def test_the_install_notes_give_the_address_to_sign_in_with(tmp_path: Path):
+    notes = install_notes(API_BASE + API_SETS, tmp_path / "ingress")
+    assert "htrflow-campaigns login --server https://htr.example/control" in notes
+    assert "the web front's Ingress with TLS" in notes
+    local = install_notes(API_BASE + API_NO_INGRESS_SETS, tmp_path / "local")
+    assert "port-forward svc/htrflow-api" in local and "/control" in local
+    assert "--server https://" not in local
+    off = install_notes(DEFAULT_SETS, tmp_path / "off")
+    assert "login --server" not in off
+
+
 def test_allow_no_ingress_admits_nobody_on_the_api_port():
     pol = named(api_render("api.allowNoIngress=true"), "NetworkPolicy", "htr-api")
     assert "ingress" not in pol["spec"]

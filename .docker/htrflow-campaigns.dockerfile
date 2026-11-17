@@ -1,7 +1,8 @@
-# htrflow-campaigns: the converter, as the Argo CD PostSync hook runs it, and
-# the campaigns read API (htrflow-api) beside it, started by the chart through
-# its own command; the entry point stays htrflow-campaigns.
-# (docs: reference/campaign-yaml.md, "With Argo CD"). Distroless like the web
+# htrflow-campaigns: two programs from one venv. The converter CLI
+# (htrflow-campaigns, the entry point), as the Argo CD PostSync hook runs it;
+# and the campaigns API (htrflow-api), the service the CLI signs in to, which
+# the chart starts through its own command.
+# Docs: reference/campaign-yaml.md, "With Argo CD". Distroless like the web
 # image: no shell, no package manager; the hook's clone uses dulwich from the
 # same venv, so there is no git binary either.
 # The interpreter is uv's CPython build, as in the web image: see

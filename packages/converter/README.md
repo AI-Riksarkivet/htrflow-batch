@@ -97,11 +97,13 @@ the whole list.
 
 | Module | Role |
 |---|---|
-| `cli.py` | `init`, `validate`, `render` and `apply` subcommands, the append-only check, pruning, the unsafe `--out` guard |
+| `cli.py` | The `init`, `validate`, `render`, `apply`, `export`, `retry`, `pipeline add`, `login`, `logout` and `whoami` commands; the append-only check, pruning, the unsafe `--out` guard |
 | `parse.py` | YAML files to domain types via `Model.model_validate`; flattens `pydantic.ValidationError` into one-line problems; `ValidationError`; the cross-file unknown-pipeline check |
 | `models.py` | `Volume`, `Campaign`, `Pipeline`, `ConverterConfig` (frozen pydantic models) with all validation rules as field/model validators; `Pipeline.sha256` |
 | `render.py` | Patch the packaged skeletons into concrete objects; labels, Kueue queue and priority, env for the wrapper, the 10 000-volume split; `CAMPAIGN_SELECTOR`, the one definition of the label a prune deletes by |
 | `cluster.py` | The only module that talks to a cluster: server-side apply, the prune, the Kueue pause patch, the apply Lease, the suspend hand-over, and the mapping from an API error to a one-sentence `ClusterError` |
+| `remote.py` | The CLI's side of the campaigns API: the address rule (https, loopback excepted), the stored login, requests that carry the token and refresh it, and `plain()`, the one sanitizer for text from the network |
+| `signin.py` | The device sign-in against the sign-in service the server names, every address through the address rule |
 | `manifests/` | The four YAML skeletons: `configmap.yaml`, `campaign-job.yaml`, `pipeline-configmap.yaml`, `warmup-job.yaml` |
 | `template/` | The campaigns repo `init` copies out, byte-identical to [`examples/campaigns/`](../../examples/campaigns/README.md) |
 

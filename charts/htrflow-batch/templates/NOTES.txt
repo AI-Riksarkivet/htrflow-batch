@@ -31,6 +31,15 @@ htrflow-batch {{ .Chart.Version }} installed.
   results proxy (Deployment htrflow-results), all behind one login with a result-store account.
   Session key: Secret {{ .Values.results.sessionSecret }}; result links: {{ .Values.resultsUrl }}.
 {{- end }}
+{{- if .Values.api.enabled }}
+{{- if .Values.api.allowNoIngress }}
+- Campaigns API: `htrflow-campaigns login --server http://<a loopback address>:<port>{{ .Values.api.path }}`, through
+  `kubectl -n {{ .Release.Namespace }} port-forward svc/htrflow-api <port>:8083`: no Ingress (api.allowNoIngress), a port-forward only.
+{{- else }}
+- Campaigns API: `htrflow-campaigns login --server https://{{ .Values.web.ingress.host }}{{ .Values.api.path }}`.
+  It is reached through the web front's Ingress with TLS (Secret {{ .Values.web.ingress.tlsSecretName }}) and nothing else.
+{{- end }}
+{{- end }}
 {{- if .Values.security.allowTagImages }}
 - WARNING security.allowTagImages=true: control-plane images are tag-pinned and re-pulled on every rollout. PoC only.
 {{- end }}
