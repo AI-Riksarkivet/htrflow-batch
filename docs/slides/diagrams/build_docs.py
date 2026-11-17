@@ -100,6 +100,12 @@ g2 = 16 + 56 + H2 + 24 + 64
 group_around(d, [2], g2, 56 + H2 + 24, "Delivery", L("send"))
 d.tall(C[2], g2 + 56, COLW, "Apply", "Argo CD, or\nhtrflow-campaigns apply", "argo", logo=True)
 d.arrow([(MID[2], 72 + H2), (MID[2], g2 + 56 - GAP)])
+# The optional campaigns API sits boxed in at the cluster's second row, first
+# column, so its two arrows run up and down the canvas's left edge, outside
+# every panel: one up to the sign-in service, one up from the CLI.
+group_around(d, [0], g2, 56 + H2 + 24, "Outside", L("globe"), outside=True)
+d.tall(C[0], g2 + 56, COLW, "Sign-in service", "signs the tokens,\npublishes its keys", L("lock"), outside=True)
+EDGE = 12
 g3 = g2 + 56 + H2 + 24 + 64
 r1, r2 = g3 + 56, g3 + 56 + H2 + ROWGAP
 d.group(24, g3, 952, 56 + H2 + ROWGAP + H2 + 24, "Kubernetes cluster", "k8s-node")
@@ -112,16 +118,22 @@ d.tall(C[2], r2, COLW, "Web front", "login, read API, viewer;\nits proxy reads S
 d.arrow([(MID[1] - 40, r1 + H2), (MID[1] - 40, r2 - GAP)], label="admits", at=(MID[1] - 40, r1 + H2 + ROWGAP / 2))
 d.arrow([(MID[2] - 60, r1 + H2), (MID[2] - 60, r2 - 36), (MID[1] + 60, r2 - 36), (MID[1] + 60, r2 - GAP)], dashed=True)
 d.arrow([(C[2], r2 + H2 / 2), (C[1] + COLW + GAP, r2 + H2 / 2)])
+d.tall(C[0], r2, COLW, "Campaigns API", "optional, no cluster\nrights: sign-in, whoami", L("server"))
 g4 = g3 + 56 + H2 + ROWGAP + H2 + 24 + 64
 r3 = g4 + 56
 g5 = g4 + 56 + H2 + 24 + 64
 r4 = g5 + 56
 group_around(d, [0, 1], g4, 56 + H2 + 24, "Storage", L("database"))
-group_around(d, [1, 2], g5, 56 + H2 + 24, "Outside", L("globe"), outside=True)
+group_around(d, [0, 2], g5, 56 + H2 + 24, "Outside", L("globe"), outside=True)
 d.tall(C[0], r3, COLW, "S3 bucket", "PAGE, ALTO, run log,\nmanifest.json, quality", L("database"))
 d.tall(C[1], r3, COLW, "Image cache", "optional, private:\nsource images by page", L("database"))
+d.tall(C[0], r4, COLW, "CLI", "htrflow-campaigns\nlogin and whoami", L("file-check"), outside=True)
 d.tall(C[1], r4, COLW, "IIIF servers", "width-capped\nimage GETs", L("images"), outside=True)
 d.tall(C[2], r4, COLW, "Browser", "logs in, then the\nstatus page and viewer", L("globe"), outside=True)
+# The two left-edge arrows meet the campaigns API far apart, so neither reads
+# as the other's continuation: the token goes no further than the API.
+d.arrow([(C[0], r4 + H2 / 2), (EDGE, r4 + H2 / 2), (EDGE, r2 + H2 - 40), (C[0] - GAP, r2 + H2 - 40)])
+d.arrow([(C[0], r2 + 40), (EDGE, r2 + 40), (EDGE, g2 + 56 + H2 / 2), (C[0] - GAP, g2 + 56 + H2 / 2)])
 lane = g4 - 32
 d.arrow([(MID[1] - 60, r2 + H2), (MID[1] - 60, lane), (MID[0] + 50, lane), (MID[0] + 50, r3 - GAP)], label="results", at=((MID[0] + 50 + MID[1] - 60) / 2, lane))
 d.arrow([(MID[1] + 40, r3), (MID[1] + 40, r2 + H2 + GAP)], label="pages", at=(MID[1] + 40, lane))
@@ -288,6 +300,8 @@ A = {
     "fuse": ("Pod via FUSE", "k8s-pod", False),
     "cache": ("Cache (optional)", L("database"), False),
     "proxy": ("Results proxy", L("lock"), False),
+    "person": ("Person", L("user"), True), "cli": ("CLI", L("file-check"), False),
+    "capi": ("Campaigns API", L("server"), False), "idp": ("Sign-in service", L("lock"), True),
 }
 
 Steps(W, A, [
@@ -367,6 +381,20 @@ Steps(W, A, [
     ]),
     ("msg", "wrapper", "log", "PUT once more on exit: the complete log, on SIGTERM too"),
 ], "The live run log", L("scroll-text")).draw(OUT + "seq-run-log.svg")
+
+Steps(W, A, [
+    ("msg", "cli", "capi", "GET v1/login, with no token: the sign-in service's issuer, the client ID and the oldest CLI it takes"),
+    ("msg", "cli", "idp", "read the discovery document, then ask for a device code"),
+    ("msg", "cli", "person", "print a link and a code; the person opens the link in a browser and signs in"),
+    ("loop", "Until the sign-in is done, or the code runs out", [
+        ("msg", "cli", "idp", "ask for the token, waiting between 5 and 60 seconds each time, as the sign-in service asks"),
+    ]),
+    ("msg", "cli", "cli", "store the sign-in in login.json, a file only the person can read"),
+    ("msg", "cli", "capi", "whoami: GET v1/whoami with the token; login ends with this call too"),
+    ("msg", "capi", "idp", "fetch the signing keys the first time, or when a token names a key it has not seen"),
+    ("reply", "capi", "cli", "check the signature, issuer, audience, expiry and group; answer the user, groups, namespace and queue"),
+    ("note", "The token goes to the campaigns API and nowhere else. Only the refresh token goes back to the sign-in service, to renew the sign-in."),
+], "Signing in, in order", L("list-ordered")).draw(OUT + "seq-sign-in.svg")
 
 Steps(W, A, [
     ("msg", "ci", "api", "apply the campaign Indexed Job, suspended"),
