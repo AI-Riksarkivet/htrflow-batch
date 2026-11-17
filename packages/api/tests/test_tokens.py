@@ -1,4 +1,5 @@
 import threading
+import time
 
 import httpx
 import pytest
@@ -36,6 +37,36 @@ def test_another_issuer_is_named_with_the_one_this_service_expects(cfg, signer):
         "This token comes from another issuer than https://id.example/realms/htrflow."
     )
     assert "other.example" not in e.value.detail
+
+
+@pytest.mark.parametrize(
+    "claims",
+    [{"iat": 2}, {"iat": 120}, {"nbf": 2}, {"exp": -10}],
+    ids=["iat 2 s ahead", "iat 120 s ahead", "nbf 2 s ahead", "exp 10 s ago"],
+)
+def test_clocks_a_little_apart_do_not_refuse_a_token(cfg, signer, claims):
+    now = int(time.time())
+    token = signer.token(**{k: now + v for k, v in claims.items()})
+    assert Verifier(cfg, signer.jwks).verify(token).user == "ada"
+
+
+def test_a_token_not_valid_for_minutes_yet_says_whose_clock_is_ahead(cfg, signer):
+    with pytest.raises(Refused) as e:
+        Verifier(cfg, signer.jwks).verify(signer.token(nbf=int(time.time()) + 120))
+    assert e.value.status == 401
+    assert e.value.detail == (
+        "This token is not valid yet: the sign-in service's clock is ahead of "
+        "this service's."
+    )
+    assert e.value.hint == (
+        "Tell whoever runs the cluster; signing in again will not help."
+    )
+
+
+def test_a_token_expired_minutes_ago_is_expired(cfg, signer):
+    with pytest.raises(Refused) as e:
+        Verifier(cfg, signer.jwks).verify(signer.token(exp=int(time.time()) - 120))
+    assert e.value.status == 401 and "expired" in e.value.detail
 
 
 def test_a_token_signed_by_another_key_is_a_401(cfg, signer):

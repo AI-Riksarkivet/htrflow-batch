@@ -18,12 +18,21 @@ from htrflow_api.config import ApiConfig
 ALGORITHMS = ("RS256", "RS384", "RS512", "PS256", "PS384", "PS512",
               "ES256", "ES384", "ES512", "EdDSA")  # fmt: skip
 REFETCH_SECONDS = 60
+#: How far the sign-in service's clock may be from this pod's, for ``exp``
+#: and ``nbf``. ``iat`` is not checked: a token issued "in the future" by a
+#: clock slightly ahead is still the provider's token.
+LEEWAY_SECONDS = 30
 FETCH_SECONDS = 5.0
 
 _RE_LOGIN = "Sign in again: htrflow-campaigns login"
 _GROUP_HINT = (
     "Ask whoever runs the sign-in service to add you to the group, and to send "
     'group names in the token\'s groups claim with "full group path" off.'
+)
+_NOT_YET = (
+    "This token is not valid yet: the sign-in service's clock is ahead of "
+    "this service's.",
+    "Tell whoever runs the cluster; signing in again will not help.",
 )
 _DOWN_DETAIL = "The sign-in service could not be reached to check this token."
 _DOWN_HINT = "Try again in a minute; if it stays, tell whoever runs the cluster."
@@ -146,10 +155,13 @@ class Verifier:
                 algorithms=list(ALGORITHMS),
                 audience=cfg.audience,
                 issuer=cfg.issuer,
-                options={"require": ["exp", "iss", "aud"]},
+                leeway=LEEWAY_SECONDS,
+                options={"require": ["exp", "iss", "aud"], "verify_iat": False},
             )
         except jwt.ExpiredSignatureError:
             raise _unauthorized("The token has expired.") from None
+        except jwt.ImmatureSignatureError:
+            raise Refused(401, *_NOT_YET) from None
         except jwt.InvalidIssuerError:
             raise _unauthorized(
                 f"This token comes from another issuer than {cfg.issuer}."
