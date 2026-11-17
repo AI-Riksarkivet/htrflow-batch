@@ -121,7 +121,7 @@ spec:
     - host: {{ .Values.web.ingress.host | quote }}
       http:
         paths:
-          - path: {{ .Values.api.path }}
+          - path: {{ .Values.api.path | quote }}
             pathType: Prefix
             backend:
               service:
@@ -132,7 +132,7 @@ spec:
 {{- if .Values.network.enabled }}
 ---
 # The API pod: in on 8083 from what the web front's policy admits in ingress
-# mode (the controller's own pods, network.web.ingressFrom; with none, as
+# mode (the controller's own pods, network.web.ingressFrom; with none, or
 # under allowNoIngress, nothing -- a port-forward goes through the kubelet);
 # out only to the sign-in service's key endpoint. DNS is the namespace-wide
 # policy's (htr-allow-dns). No apiserver and no store: this pod holds no
@@ -147,11 +147,13 @@ spec:
   podSelector:
     matchLabels: { app: htrflow-api }
   policyTypes: [Ingress, Egress]
+  {{- if not .Values.api.allowNoIngress }}
   {{- with .Values.network.web.ingressFrom }}
   ingress:
     - from: {{- toYaml . | nindent 8 }}
       ports:
         - { port: 8083 }
+  {{- end }}
   {{- end }}
   egress:
     {{- if .Values.api.network.identityInNamespace }}

@@ -1849,10 +1849,12 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 7102
 # value; results.yaml -1, a duplicate digest check.
 # 2215 -> 2221 (Solr search): web.yaml +6, HTRFLOW_SOLR_URL only when
 # web.solrUrl is set, so search stays off by default.
-# 2221 -> 2458 (2026-11-17, the campaigns API): api.yaml is new (the
+# 2221 -> 2461 (2026-11-17, the campaigns API): api.yaml is new (the
 # Deployment, ClusterIP Service, TLS Ingress, the pod's NetworkPolicy and the
 # in-namespace sign-in service's ingress policy), and _helpers.tpl gains the
 # refusals for it (Ingress with TLS, the required values, the issuer, the
-# path, the route to the sign-in service's keys).
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2458
+# path, the route to the sign-in service's keys); the issuer and path rules
+# hold the shapes the service takes, and the API's policy admits the
+# controller only with an Ingress.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2461
 exit $fail
