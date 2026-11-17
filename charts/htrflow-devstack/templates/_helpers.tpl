@@ -34,6 +34,18 @@ disabled — mirrors charts/htrflow-batch's htrflow-batch.validate.
 {{- fail "rustfs.accessKey/secretKey is empty, so Helm generates them afresh on every render and reads them back from the Secret on upgrade: set credentials of your own, or set devStack.insecureDefaults: true to accept generated ones (charts/htrflow-devstack/values.yaml says why)" }}
 {{- end }}
 {{- end }}
+{{- /* The development Keycloak (values.yaml's keycloak block): development
+     mode, passwords in a ConfigMap. The flag says the stack is a toy; the
+     image is pinned like every other here, and the passwords are the
+     installer's own -- the chart publishes none. */}}
+{{- if .Values.keycloak.enabled }}
+{{- if not .Values.devStack.insecureDefaults }}
+{{- fail "keycloak.enabled needs devStack.insecureDefaults=true: this Keycloak runs in development mode with passwords from the values and is for a development cluster only" }}
+{{- end }}
+{{- if or (not (regexMatch "@sha256:[0-9a-f]{64}$" .Values.keycloak.image)) (not .Values.keycloak.adminPassword) (not .Values.keycloak.userPassword) }}
+{{- fail "keycloak.enabled needs keycloak.image by digest, keycloak.adminPassword and keycloak.userPassword" }}
+{{- end }}
+{{- end }}
 {{- end }}
 
 {{/* Pod Security `restricted` — container part. */}}

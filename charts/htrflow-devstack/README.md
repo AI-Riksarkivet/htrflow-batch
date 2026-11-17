@@ -2,9 +2,10 @@
 
 **Development only.** In-cluster stand-ins for what a real deployment gets
 from elsewhere: an S3-compatible object store (RustFS), a container image
-registry, and the NVIDIA device plugin with its `RuntimeClass`. Every
-component is off by default (`rustfs.enabled`, `registry.enabled`,
-`nvidiaDevicePlugin.enabled`); a plain `helm install` renders nothing. Do
+registry, the NVIDIA device plugin with its `RuntimeClass`, and a Keycloak
+to sign in to the campaigns API with. Every component is off by default
+(`rustfs.enabled`, `registry.enabled`, `nvidiaDevicePlugin.enabled`,
+`keycloak.enabled`); a plain `helm install` renders nothing. Do
 not install it next to real data or real S3 credentials: the registry is
 unauthenticated, and the RustFS console, when enabled, has nothing in front
 of it but the root credential.
@@ -62,6 +63,35 @@ pod depends on (`FORCE=1` skips the check). See
   digest. With htrflow-batch's policies on, the `rustfs/` entry that admits
   RustFS in `security.allowedImageRepos` admits it too.
 
+## Keycloak: a development sign-in service
+
+`keycloak.enabled=true` runs Keycloak in its development mode with one realm
+(`keycloak.realm`): a public client `keycloak.clientId` with only the device
+sign-in on, an audience mapper adding `keycloak.audience` to the access
+token, a mapper writing group names (no path) to the `groups` claim, the
+group `keycloak.group`, the user `htr-dev` in it and `htr-outsider` outside
+it. It is the counterpart of htrflow-batch's `api.*` values with
+`api.network.identityInNamespace=true`; the
+[Dev cluster](../../docs/development/dev-cluster.md#the-campaigns-api-on-the-dev-cluster)
+page has the whole sign-in.
+
+- **Development only.** The database is an emptyDir, so a restart re-imports
+  the realm and forgets every session. `keycloak.adminPassword` (the master
+  realm's `admin`) and `keycloak.userPassword` (both test users) come from
+  the values and sit in the ConfigMap `keycloak-realm`; the chart has no
+  default for either and refuses to render without them, or without
+  `devStack.insecureDefaults=true`.
+- **The image** is `quay.io/keycloak/keycloak`, set by digest in
+  `keycloak.image` (no default). With htrflow-batch's policies on, copy it
+  into your registry, or add its repository to `security.allowedImageRepos`.
+- **Issuer.** Every token's issuer is `<keycloak.hostname>/realms/<realm>`,
+  the address a developer reaches it at through a port-forward, while the
+  API pod reads the keys from the Service (`http://keycloak:8080`, the
+  `api.jwksUrl` to set): Keycloak answers back-channel requests on the
+  address they came in on.
+- **Network.** A ClusterIP Service on 8080. Its own NetworkPolicy admits
+  nothing; htrflow-batch renders the one way in, from the API pod.
+
 ## Adopting hand-applied resources
 
 Helm refuses to manage an object it did not create. Where the `nvidia`
@@ -86,6 +116,13 @@ kubectl -n kube-system label daemonset nvidia-device-plugin app.kubernetes.io/ma
   `registry garbage-collect /etc/distribution/config.yml` in the pod.
 
 ## Changelog
+
+### 0.7.0 — 2026-11-17
+
+Added: `keycloak.*`, a development Keycloak with the realm the campaigns
+API needs (a device sign-in client, audience and group mappers, a user in
+the group and one outside it). Off by default; refused without
+`devStack.insecureDefaults`, an image by digest and both passwords.
 
 ### 0.6.0 — 2026-10-20
 

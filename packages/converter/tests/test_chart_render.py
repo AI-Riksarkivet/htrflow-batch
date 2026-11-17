@@ -2065,7 +2065,10 @@ def test_the_init_image_is_rustfs_own_client_pinned_by_digest():
 def test_the_documented_allow_list_admits_every_devstack_image_in_the_namespace():
     """With the Kyverno policies on, the release namespace admits only the
     repositories the dev-cluster page lists (images-allowed matches the part
-    before `@` on a path boundary): RustFS and its init hook live there."""
+    before `@` on a path boundary): RustFS and its init hook live there. The
+    optional Keycloak is upstream's image, which the page has a developer
+    copy into their own `<registry>` -- the `<registry>/` the list's own
+    sentence adds."""
     page = (REPO / "docs" / "development" / "dev-cluster.md").read_text()
     listed = re.search(r"security\.allowedImageRepos='\{([^}]*)\}'", page)
     assert listed, "dev-cluster.md no longer documents allowedImageRepos"
@@ -2076,6 +2079,7 @@ def test_the_documented_allow_list_admits_every_devstack_image_in_the_namespace(
         for o in rendered
         if o["kind"] in ("Deployment", "Job")
         and o["metadata"]["namespace"] == NAMESPACE
+        and o["metadata"]["name"] != "keycloak"
         for c in o["spec"]["template"]["spec"]["containers"]
     ]
     assert len(images) == 2, images
@@ -2799,3 +2803,148 @@ def test_allow_no_ingress_admits_nobody_on_the_api_port():
 def test_a_path_is_quoted_in_the_ingress():
     ing = named(api_render("api.path=/a-b_c/d1"), "Ingress", "htrflow-api")
     assert ing["spec"]["rules"][0]["http"]["paths"][0]["path"] == "/a-b_c/d1"
+
+
+# --- Task 8: the devstack's Keycloak, the sign-in service the API needs ---
+
+KEYCLOAK_INSECURE_REFUSAL = (
+    "keycloak.enabled needs devStack.insecureDefaults=true: this Keycloak runs"
+    " in development mode with passwords from the values and is for a"
+    " development cluster only"
+)
+KEYCLOAK_MISSING_REFUSAL = (
+    "keycloak.enabled needs keycloak.image by digest, keycloak.adminPassword"
+    " and keycloak.userPassword"
+)
+KEYCLOAK_IMAGE = (
+    "127.0.0.1:30500/keycloak@sha256:"
+    "2222222222222222222222222222222222222222222222222222222222222222"
+)
+#: Everything the Keycloak needs besides `keycloak.enabled` and the flag.
+KEYCLOAK_SETS = (
+    f"keycloak.image={KEYCLOAK_IMAGE}",
+    "keycloak.adminPassword=admin-pw",
+    "keycloak.userPassword=user-pw",
+)
+KEYCLOAK_ON = ("devStack.insecureDefaults=true", "keycloak.enabled=true")
+
+DEVSTACK_GUARDS.update(
+    {
+        "keycloak without insecure defaults": (
+            None,
+            ("keycloak.enabled=true", *KEYCLOAK_SETS),
+            KEYCLOAK_INSECURE_REFUSAL,
+        ),
+        "keycloak by tag": (
+            None,
+            (
+                *KEYCLOAK_ON,
+                *KEYCLOAK_SETS,
+                "keycloak.image=quay.io/keycloak/keycloak:1",
+            ),
+            KEYCLOAK_MISSING_REFUSAL,
+        ),
+    }
+)
+
+
+def _keycloak_render(*extra: str) -> list[dict]:
+    result = helm_template(
+        sets=KEYCLOAK_ON + KEYCLOAK_SETS + extra, chart=DEVSTACK_CHART
+    )
+    assert result.returncode == 0, result.stderr
+    return [doc for doc in yaml.safe_load_all(result.stdout) if doc]
+
+
+def _realm(rendered: list[dict]) -> dict:
+    return json.loads(
+        named(rendered, "ConfigMap", "keycloak-realm")["data"]["realm.json"]
+    )
+
+
+def test_the_devstack_renders_no_keycloak_by_default():
+    result = helm_template(chart=DEVSTACK_CHART)
+    assert result.returncode == 0, result.stderr
+    rendered = [doc for doc in yaml.safe_load_all(result.stdout) if doc]
+    assert not [o for o in rendered if "keycloak" in o["metadata"]["name"]]
+
+
+def test_keycloak_without_insecure_defaults_is_refused_with_the_sentence():
+    result = helm_template(
+        sets=("keycloak.enabled=true", *KEYCLOAK_SETS), chart=DEVSTACK_CHART
+    )
+    assert result.returncode != 0
+    assert KEYCLOAK_INSECURE_REFUSAL in result.stderr
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "keycloak.image=",
+        "keycloak.image=quay.io/keycloak/keycloak:1",
+        "keycloak.adminPassword=",
+        "keycloak.userPassword=",
+    ],
+)
+def test_keycloak_without_a_digest_or_passwords_is_refused(missing: str):
+    result = helm_template(
+        sets=(*KEYCLOAK_ON, *KEYCLOAK_SETS, missing), chart=DEVSTACK_CHART
+    )
+    assert result.returncode != 0
+    assert KEYCLOAK_MISSING_REFUSAL in result.stderr
+
+
+def test_the_keycloak_pod_carries_the_label_the_api_policy_admits():
+    rendered = _keycloak_render()
+    dep = named(rendered, "Deployment", "keycloak")
+    pod = dep["spec"]["template"]
+    assert pod["metadata"]["labels"]["app"] == "keycloak"
+    container = pod["spec"]["containers"][0]
+    assert container["image"] == KEYCLOAK_IMAGE
+    assert {"containerPort": 8080, "name": "http"} in container["ports"]
+    svc = named(rendered, "Service", "keycloak")
+    assert svc["spec"]["type"] == "ClusterIP"
+    assert svc["spec"]["selector"] == {"app": "keycloak"}
+    assert [p["port"] for p in svc["spec"]["ports"]] == [8080]
+    env = {e["name"]: e.get("value") for e in container["env"]}
+    assert env["KC_HOSTNAME"] == "http://localhost:18080"
+    assert env["KC_HOSTNAME_BACKCHANNEL_DYNAMIC"] == "true"
+    assert env["KC_HTTP_ENABLED"] == "true"
+    assert container["args"] == ["start-dev", "--import-realm"]
+    # The namespace's pod security, with no exemption: what it writes goes
+    # to emptyDirs.
+    assert container["securityContext"]["readOnlyRootFilesystem"] is True
+    assert pod["spec"]["securityContext"]["runAsNonRoot"] is True
+    assert pod["spec"]["automountServiceAccountToken"] is False
+
+
+def test_the_realm_has_one_public_device_client_and_both_mappers():
+    realm = _realm(_keycloak_render())
+    assert realm["realm"] == "htrflow"
+    (client,) = realm["clients"]
+    assert client["clientId"] == "htrflow-cli"
+    assert client["publicClient"] is True
+    assert client["standardFlowEnabled"] is False
+    assert client["directAccessGrantsEnabled"] is False
+    assert client["attributes"]["oauth2.device.authorization.grant.enabled"] == "true"
+    mappers = {m["protocolMapper"]: m["config"] for m in client["protocolMappers"]}
+    audience = mappers["oidc-audience-mapper"]
+    assert audience["included.custom.audience"] == "htrflow-batch"
+    assert audience["access.token.claim"] == "true"
+    groups = mappers["oidc-group-membership-mapper"]
+    assert groups["claim.name"] == "groups"
+    assert groups["full.path"] == "false"
+    assert groups["access.token.claim"] == "true"
+
+
+def test_the_realm_has_one_user_in_the_group_and_one_outside_it():
+    realm = _realm(_keycloak_render())
+    assert [g["name"] for g in realm["groups"]] == ["htr-operators"]
+    users = {u["username"]: u for u in realm["users"]}
+    assert set(users) == {"htr-dev", "htr-outsider"}
+    assert users["htr-dev"]["groups"] == ["/htr-operators"]
+    assert users["htr-outsider"].get("groups", []) == []
+    for user in users.values():
+        assert user["enabled"] is True
+        (cred,) = user["credentials"]
+        assert cred == {"type": "password", "value": "user-pw", "temporary": False}

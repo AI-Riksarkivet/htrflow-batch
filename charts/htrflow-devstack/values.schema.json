@@ -8,7 +8,8 @@
     "s3",
     "rustfs",
     "registry",
-    "nvidiaDevicePlugin"
+    "nvidiaDevicePlugin",
+    "keycloak"
   ],
   "definitions": {
     "nodePort": {
@@ -208,6 +209,57 @@
         },
         "image": {
           "$ref": "#/definitions/imageRef"
+        }
+      }
+    },
+    "keycloak": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "image",
+        "hostname",
+        "realm",
+        "clientId",
+        "audience",
+        "group",
+        "adminPassword",
+        "userPassword"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "image": {
+          "$ref": "#/definitions/imageRef"
+        },
+        "hostname": {
+          "type": "string",
+          "pattern": "^https?://[^/?#]+$",
+          "description": "Full URL (scheme, host, port) a token's issuer is built from; no path."
+        },
+        "realm": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,64}$"
+        },
+        "clientId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "audience": {
+          "type": "string",
+          "minLength": 1
+        },
+        "group": {
+          "type": "string",
+          "pattern": "^[^/]+$",
+          "description": "A top-level group; the groups claim carries names without a path."
+        },
+        "adminPassword": {
+          "type": "string"
+        },
+        "userPassword": {
+          "type": "string"
         }
       }
     }

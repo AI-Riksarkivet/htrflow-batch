@@ -20,3 +20,12 @@ registry:
 
 nvidiaDevicePlugin:
   enabled: true
+
+# The development Keycloak needs passwords no flag invents. These two are
+# render placeholders, published here and so no secret: ci/ is never an
+# install and is not packaged (charts/htrflow-devstack/README.md, Keycloak).
+keycloak:
+  enabled: true
+  image: quay.io/keycloak/keycloak@sha256:c68e286cacd87b942ac1939a0a1481461109d6acd3a57dc496969a319a76bbf0
+  adminPassword: ci-render-placeholder
+  userPassword: ci-render-placeholder

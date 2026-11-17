@@ -1,0 +1,189 @@
+{{- if .Values.keycloak.enabled }}
+{{- $kc := .Values.keycloak }}
+{{- /* The realm, as Keycloak's own import format (RealmRepresentation):
+     one public client with only the device grant on, an audience mapper,
+     a group mapper writing bare group names to `groups`, the group, and
+     two users -- one in it, one outside it. Users carry e-mail and names
+     so the default user profile asks nothing at the first sign-in. */}}
+{{- $user := dict "enabled" true "emailVerified" true
+      "credentials" (list (dict "type" "password" "value" $kc.userPassword "temporary" false)) }}
+{{- $realm := dict
+      "realm" $kc.realm
+      "enabled" true
+      "groups" (list (dict "name" $kc.group))
+      "users" (list
+        (merge (dict "username" "htr-dev" "email" "htr-dev@example.invalid"
+                     "firstName" "Dev" "lastName" "Operator"
+                     "groups" (list (printf "/%s" $kc.group))) $user)
+        (merge (dict "username" "htr-outsider" "email" "htr-outsider@example.invalid"
+                     "firstName" "Out" "lastName" "Sider") $user))
+      "clients" (list (dict
+        "clientId" $kc.clientId
+        "name" "htrflow-campaigns"
+        "protocol" "openid-connect"
+        "publicClient" true
+        "standardFlowEnabled" false
+        "implicitFlowEnabled" false
+        "directAccessGrantsEnabled" false
+        "serviceAccountsEnabled" false
+        "consentRequired" false
+        "attributes" (dict "oauth2.device.authorization.grant.enabled" "true")
+        "protocolMappers" (list
+          (dict "name" "audience" "protocol" "openid-connect"
+                "protocolMapper" "oidc-audience-mapper"
+                "config" (dict "included.custom.audience" $kc.audience
+                               "access.token.claim" "true"
+                               "id.token.claim" "false"
+                               "introspection.token.claim" "true"))
+          (dict "name" "groups" "protocol" "openid-connect"
+                "protocolMapper" "oidc-group-membership-mapper"
+                "config" (dict "claim.name" "groups"
+                               "full.path" "false"
+                               "access.token.claim" "true"
+                               "id.token.claim" "false"
+                               "userinfo.token.claim" "true"
+                               "introspection.token.claim" "true"))))) }}
+# A DEVELOPMENT Keycloak (values.yaml's keycloak block): the sign-in service
+# the campaigns API of charts/htrflow-batch checks tokens against. Keycloak's
+# development mode, its database on an emptyDir (a restart re-imports the
+# realm below and forgets every session), the passwords from the values in
+# this ConfigMap. Never next to real users.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-realm
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-devstack.labels" . | nindent 4 }}
+data:
+  realm.json: |
+    {{- $realm | toPrettyJson | nindent 4 }}
+  admin-password: {{ $kc.adminPassword | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-devstack.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: keycloak }
+  template:
+    metadata:
+      # app=keycloak is what charts/htrflow-batch's api.network.identityInNamespace
+      # admits the API pod to (and this pod from it).
+      labels: { app: keycloak }
+      annotations:
+        # A changed realm or password re-imports: the database is an emptyDir.
+        checksum/realm: {{ $realm | toJson | cat $kc.adminPassword | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      # The image runs as uid 1000. The root filesystem stays read-only:
+      # development mode re-builds the server at start into lib/quarkus, so
+      # an init container copies the image's build there into an emptyDir
+      # first; the database and the realm import live under data/.
+      securityContext:
+        {{- include "htrflow-devstack.restrictedPod" 1000 | nindent 8 }}
+      initContainers:
+        - name: build-dir
+          image: {{ $kc.image }}
+          imagePullPolicy: {{ include "htrflow-devstack.pullPolicy" $kc.image }}
+          command: ["/bin/sh", "-c", "cp -a /opt/keycloak/lib/quarkus/. /build/"]
+          securityContext:
+            {{- include "htrflow-devstack.restrictedContainer" . | nindent 12 }}
+          volumeMounts:
+            - { name: build, mountPath: /build }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 128Mi }
+      containers:
+        - name: keycloak
+          image: {{ $kc.image }}
+          imagePullPolicy: {{ include "htrflow-devstack.pullPolicy" $kc.image }}
+          args: ["start-dev", "--import-realm"]
+          securityContext:
+            {{- include "htrflow-devstack.restrictedContainer" . | nindent 12 }}
+          env:
+            # Every token's issuer is <hostname>/realms/<realm>, however the
+            # request came in; back-channel requests (the API pod's key
+            # fetch at http://keycloak:8080) are answered on their own address.
+            - name: KC_HOSTNAME
+              value: {{ $kc.hostname | quote }}
+            - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
+              value: "true"
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            # Development mode listens on the loopback address only unless told.
+            - name: KC_HTTP_HOST
+              value: 0.0.0.0
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              value: admin
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                configMapKeyRef: { name: keycloak-realm, key: admin-password }
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: management, containerPort: 9000 }
+          startupProbe:
+            httpGet: { path: /health/started, port: management }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /health/ready, port: management }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health/live, port: management }
+            periodSeconds: 30
+          volumeMounts:
+            - { name: build, mountPath: /opt/keycloak/lib/quarkus }
+            - { name: data, mountPath: /opt/keycloak/data }
+            - { name: realm, mountPath: /opt/keycloak/data/import, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+          resources:
+            requests: { cpu: 250m, memory: 768Mi }
+            limits: { memory: 1536Mi }
+      volumes:
+        - name: build
+          emptyDir: { sizeLimit: 256Mi }
+        - name: data
+          emptyDir: { sizeLimit: 512Mi }
+        - name: tmp
+          emptyDir: { sizeLimit: 256Mi }
+        - name: realm
+          configMap:
+            name: keycloak-realm
+            items:
+              - { key: realm.json, path: realm.json }
+---
+# ClusterIP only: a developer reaches it by port-forward, at keycloak.hostname.
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-devstack.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector: { app: keycloak }
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+# Nothing in, nothing out of its own: charts/htrflow-batch renders the one
+# way in (htr-keycloak-from-api, the API pod on 8080, with
+# api.network.identityInNamespace). A port-forward goes through the kubelet.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: htr-keycloak
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-devstack.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app: keycloak }
+  policyTypes: [Ingress, Egress]
+{{- end }}

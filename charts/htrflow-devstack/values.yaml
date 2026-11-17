@@ -90,3 +90,36 @@ nvidiaDevicePlugin:
   # first (see README, "Adopting hand-applied resources").
   enabled: false
   image: nvcr.io/nvidia/k8s-device-plugin@sha256:25cc340fe6fd53c101e16fc452f503e7a92c219c64a80ed5381784b522dbbf77
+
+# A development Keycloak: the sign-in service charts/htrflow-batch's
+# campaigns API (`api.*`) checks tokens against, so the device sign-in of
+# `htrflow-campaigns login` can be tried on a development cluster. It runs
+# Keycloak's development mode (an in-memory-style database on an emptyDir:
+# a restart starts from the realm below again), and its passwords come from
+# these values and end up in the realm ConfigMap in the cluster -- which is
+# why it needs devStack.insecureDefaults and is for a development cluster
+# only. Pair it with htrflow-batch's `api.network.identityInNamespace: true`,
+# which lets the API pod reach this pod (label app=keycloak, port 8080).
+keycloak:
+  enabled: false
+  # quay.io/keycloak/keycloak, by digest (or a copy of it in a registry the
+  # cluster admits). No default: pick the release and pin it.
+  image: ""
+  # What every token's issuer is built from: <hostname>/realms/<realm>. The
+  # developer reaches Keycloak at this address (a port-forward to a
+  # loopback port), while the API pod reads the keys from
+  # http://keycloak:8080 (htrflow-batch's api.jwksUrl): Keycloak answers
+  # back-channel requests on the address they came in on.
+  hostname: http://localhost:18080
+  realm: htrflow
+  # The one public client, device sign-in only (htrflow-batch's api.clientId).
+  clientId: htrflow-cli
+  # Added to every access token's `aud` (htrflow-batch's api.audience).
+  audience: htrflow-batch
+  # The group whose members may use the API (htrflow-batch's api.group).
+  # The realm has `htr-dev` in it and `htr-outsider` outside it.
+  group: htr-operators
+  # The `admin` user of the master realm. No default: set your own.
+  adminPassword: ""
+  # The password of both test users. No default: set your own.
+  userPassword: ""
