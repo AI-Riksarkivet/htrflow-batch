@@ -1,4 +1,6 @@
-# htrflow-campaigns: the converter, as the Argo CD PostSync hook runs it
+# htrflow-campaigns: the converter, as the Argo CD PostSync hook runs it, and
+# the campaigns read API (htrflow-api) beside it, started by the chart through
+# its own command; the entry point stays htrflow-campaigns.
 # (docs: reference/campaign-yaml.md, "With Argo CD"). Distroless like the web
 # image: no shell, no package manager; the hook's clone uses dulwich from the
 # same venv, so there is no git binary either.
@@ -23,12 +25,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=packages/converter/pyproject.toml,target=packages/converter/pyproject.toml \
     --mount=type=bind,source=packages/web/pyproject.toml,target=packages/web/pyproject.toml \
     --mount=type=bind,source=packages/api/pyproject.toml,target=packages/api/pyproject.toml \
-    uv sync --frozen --no-install-workspace --no-build --package htrflow-converter --extra hook
+    uv sync --frozen --no-install-workspace --no-build --package htrflow-converter --package htrflow-api --extra hook
 COPY pyproject.toml uv.lock ./
 COPY packages/wrapper/pyproject.toml packages/wrapper/pyproject.toml
 COPY packages/web/pyproject.toml packages/web/pyproject.toml
-COPY packages/api/pyproject.toml packages/api/pyproject.toml
 COPY packages/converter packages/converter
+COPY packages/api packages/api
 # The member itself: --locked proves the lock still matches the pyprojects
 # and --no-build that every dependency came from it as a wheel; then the
 # package is built with its build backend pinned and hashed
@@ -36,8 +38,10 @@ COPY packages/converter packages/converter
 # audit 0923 D-11) and installed as a wheel.
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=.docker/build-constraints.txt,target=/tmp/build-constraints.txt \
-    uv sync --locked --no-install-workspace --no-build --package htrflow-converter --extra hook \
+    uv sync --locked --no-install-workspace --no-build --package htrflow-converter --package htrflow-api --extra hook \
     && uv build --wheel --package htrflow-converter --require-hashes \
+         --build-constraints /tmp/build-constraints.txt -o /tmp/dist \
+    && uv build --wheel --package htrflow-api --require-hashes \
          --build-constraints /tmp/build-constraints.txt -o /tmp/dist \
     && uv pip install --python /app/.venv/bin/python --no-build --no-deps /tmp/dist/*.whl \
     && rm -rf /tmp/dist
