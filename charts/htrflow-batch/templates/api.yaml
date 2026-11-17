@@ -136,7 +136,9 @@ spec:
 # under allowNoIngress, nothing -- a port-forward goes through the kubelet);
 # out only to the sign-in service's key endpoint. DNS is the namespace-wide
 # policy's (htr-allow-dns). No apiserver and no store: this pod holds no
-# rights on either in this release.
+# rights on either in this release. The other direction, who may reach the
+# sign-in service, is the sign-in service's chart's to say: the devstack's
+# Keycloak admits this pod in its own policy, as its RustFS does its peers.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -169,28 +171,5 @@ spec:
         - { port: {{ . }} }
         {{- end }}
     {{- end }}
-{{- if .Values.api.network.identityInNamespace }}
----
-# The other direction of the in-namespace sign-in service: the namespace is
-# default-deny, so without this the API pod could not fetch the signing
-# keys. Only the API pod, only 8080. (The devstack's RustFS carries its own
-# ingress policy in its own chart; a sign-in service from no chart here does
-# not, so this chart renders it.)
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: htr-keycloak-from-api
-  namespace: {{ .Release.Namespace }}
-  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
-spec:
-  podSelector:
-    matchLabels: { app: keycloak }
-  policyTypes: [Ingress]
-  ingress:
-    - from:
-        - podSelector: { matchLabels: { app: htrflow-api } }
-      ports:
-        - { port: 8080 }
-{{- end }}
 {{- end }}
 {{- end }}

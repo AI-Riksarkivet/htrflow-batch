@@ -90,7 +90,9 @@ page has the whole sign-in.
   `api.jwksUrl` to set): Keycloak answers back-channel requests on the
   address they came in on.
 - **Network.** A ClusterIP Service on 8080. Its own NetworkPolicy admits
-  nothing; htrflow-batch renders the one way in, from the API pod.
+  the campaigns API's pod (`app: htrflow-api`) on 8080 and nothing else,
+  whatever htrflow-batch's `network.enabled` is, and lets the Keycloak out
+  nowhere.
 
 ## Adopting hand-applied resources
 
@@ -121,8 +123,9 @@ kubectl -n kube-system label daemonset nvidia-device-plugin app.kubernetes.io/ma
 
 Added: `keycloak.*`, a development Keycloak with the realm the campaigns
 API needs (a device sign-in client, audience and group mappers, a user in
-the group and one outside it). Off by default; refused without
-`devStack.insecureDefaults`, an image by digest and both passwords.
+the group and one outside it), and its NetworkPolicy, which admits the
+campaigns API's pod on 8080 and nothing else. Off by default; refused
+without `devStack.insecureDefaults`, an image by digest and both passwords.
 
 ### 0.6.0 — 2026-10-20
 

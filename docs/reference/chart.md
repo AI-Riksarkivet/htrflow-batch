@@ -126,7 +126,7 @@ token, and holds no Kubernetes rights
 | `api.resources` | requests cpu 50m / 128Mi, limits cpu 500m / 256Mi | |
 | `api.network.identityCidrs` | `[]` | Where the sign-in service's key endpoint is, by address, on `api.network.identityPorts`. With `network.enabled`, this or `identityInNamespace` is required |
 | `api.network.identityPorts` | `[443]` | The ports it answers on |
-| `api.network.identityInNamespace` | `false` | The sign-in service is a pod labelled `app: keycloak` in this namespace (the devstack's), on 8080. The API pod's egress names it by label, and a second policy, `htr-keycloak-from-api`, admits the API pod to it, since the namespace is default-deny |
+| `api.network.identityInNamespace` | `false` | The sign-in service is a pod labelled `app: keycloak` in this namespace (the devstack's), on 8080. The API pod's egress names it by label; the other direction is the Keycloak's own chart's: the devstack's `htr-keycloak` policy admits pods labelled `app: htrflow-api` on 8080, whatever `network.enabled` is here |
 
 ## Apply identity (`apply.*`)
 

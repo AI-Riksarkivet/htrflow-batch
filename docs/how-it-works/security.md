@@ -226,7 +226,9 @@ web front's TLS Secret, and the chart refuses the API without it unless
 `api.allowNoIngress` leaves out the Ingress and the API is reached by
 port-forward. The NetworkPolicy admits only the ingress controller's pods on
 8083 and lets the pod out only to the sign-in service's key endpoint (DNS is
-the namespace-wide policy's). The pod meets Pod Security `restricted`,
+the namespace-wide policy's). Who may reach the sign-in service is that
+service's own chart's to say: the devstack's Keycloak admits the API pod on
+8080 and nothing else. The pod meets Pod Security `restricted`,
 mounts no ServiceAccount token and no Secret, and holds no Kubernetes
 rights; it reads and writes nothing in the cluster.
 

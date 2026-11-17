@@ -175,9 +175,11 @@ spec:
       port: 8080
       targetPort: http
 ---
-# Nothing in, nothing out of its own: charts/htrflow-batch renders the one
-# way in (htr-keycloak-from-api, the API pod on 8080, with
-# api.network.identityInNamespace). A port-forward goes through the kubelet.
+# In: the campaigns API's pod (charts/htrflow-batch, app: htrflow-api) on
+# 8080, to read the signing keys, and nothing else; out: nothing. Its own
+# chart says who may reach it, as RustFS's does, so it holds whatever
+# htrflow-batch's network.enabled is. A port-forward goes through the
+# kubelet.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -188,4 +190,9 @@ spec:
   podSelector:
     matchLabels: { app: keycloak }
   policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: htrflow-api } }
+      ports:
+        - { port: 8080 }
 {{- end }}

@@ -2600,15 +2600,12 @@ def test_the_api_policy_reaches_an_in_namespace_keycloak_by_label():
             "ports": [{"port": 8080}],
         }
     ]
-    # The namespace is default-deny: the other direction is its own policy.
-    ingress = named(rendered, "NetworkPolicy", "htr-keycloak-from-api")
-    assert ingress["spec"]["podSelector"] == {"matchLabels": {"app": "keycloak"}}
-    assert ingress["spec"]["policyTypes"] == ["Ingress"]
-    assert ingress["spec"]["ingress"] == [
-        {
-            "from": [{"podSelector": {"matchLabels": {"app": "htrflow-api"}}}],
-            "ports": [{"port": 8080}],
-        }
+    # Who may reach the Keycloak is the Keycloak's chart's to say (the
+    # devstack's htr-keycloak); this chart renders no policy for its pod.
+    assert not [
+        o
+        for o in objects(rendered, "NetworkPolicy")
+        if o["spec"]["podSelector"].get("matchLabels", {}).get("app") == "keycloak"
     ]
 
 
@@ -3062,6 +3059,72 @@ def test_the_keycloak_pod_carries_the_label_the_api_policy_admits():
     assert container["securityContext"]["readOnlyRootFilesystem"] is True
     assert pod["spec"]["securityContext"]["runAsNonRoot"] is True
     assert pod["spec"]["automountServiceAccountToken"] is False
+
+
+def test_the_keycloak_admits_the_api_pod_on_8080_and_nothing_else():
+    pol = named(_keycloak_render(), "NetworkPolicy", "htr-keycloak")
+    assert pol["spec"]["podSelector"] == {"matchLabels": {"app": "keycloak"}}
+    assert set(pol["spec"]["policyTypes"]) == {"Ingress", "Egress"}
+    assert pol["spec"]["ingress"] == [
+        {
+            "from": [{"podSelector": {"matchLabels": {"app": "htrflow-api"}}}],
+            "ports": [{"port": 8080}],
+        }
+    ]
+    assert not pol["spec"].get("egress")
+
+
+def _selects(policy: dict, labels: dict) -> bool:
+    wanted = policy["spec"]["podSelector"].get("matchLabels", {})
+    return all(labels.get(k) == v for k, v in wanted.items())
+
+
+def _peer_matches(peer: dict, labels: dict) -> bool:
+    if set(peer) != {"podSelector"}:  # other namespaces, ranges: not this pod
+        return False
+    wanted = peer["podSelector"].get("matchLabels", {})
+    return all(labels.get(k) == v for k, v in wanted.items())
+
+
+def _allows(policies: list[dict], direction: str, pod: dict, peer: dict, port: int):
+    """Whether NetworkPolicy semantics let ``pod`` talk to ``peer`` on
+    ``port`` in ``direction`` ("Ingress" or "Egress"), same namespace."""
+    side, key = ("from", "ingress") if direction == "Ingress" else ("to", "egress")
+    selecting = [
+        p
+        for p in policies
+        if _selects(p, pod) and direction in p["spec"].get("policyTypes", [])
+    ]
+    if not selecting:
+        return True
+    for policy in selecting:
+        for rule in policy["spec"].get(key) or []:
+            peers_ok = side not in rule or any(
+                _peer_matches(x, peer) for x in rule[side]
+            )
+            ports = rule.get("ports")
+            port_ok = not ports or any(p.get("port") == port for p in ports)
+            if peers_ok and port_ok:
+                return True
+    return False
+
+
+@pytest.mark.parametrize(
+    "main_sets",
+    [("network.enabled=true",), ("network.enabled=false",)],
+    ids=["main chart's policies on", "main chart's policies off"],
+)
+def test_the_two_charts_together_let_the_api_fetch_the_keys(main_sets):
+    main = render(sets=API_BASE + API_IN_NAMESPACE_SETS + main_sets)
+    devstack = _keycloak_render()
+    policies = objects(main, "NetworkPolicy") + objects(devstack, "NetworkPolicy")
+    api_pod = named(main, "Deployment", "htrflow-api")["spec"]["template"]
+    kc_pod = named(devstack, "Deployment", "keycloak")["spec"]["template"]
+    api, kc = api_pod["metadata"]["labels"], kc_pod["metadata"]["labels"]
+    assert _allows(policies, "Egress", api, kc, 8080)
+    assert _allows(policies, "Ingress", kc, api, 8080)
+    # ...and nobody else in the namespace reaches the Keycloak.
+    assert not _allows(policies, "Ingress", kc, {"app": "htrflow-web"}, 8080)
 
 
 def test_the_realm_has_one_public_device_client_and_both_mappers():

@@ -336,9 +336,10 @@ loopback address on port 18080, the address the port-forward below gives
 your workstation. Keycloak builds every token's issuer from it, however a
 request reaches it, while the API pod reads the signing keys from the
 Keycloak Service (`api.jwksUrl`), which Keycloak answers on the address the
-request came in on. `api.network.identityInNamespace` lets the API pod reach
-the Keycloak pod on 8080, and lets nothing else in; the Keycloak pod reaches
-nothing itself.
+request came in on. `api.network.identityInNamespace` lets the API pod out
+to the Keycloak pod on 8080. The Keycloak's own policy, in the devstack
+chart, admits the API pod on 8080 and nothing else, whether or not
+htrflow-batch renders its policies; the Keycloak pod reaches nothing itself.
 
 **Signing in.** Forward both Services, each in its own terminal:
 
