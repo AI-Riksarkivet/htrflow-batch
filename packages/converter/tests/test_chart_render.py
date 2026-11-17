@@ -2429,8 +2429,8 @@ API_IDENTITY_REFUSAL = (
 )
 API_ISSUER_REFUSAL = (
     "api.issuer must start with https:// (http:// only for localhost, 127.x.x.x"
-    " or [::1]): the signing keys it points at decide who may sign in, and they"
-    " must not be fetched in the clear"
+    " or [::1]) and carry no user name, query or fragment: the signing keys it"
+    " points at decide who may sign in, and they must not be fetched in the clear"
 )
 #: One clause per required key, after "api.enabled needs api.<key>: ".
 API_KEY_CLAUSES = {
@@ -2650,6 +2650,14 @@ def test_api_without_ingress_tls_is_refused_with_the_sentence():
         "/log",
         "/login",
         "/search",
+        "/a b",
+        "/a#b",
+        "/a?b",
+        "/a//b",
+        "/a/../b",
+        "/.",
+        "/a.b",
+        "/",
     ],
 )
 def test_a_colliding_or_malformed_api_path_is_refused(path: str):
@@ -2680,6 +2688,12 @@ def test_api_with_no_route_to_the_sign_in_service_is_refused():
         "ftp://sso.example",
         "sso.example",
         "http://127.0.0.1.evil.example",
+        "http://localhost:80@evil.example/r",
+        "https://user@sso.example/r",
+        "https://sso.example@evil.example",
+        "https://sso.example/r?x=1",
+        "https://sso.example/r#f",
+        "http://localhost/r?x=1",
     ],
 )
 def test_a_plain_http_issuer_is_refused(issuer: str):
@@ -2774,3 +2788,14 @@ BATCH_GUARDS.update(
         ),
     }
 )
+
+
+def test_allow_no_ingress_admits_nobody_on_the_api_port():
+    pol = named(api_render("api.allowNoIngress=true"), "NetworkPolicy", "htr-api")
+    assert "ingress" not in pol["spec"]
+    assert "ingress" in named(api_render(), "NetworkPolicy", "htr-api")["spec"]
+
+
+def test_a_path_is_quoted_in_the_ingress():
+    ing = named(api_render("api.path=/a-b_c/d1"), "Ingress", "htrflow-api")
+    assert ing["spec"]["rules"][0]["http"]["paths"][0]["path"] == "/a-b_c/d1"

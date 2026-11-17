@@ -141,12 +141,13 @@ is not one.
 {{- fail (printf "api.enabled needs api.%s: %s" $key $clause) }}
 {{- end }}
 {{- end }}
-{{- if not (regexMatch `^(?i:https://[^/?#]|http://(localhost|127(\.[0-9]{1,3}){3}|\[::1\])([:/?#]|$))` .Values.api.issuer) }}
-{{- fail "api.issuer must start with https:// (http:// only for localhost, 127.x.x.x or [::1]): the signing keys it points at decide who may sign in, and they must not be fetched in the clear" }}
+{{- /* No user name (an `@` in the authority hides the real host), no query, no fragment. */}}
+{{- if not (regexMatch `^(?i:https://[^/?#@\s]+(/[^?#\s]*)?|http://(localhost|127(\.[0-9]{1,3}){3}|\[::1\])(:[0-9]+)?(/[^?#\s]*)?)$` .Values.api.issuer) }}
+{{- fail "api.issuer must start with https:// (http:// only for localhost, 127.x.x.x or [::1]) and carry no user name, query or fragment: the signing keys it points at decide who may sign in, and they must not be fetched in the clear" }}
 {{- end }}
 {{- $path := .Values.api.path }}
 {{- if $path }}
-{{- if or (not (hasPrefix "/" $path)) (hasSuffix "/" $path) (regexMatch `^/(api|results|alto|log|login|search)(/|$)` $path) }}
+{{- if or (not (regexMatch `^(/[A-Za-z0-9_-]+)+$` $path)) (regexMatch `^/(api|results|alto|log|login|search)(/|$)` $path) }}
 {{- fail (include "htrflow-batch.apiPathRefusal" .) }}
 {{- end }}
 {{- else if not .Values.api.allowNoIngress }}
