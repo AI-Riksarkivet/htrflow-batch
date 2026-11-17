@@ -1886,6 +1886,93 @@ def _pipeline_add(args: argparse.Namespace) -> int:
         return 1
 
 
+def _remote_failed(error) -> int:
+    """The refusal as its two sentences on stderr: 2 when the person is not
+    signed in, 1 for anything else."""
+    from .remote import NotSignedIn
+
+    print(error.detail, file=sys.stderr)
+    if error.hint:
+        print(error.hint, file=sys.stderr)
+    return 2 if isinstance(error, NotSignedIn) else 1
+
+
+def _plain(value: object) -> str:
+    """A server's text on one line, with no control characters."""
+    return "".join(c if c.isprintable() else "?" for c in str(value))
+
+
+def _login(args: argparse.Namespace) -> int:
+    import os
+
+    from . import remote, signin
+
+    server = args.server or os.environ.get(remote.ENV_URL)
+    if not server:
+        print(
+            f"There is no server address to sign in to. Give --server URL or "
+            f"set {remote.ENV_URL}.",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        with remote.http_client() as client:
+            login = signin.device_login(server, client, print)
+        remote.save(login)
+    except KeyboardInterrupt:
+        print("sign-in interrupted", file=sys.stderr)
+        return 130
+    except remote.RemoteError as e:
+        return _remote_failed(e)
+    except OSError:
+        print("The sign-in could not be stored on this machine.", file=sys.stderr)
+        return 1
+    try:
+        who = remote.remote({**os.environ, remote.ENV_URL: login.server}).get(
+            "/v1/whoami"
+        )
+    except remote.RemoteError as e:
+        return _remote_failed(e)
+    print(f"signed in to {login.server} as {_plain(who.get('user', ''))}")
+    return 0
+
+
+def _logout() -> int:
+    from . import remote
+
+    if remote.forget():
+        print("signed out: the stored sign-in is removed from this machine")
+    else:
+        print("not signed in: there was nothing to remove")
+    return 0
+
+
+def _whoami(args: argparse.Namespace) -> int:
+    from . import remote
+
+    try:
+        session = remote.remote()
+        body = session.get("/v1/whoami")
+    except remote.RemoteError as e:
+        return _remote_failed(e)
+    if args.json:
+        print(json.dumps(body))
+        return 0
+    groups = body.get("groups")
+    rows = [
+        ("user", body.get("user", "")),
+        ("groups", ", ".join(map(str, groups)) if isinstance(groups, list) else ""),
+        ("namespace", body.get("namespace", "")),
+        ("queue", body.get("queue", "")),
+        ("server", session.login.server),
+        ("server version", body.get("serverVersion", "")),
+        ("client version", remote._version()),
+    ]
+    for name, value in rows:
+        print(f"{name}: {_plain(value)}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="htrflow-campaigns")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -2097,7 +2184,32 @@ def main(argv: list[str] | None = None) -> int:
         help="add although the last apply here ran a converter that does not "
         "keep added pipelines: you vouch that no such apply runs meanwhile",
     )
+    login_p = sub.add_parser(
+        "login",
+        help="sign in to the campaigns server in your browser",
+        description="Signs in with a code you confirm in a browser and "
+        "stores the result on this machine, replacing any earlier sign-in.",
+    )
+    login_p.add_argument("--server", help="the server's address (else HTRFLOW_API_URL)")
+    sub.add_parser(
+        "logout",
+        help="remove the stored sign-in from this machine only",
+        description="Removes the stored sign-in from this machine only; the "
+        "sign-in service is not told.",
+    )
+    whoami_p = sub.add_parser(
+        "whoami", help="show who the server says you are, and the versions"
+    )
+    whoami_p.add_argument(
+        "--json", action="store_true", help="print the server's answer as sent"
+    )
     args = parser.parse_args(argv)
+    if args.command == "login":
+        return _login(args)
+    if args.command == "logout":
+        return _logout()
+    if args.command == "whoami":
+        return _whoami(args)
     if args.command == "pipeline":
         return _pipeline_add(args)
     if args.command == "retry":
