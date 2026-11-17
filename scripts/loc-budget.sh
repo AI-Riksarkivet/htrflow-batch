@@ -937,10 +937,13 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 5140
 # provider the server names (every address through the address rule, the
 # wait bounded by the code's lifetime), and the login, logout and whoami
 # commands in cli.py; remote.py gains http_client() so both share one client.
-# 8505 -> 8539 (Task 5 review): one sanitizer (remote.plain) for everything
-# printed from the network, the sign-in service's refusals shown as status and
-# plain code only, a floor on the poll interval, and the post-save whoami.
-check converter "$(count packages/converter/src -name '*.py')" 8539
+# 8505 -> 8565 (2026-11-17, Task 5 review and the final review): one sanitizer
+# (remote.plain) for everything printed from the network, the sign-in
+# service's refusals shown as status and plain code only, a floor on the poll
+# interval, and the post-save whoami; then a version part over nine digits
+# read as unreadable, JSON nested past the parser read as an unreadable
+# answer, and an address that misses the API's path told so.
+check converter "$(count packages/converter/src -name '*.py')" 8565
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
@@ -1247,12 +1250,16 @@ check converter "$(count packages/converter/src -name '*.py')" 8539
 # card's chip; app.py +10, the route mounted and /api/v1/version's `search`
 # flag only when HTRFLOW_SOLR_URL is set; kube.py +6, that setting.
 check web       "$(count packages/web/src -name '*.py')" 4154
-# 0 -> 501 (2026-11-17, the campaigns API): a fourth package, the service that
-# checks a sign-in token and answers the htrflow-campaigns CLI. It holds the
-# configuration model, the token verifier, and the app: /healthz, /v1/login,
-# /v1/whoami behind one fail-closed guard (an ASGI layer that runs before
-# routing, refusing a root path), the error shape and the entry point.
-check api       "$(count packages/api/src -name '*.py')" 501
+# 0 -> 612 (2026-11-17, the campaigns API and its final review): a fourth
+# package, the service that checks a sign-in token and answers the
+# htrflow-campaigns CLI. It holds the configuration model (the issuer, key
+# address and path in the chart's shapes, checked again by create_app), the
+# token verifier (30 s of clock tolerance, a sentence per refusal), and the
+# app: /healthz, /v1/login, /v1/whoami behind one fail-closed guard (an ASGI
+# layer that runs before routing, refusing a root path, and the one place an
+# unhandled error is logged, by type and place only), the error shape (422
+# included) and the entry point.
+check api       "$(count packages/api/src -name '*.py')" 612
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
@@ -1849,12 +1856,14 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 7102
 # value; results.yaml -1, a duplicate digest check.
 # 2215 -> 2221 (Solr search): web.yaml +6, HTRFLOW_SOLR_URL only when
 # web.solrUrl is set, so search stays off by default.
-# 2221 -> 2461 (2026-11-17, the campaigns API): api.yaml is new (the
-# Deployment, ClusterIP Service, TLS Ingress, the pod's NetworkPolicy and the
-# in-namespace sign-in service's ingress policy), and _helpers.tpl gains the
-# refusals for it (Ingress with TLS, the required values, the issuer, the
-# path, the route to the sign-in service's keys); the issuer and path rules
-# hold the shapes the service takes, and the API's policy admits the
-# controller only with an Ingress.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2461
+# 2221 -> 2450 (2026-11-17, the campaigns API and its final review): api.yaml
+# is new (the Deployment, ClusterIP Service, TLS Ingress and the pod's
+# NetworkPolicy; the in-namespace sign-in service's ingress policy moved to
+# the devstack, its own chart), NOTES.txt gives the sign-in address, and
+# _helpers.tpl gains the refusals for it (Ingress with TLS, the required
+# values, the issuer, the key address, the path, the route to the sign-in
+# service's keys); the issuer, key address and path rules hold the shapes the
+# service takes, and the API's policy admits the controller only with an
+# Ingress.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 2450
 exit $fail
