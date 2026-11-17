@@ -16,6 +16,24 @@ web:
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: "1", memory: 256Mi }
+  service:
+    type: ClusterIP
+  ingress:
+    enabled: true
+    className: nginx
+    host: htr.example
+    tlsSecretName: htr-tls
+
+# The campaigns API on, behind the web front's Ingress with TLS.
+api:
+  enabled: true
+  image: 127.0.0.1:30500/htrflow-campaigns@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  issuer: https://sso.example/realms/htr
+  audience: htrflow-api
+  clientId: htrflow-cli
+  group: htr-operators
+  network:
+    identityCidrs: ["203.0.113.40/32"]
 
 apply:
   rbac:
@@ -38,6 +56,9 @@ network:
   # default and says so, which is also what exercises the opt-out.
   web:
     allowPublicIngress: true
+    ingressFrom:
+      - namespaceSelector:
+          matchLabels: { kubernetes.io/metadata.name: ingress-nginx }
   iiifCidrs: ["203.0.113.27/32"]
   nodeCidrs: ["192.0.2.56/32"]
   apiServer:

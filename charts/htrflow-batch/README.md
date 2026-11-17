@@ -94,6 +94,20 @@ The `nvidia` RuntimeClass and the device-plugin DaemonSet belong to
 
 ## Changelog
 
+### 0.20.0 — 2026-11-17 (the campaigns API)
+
+Added:
+- **`api.*`** (off by default): the campaigns API, one Deployment, a
+  ClusterIP Service and, unless `api.allowNoIngress`, its own Ingress on the
+  web front's host under `api.path` (`/control`) with the web front's TLS
+  Secret. The service checks every sign-in token itself and holds no
+  Kubernetes rights and no Secret. The chart refuses it without the Ingress
+  and TLS, without `api.image` (by digest), `issuer`, `audience`, `clientId`
+  and `group`, with a plain-http issuer outside loopback, with a path the web
+  front serves, and (with `network.enabled`) with no route to the sign-in
+  service's keys: `api.network.identityCidrs`, or
+  `api.network.identityInNamespace` for the devstack's Keycloak.
+
 ### 0.19.0 — 2026-10-21 (v0.13.0: Python 3.12 wrapper image, htrflow with QualityPrediction from AI-Riksarkivet/htrflow)
 
 Added:

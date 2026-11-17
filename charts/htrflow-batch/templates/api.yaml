@@ -1,0 +1,194 @@
+{{- if .Values.api.enabled }}
+{{- include "htrflow-batch.requireDigest" (list . .Values.api.image "api.image") }}
+# The campaigns API: one Deployment (packages/api, `htrflow-api`, from the
+# htrflow-campaigns image) that checks a sign-in token on every request.
+# Reached through the Ingress with TLS and nothing else (or by port-forward
+# with api.allowNoIngress); the Service is a ClusterIP, never a NodePort,
+# because a token must not travel unencrypted.
+# In this release it holds no Kubernetes rights and mounts no Secret: no
+# ServiceAccount, and no API token in the pod. It serves its routes under
+# api.path itself, so the Ingress needs no rewrite and no root path is set.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: htrflow-api
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+    app: htrflow-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: htrflow-api }
+  template:
+    metadata:
+      labels: { app: htrflow-api }   # NetworkPolicy selector (this file)
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "htrflow-batch.restrictedPod" 1000 | nindent 8 }}
+      containers:
+        - name: api
+          image: {{ .Values.api.image }}
+          imagePullPolicy: {{ include "htrflow-batch.pullPolicy" .Values.api.image }}
+          command: ["/app/.venv/bin/htrflow-api"]
+          securityContext:
+            {{- include "htrflow-batch.restrictedContainer" . | nindent 12 }}
+          env:
+            - name: HOME
+              value: /tmp
+            - name: HTRFLOW_API_ISSUER
+              value: {{ .Values.api.issuer | quote }}
+            {{- if .Values.api.jwksUrl }}
+            - name: HTRFLOW_API_JWKS_URL
+              value: {{ .Values.api.jwksUrl | quote }}
+            {{- end }}
+            - name: HTRFLOW_API_AUDIENCE
+              value: {{ .Values.api.audience | quote }}
+            - name: HTRFLOW_API_CLIENT_ID
+              value: {{ .Values.api.clientId | quote }}
+            - name: HTRFLOW_API_GROUP
+              value: {{ .Values.api.group | quote }}
+            - name: HTRFLOW_API_USER_CLAIM
+              value: {{ .Values.api.userClaim | quote }}
+            - name: HTRFLOW_API_GROUPS_CLAIM
+              value: {{ .Values.api.groupsClaim | quote }}
+            {{- if .Values.api.path }}
+            - name: HTRFLOW_API_PATH
+              value: {{ .Values.api.path | quote }}
+            {{- end }}
+            # The namespace it acts in, from the downward API so it is
+            # right whatever --namespace the release uses.
+            - name: HTRFLOW_API_NAMESPACE
+              valueFrom:
+                fieldRef: { fieldPath: metadata.namespace }
+            - name: HTRFLOW_API_QUEUE
+              value: {{ .Values.queue.name | quote }}
+          ports:
+            - containerPort: 8083
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8083 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8083 }
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: htrflow-api
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+    app: htrflow-api
+spec:
+  # Always ClusterIP, whatever web.service.type is.
+  type: ClusterIP
+  selector: { app: htrflow-api }
+  ports:
+    - name: http
+      port: 8083
+      targetPort: 8083
+{{- if not .Values.api.allowNoIngress }}
+---
+# Its own Ingress, on the web front's host, class, TLS Secret and
+# annotations: the web front's Ingress takes "/", this one takes api.path.
+# The validation in _helpers.tpl refuses it without TLS.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: htrflow-api
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+  {{- with .Values.web.ingress.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.web.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  tls:
+    - hosts: [{{ .Values.web.ingress.host | quote }}]
+      secretName: {{ .Values.web.ingress.tlsSecretName | quote }}
+  rules:
+    - host: {{ .Values.web.ingress.host | quote }}
+      http:
+        paths:
+          - path: {{ .Values.api.path }}
+            pathType: Prefix
+            backend:
+              service:
+                name: htrflow-api
+                port:
+                  number: 8083
+{{- end }}
+{{- if .Values.network.enabled }}
+---
+# The API pod: in on 8083 from what the web front's policy admits in ingress
+# mode (the controller's own pods, network.web.ingressFrom; with none, as
+# under allowNoIngress, nothing -- a port-forward goes through the kubelet);
+# out only to the sign-in service's key endpoint. DNS is the namespace-wide
+# policy's (htr-allow-dns). No apiserver and no store: this pod holds no
+# rights on either in this release.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: htr-api
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app: htrflow-api }
+  policyTypes: [Ingress, Egress]
+  {{- with .Values.network.web.ingressFrom }}
+  ingress:
+    - from: {{- toYaml . | nindent 8 }}
+      ports:
+        - { port: 8083 }
+  {{- end }}
+  egress:
+    {{- if .Values.api.network.identityInNamespace }}
+    - to:
+        - podSelector: { matchLabels: { app: keycloak } }
+      ports:
+        - { port: 8080 }
+    {{- end }}
+    {{- with .Values.api.network.identityCidrs }}
+    - to: {{ include "htrflow-batch.egressTo" (list $ .) }}
+      ports:
+        {{- range $.Values.api.network.identityPorts }}
+        - { port: {{ . }} }
+        {{- end }}
+    {{- end }}
+{{- if .Values.api.network.identityInNamespace }}
+---
+# The other direction of the in-namespace sign-in service: the namespace is
+# default-deny, so without this the API pod could not fetch the signing
+# keys. Only the API pod, only 8080. (The devstack's RustFS carries its own
+# ingress policy in its own chart; a sign-in service from no chart here does
+# not, so this chart renders it.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: htr-keycloak-from-api
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app: keycloak }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: htrflow-api } }
+      ports:
+        - { port: 8080 }
+{{- end }}
+{{- end }}
+{{- end }}

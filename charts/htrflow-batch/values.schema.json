@@ -11,6 +11,7 @@
     "queue",
     "web",
     "results",
+    "api",
     "apply",
     "security",
     "network"
@@ -381,6 +382,94 @@
         },
         "resources": {
           "$ref": "#/definitions/resources"
+        }
+      }
+    },
+    "api": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "image",
+        "path",
+        "issuer",
+        "jwksUrl",
+        "audience",
+        "clientId",
+        "group",
+        "userClaim",
+        "groupsClaim",
+        "allowNoIngress",
+        "resources",
+        "network"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "image": {
+          "$ref": "#/definitions/imageRef"
+        },
+        "path": {
+          "type": "string",
+          "description": "The prefix the campaigns API is served under on the web front's host. Must start with / and not end with one; empty only with allowNoIngress."
+        },
+        "issuer": {
+          "type": "string",
+          "description": "The sign-in service's issuer URL; https, or http for a loopback host."
+        },
+        "jwksUrl": {
+          "type": "string",
+          "description": "Where the pod reads the sign-in service's keys. Empty: found from the issuer."
+        },
+        "audience": {
+          "type": "string"
+        },
+        "clientId": {
+          "type": "string"
+        },
+        "group": {
+          "type": "string"
+        },
+        "userClaim": {
+          "type": "string",
+          "minLength": 1
+        },
+        "groupsClaim": {
+          "type": "string",
+          "minLength": 1
+        },
+        "allowNoIngress": {
+          "type": "boolean"
+        },
+        "resources": {
+          "$ref": "#/definitions/resources"
+        },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "identityCidrs",
+            "identityPorts",
+            "identityInNamespace"
+          ],
+          "properties": {
+            "identityCidrs": {
+              "$ref": "#/definitions/cidrList"
+            },
+            "identityPorts": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              }
+            },
+            "identityInNamespace": {
+              "type": "boolean"
+            }
+          }
         }
       }
     },

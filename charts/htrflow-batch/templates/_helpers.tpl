@@ -119,6 +119,44 @@ after the slash.
 {{- end }}
 {{- end }}
 {{- /*
+The campaigns API (templates/api.yaml). Every sentence names the value to
+set: a wrong one fails here, not as a crash-looping pod. The issuer rule
+mirrors the service's own (packages/api config.py): https, or http for a
+loopback host only -- matched on the host, so `http://127.0.0.1.evil.example`
+is not one.
+*/}}
+{{- if .Values.api.enabled }}
+{{- if and (not .Values.api.allowNoIngress) (not (and .Values.web.ingress.enabled .Values.web.ingress.tlsSecretName)) }}
+{{- fail "api.enabled needs web.ingress.enabled and web.ingress.tlsSecretName: the campaigns API is reached through the Ingress with TLS and nothing else, because a token must not travel unencrypted. For a cluster with no Ingress, set api.allowNoIngress=true and reach it by port-forward" }}
+{{- end }}
+{{- if and (not .Values.api.allowNoIngress) (not .Values.web.ingress.host) }}
+{{- fail "api.enabled needs web.ingress.host: the campaigns API is served on the web front's host" }}
+{{- end }}
+{{- if and .Values.network.enabled (not .Values.api.allowNoIngress) (not .Values.network.web.ingressFrom) }}
+{{- fail "api.enabled needs network.web.ingressFrom: the Ingress controller's pods are the only peers the API's NetworkPolicy admits" }}
+{{- end }}
+{{- $required := dict "image" "the htrflow-campaigns image, by digest" "issuer" "the sign-in service's issuer URL" "audience" "the audience its tokens are issued for" "clientId" "the client id the CLI signs in with" "group" "the group whose members may use the API" }}
+{{- range $key, $clause := $required }}
+{{- if not (index $.Values.api $key) }}
+{{- fail (printf "api.enabled needs api.%s: %s" $key $clause) }}
+{{- end }}
+{{- end }}
+{{- if not (regexMatch `^(?i:https://[^/?#]|http://(localhost|127(\.[0-9]{1,3}){3}|\[::1\])([:/?#]|$))` .Values.api.issuer) }}
+{{- fail "api.issuer must start with https:// (http:// only for localhost, 127.x.x.x or [::1]): the signing keys it points at decide who may sign in, and they must not be fetched in the clear" }}
+{{- end }}
+{{- $path := .Values.api.path }}
+{{- if $path }}
+{{- if or (not (hasPrefix "/" $path)) (hasSuffix "/" $path) (regexMatch `^/(api|results|alto|log|login|search)(/|$)` $path) }}
+{{- fail (include "htrflow-batch.apiPathRefusal" .) }}
+{{- end }}
+{{- else if not .Values.api.allowNoIngress }}
+{{- fail (include "htrflow-batch.apiPathRefusal" .) }}
+{{- end }}
+{{- if and .Values.network.enabled (not .Values.api.network.identityCidrs) (not .Values.api.network.identityInNamespace) }}
+{{- fail "api.enabled with network.enabled needs a route to the sign-in service's keys: list its ranges in api.network.identityCidrs, or set api.network.identityInNamespace=true for the devstack's Keycloak" }}
+{{- end }}
+{{- end }}
+{{- /*
 queue.flavors (B104). The schema holds each entry's shape; what it cannot
 say is a name listed twice -- the ClusterQueue would carry the flavor twice
 and Kueue refuses it -- or a quota of nothing written as a quantity ("0Gi"),
@@ -367,4 +405,9 @@ operator's own network.
   {{- $s3 = append $s3 (dict "to" (include "htrflow-batch.egressTo" (list $ .) | fromJsonArray) "ports" $ports) }}
 {{- end }}
 {{- toJson $s3 }}
+{{- end }}
+
+{{/* The one sentence for a malformed or colliding api.path. */}}
+{{- define "htrflow-batch.apiPathRefusal" -}}
+api.path must start with "/" and not end with one, and must not be /api, /results, /alto, /log, /login, /search or a path under them: the web front serves those. It may be empty only with api.allowNoIngress=true
 {{- end }}

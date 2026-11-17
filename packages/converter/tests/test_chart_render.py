@@ -2379,3 +2379,398 @@ def test_the_install_notes_say_the_web_front_is_off(tmp_path: Path):
     notes = install_notes(WEB_OFF + (POLICIES_OFF,), tmp_path)
     assert "Web front: not rendered (web.enabled=false)" in notes
     assert "NodePort" not in notes
+
+
+# --- the campaigns API (templates/api.yaml) ---------------------------------
+
+#: The web front's own opt-outs, so a render fails only on what a test breaks.
+API_BASE = (PUBLIC_INGRESS, POLICIES_OFF, SESSION_SECRET)
+API_IMAGE = (
+    "docker.io/riksarkivet/htrflow-campaigns@sha256:"
+    "1111111111111111111111111111111111111111111111111111111111111111"
+)
+#: The smallest set that turns the service on with an Ingress.
+API_SETS = (
+    "api.enabled=true",
+    f"api.image={API_IMAGE}",
+    "api.issuer=https://sso.example/realms/htr",
+    "api.audience=htrflow-api",
+    "api.clientId=htrflow-cli",
+    "api.group=htr-operators",
+    "web.service.type=ClusterIP",
+    "web.ingress.enabled=true",
+    "web.ingress.className=nginx-test",
+    "web.ingress.host=htr.example",
+    "web.ingress.tlsSecretName=htr-tls",
+    "network.web.ingressFrom[0].namespaceSelector.matchLabels.kubernetes\\.io/metadata\\.name=ingress-test",
+    'json:api.network.identityCidrs=["192.0.2.10/32"]',
+)
+API_NO_INGRESS_SETS = tuple(
+    s
+    for s in API_SETS
+    if not s.startswith(("web.service", "web.ingress", "network.web.ingressFrom"))
+) + ("api.allowNoIngress=true",)
+
+API_TLS_REFUSAL = (
+    "api.enabled needs web.ingress.enabled and web.ingress.tlsSecretName: the"
+    " campaigns API is reached through the Ingress with TLS and nothing else,"
+    " because a token must not travel unencrypted. For a cluster with no"
+    " Ingress, set api.allowNoIngress=true and reach it by port-forward"
+)
+API_PATH_REFUSAL = (
+    'api.path must start with "/" and not end with one, and must not be /api,'
+    " /results, /alto, /log, /login, /search or a path under them: the web"
+    " front serves those. It may be empty only with api.allowNoIngress=true"
+)
+API_IDENTITY_REFUSAL = (
+    "api.enabled with network.enabled needs a route to the sign-in service's"
+    " keys: list its ranges in api.network.identityCidrs, or set"
+    " api.network.identityInNamespace=true for the devstack's Keycloak"
+)
+API_ISSUER_REFUSAL = (
+    "api.issuer must start with https:// (http:// only for localhost, 127.x.x.x"
+    " or [::1]): the signing keys it points at decide who may sign in, and they"
+    " must not be fetched in the clear"
+)
+#: One clause per required key, after "api.enabled needs api.<key>: ".
+API_KEY_CLAUSES = {
+    "image": "the htrflow-campaigns image, by digest",
+    "issuer": "the sign-in service's issuer URL",
+    "audience": "the audience its tokens are issued for",
+    "clientId": "the client id the CLI signs in with",
+    "group": "the group whose members may use the API",
+}
+
+
+def api_render(*extra: str) -> list[dict]:
+    return render(sets=API_BASE + API_SETS + extra)
+
+
+def api_env(rendered: list[dict]) -> dict[str, dict]:
+    dep = named(rendered, "Deployment", "htrflow-api")
+    return {
+        e["name"]: e for e in dep["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+
+
+def test_the_default_render_has_no_api_objects(default: list[dict]):
+    assert not [
+        o for o in default if o["metadata"]["name"] in {"htrflow-api", "htr-api"}
+    ]
+    assert not [o for o in default if o["metadata"]["name"] == "htr-keycloak-from-api"]
+
+
+def test_the_api_deployment_runs_the_program_with_its_environment():
+    dep = named(
+        api_render("api.jwksUrl=https://keys.example/jwks"), "Deployment", "htrflow-api"
+    )
+    assert dep["spec"]["replicas"] == 1
+    pod = dep["spec"]["template"]["spec"]
+    assert pod["automountServiceAccountToken"] is False
+    assert "serviceAccountName" not in pod
+    assert pod["securityContext"]["runAsNonRoot"] is True
+    assert pod["securityContext"]["seccompProfile"] == {"type": "RuntimeDefault"}
+    [c] = pod["containers"]
+    assert c["image"] == API_IMAGE
+    assert c["command"] == ["/app/.venv/bin/htrflow-api"]
+    assert c["securityContext"]["readOnlyRootFilesystem"] is True
+    assert c["securityContext"]["allowPrivilegeEscalation"] is False
+    assert c["ports"] == [{"containerPort": 8083}]
+    for probe in ("readinessProbe", "livenessProbe"):
+        assert c[probe]["httpGet"] == {"path": "/healthz", "port": 8083}
+    assert {"name": "tmp", "emptyDir": {"sizeLimit": "64Mi"}} in pod["volumes"]
+    assert {"name": "tmp", "mountPath": "/tmp"} in c["volumeMounts"]
+    env = api_env(api_render("api.jwksUrl=https://keys.example/jwks"))
+    plain = {k: v["value"] for k, v in env.items() if "value" in v}
+    assert plain == {
+        "HOME": "/tmp",
+        "HTRFLOW_API_ISSUER": "https://sso.example/realms/htr",
+        "HTRFLOW_API_JWKS_URL": "https://keys.example/jwks",
+        "HTRFLOW_API_AUDIENCE": "htrflow-api",
+        "HTRFLOW_API_CLIENT_ID": "htrflow-cli",
+        "HTRFLOW_API_GROUP": "htr-operators",
+        "HTRFLOW_API_USER_CLAIM": "preferred_username",
+        "HTRFLOW_API_GROUPS_CLAIM": "groups",
+        "HTRFLOW_API_PATH": "/control",
+        "HTRFLOW_API_QUEUE": "htr-batch",
+    }
+    assert env["HTRFLOW_API_NAMESPACE"] == {
+        "name": "HTRFLOW_API_NAMESPACE",
+        "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+    }
+    assert all(v.get("value") != "" for v in env.values())
+    # No Secret is mounted or read in this release.
+    assert not any("secretKeyRef" in str(e) for e in c["env"])
+    assert not any("secret" in v for v in pod["volumes"])
+
+
+def test_the_queue_name_and_path_follow_their_values():
+    env = api_env(api_render("queue.name=other-queue", "api.path=/campaigns"))
+    assert env["HTRFLOW_API_QUEUE"]["value"] == "other-queue"
+    assert env["HTRFLOW_API_PATH"]["value"] == "/campaigns"
+
+
+def test_empty_optional_values_set_no_environment_name():
+    env = api_env(api_render())
+    assert "HTRFLOW_API_JWKS_URL" not in env
+    no_path = api_env(render(sets=API_BASE + API_NO_INGRESS_SETS + ("api.path=",)))
+    assert "HTRFLOW_API_PATH" not in no_path
+
+
+def test_the_api_service_is_cluster_ip_whatever_the_web_service_is():
+    for sets in (API_SETS, API_NO_INGRESS_SETS):
+        rendered = render(sets=API_BASE + sets)
+        svc = named(rendered, "Service", "htrflow-api")
+        assert svc["spec"]["type"] == "ClusterIP"
+        assert svc["spec"]["selector"] == {"app": "htrflow-api"}
+        assert [p["port"] for p in svc["spec"]["ports"]] == [8083]
+        assert "nodePort" not in svc["spec"]["ports"][0]
+    # The web Service is a NodePort here; the API's still is not.
+    rendered = render(
+        sets=API_BASE + API_NO_INGRESS_SETS + ("web.service.type=NodePort",)
+    )
+    assert named(rendered, "Service", "htrflow-web")["spec"]["type"] == "NodePort"
+    assert named(rendered, "Service", "htrflow-api")["spec"]["type"] == "ClusterIP"
+
+
+def test_the_api_ingress_has_the_webs_host_class_and_tls_and_its_own_path():
+    rendered = api_render('json:web.ingress.annotations={"example/x":"y"}')
+    ing = named(rendered, "Ingress", "htrflow-api")
+    assert ing["metadata"]["annotations"] == {"example/x": "y"}
+    assert ing["spec"]["ingressClassName"] == "nginx-test"
+    assert ing["spec"]["tls"] == [{"hosts": ["htr.example"], "secretName": "htr-tls"}]
+    [rule_] = ing["spec"]["rules"]
+    assert rule_["host"] == "htr.example"
+    [path] = rule_["http"]["paths"]
+    assert path["path"] == "/control"
+    assert path["pathType"] == "Prefix"
+    assert path["backend"]["service"] == {
+        "name": "htrflow-api",
+        "port": {"number": 8083},
+    }
+    # The web front's own Ingress is a separate object and still takes "/".
+    web = named(rendered, "Ingress", "htrflow-web")
+    assert web["spec"]["rules"][0]["http"]["paths"][0]["path"] == "/"
+    # No rewrite: the service serves its own prefix.
+    assert not any("rewrite" in k for k in ing["metadata"].get("annotations", {}))
+
+
+def test_allow_no_ingress_renders_no_ingress_and_needs_no_tls():
+    rendered = render(sets=API_BASE + API_NO_INGRESS_SETS)
+    assert objects(rendered, "Ingress") == []
+    named(rendered, "Deployment", "htrflow-api")
+    # Even with the web front's Ingress on, allowNoIngress renders none for the API.
+    both = api_render("api.allowNoIngress=true")
+    assert [o["metadata"]["name"] for o in objects(both, "Ingress")] == ["htrflow-web"]
+
+
+def test_the_api_policy_admits_the_ingress_and_reaches_only_the_sign_in_service():
+    rendered = render(sets=API_BASE + API_SETS + ("network.enabled=true",))
+    pol = named(rendered, "NetworkPolicy", "htr-api")
+    assert pol["spec"]["podSelector"] == {"matchLabels": {"app": "htrflow-api"}}
+    assert set(pol["spec"]["policyTypes"]) == {"Ingress", "Egress"}
+    web = named(rendered, "NetworkPolicy", "htr-web")
+    assert pol["spec"]["ingress"] == [
+        {"from": web["spec"]["ingress"][0]["from"], "ports": [{"port": 8083}]}
+    ]
+    [egress] = pol["spec"]["egress"]
+    assert egress["ports"] == [{"port": 443}]
+    assert [t["ipBlock"]["cidr"] for t in egress["to"]] == ["192.0.2.10/32"]
+    # Nothing in-namespace for the sign-in service when it is outside.
+    assert "htr-keycloak-from-api" not in {
+        o["metadata"]["name"] for o in objects(rendered, "NetworkPolicy")
+    }
+
+
+def test_the_api_policy_reaches_an_in_namespace_keycloak_by_label():
+    sets = tuple(s for s in API_SETS if "identityCidrs" not in s) + (
+        "api.network.identityInNamespace=true",
+    )
+    rendered = render(sets=API_BASE + sets)
+    pol = named(rendered, "NetworkPolicy", "htr-api")
+    assert pol["spec"]["egress"] == [
+        {
+            "to": [{"podSelector": {"matchLabels": {"app": "keycloak"}}}],
+            "ports": [{"port": 8080}],
+        }
+    ]
+    # The namespace is default-deny: the other direction is its own policy.
+    ingress = named(rendered, "NetworkPolicy", "htr-keycloak-from-api")
+    assert ingress["spec"]["podSelector"] == {"matchLabels": {"app": "keycloak"}}
+    assert ingress["spec"]["policyTypes"] == ["Ingress"]
+    assert ingress["spec"]["ingress"] == [
+        {
+            "from": [{"podSelector": {"matchLabels": {"app": "htrflow-api"}}}],
+            "ports": [{"port": 8080}],
+        }
+    ]
+
+
+def test_the_api_image_must_carry_a_digest():
+    result = helm_template(
+        sets=API_BASE
+        + API_SETS
+        + ("api.image=docker.io/riksarkivet/htrflow-campaigns:v1",)
+    )
+    assert result.returncode != 0
+    assert "api.image must be pinned by digest" in result.stderr
+
+
+@pytest.mark.parametrize("key", list(API_KEY_CLAUSES))
+def test_each_required_api_value_is_refused_by_name(key: str):
+    sets = tuple(s for s in API_SETS if not s.startswith(f"api.{key}="))
+    result = helm_template(sets=API_BASE + sets)
+    assert result.returncode != 0
+    assert f"api.enabled needs api.{key}: {API_KEY_CLAUSES[key]}" in result.stderr, (
+        result.stderr
+    )
+
+
+def test_api_without_ingress_tls_is_refused_with_the_sentence():
+    for drop in ("web.ingress.tlsSecretName=htr-tls", "web.ingress.enabled=true"):
+        sets = tuple(s for s in API_SETS if s != drop)
+        if drop.startswith("web.ingress.enabled"):
+            sets = tuple(s for s in sets if "ingressFrom" not in s)
+        result = helm_template(sets=API_BASE + sets)
+        assert result.returncode != 0
+        assert API_TLS_REFUSAL in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "",
+        "control",
+        "/control/",
+        "/api",
+        "/api/v2",
+        "/results",
+        "/results/x",
+        "/alto",
+        "/log",
+        "/login",
+        "/search",
+    ],
+)
+def test_a_colliding_or_malformed_api_path_is_refused(path: str):
+    result = helm_template(sets=API_BASE + API_SETS + (f"api.path={path}",))
+    assert result.returncode != 0
+    assert API_PATH_REFUSAL in result.stderr, result.stderr
+
+
+def test_an_empty_api_path_is_fine_without_an_ingress():
+    result = helm_template(sets=API_BASE + API_NO_INGRESS_SETS + ("api.path=",))
+    assert result.returncode == 0, result.stderr
+
+
+def test_api_with_no_route_to_the_sign_in_service_is_refused():
+    sets = tuple(s for s in API_SETS if "identityCidrs" not in s)
+    result = helm_template(sets=API_BASE + sets)
+    assert result.returncode != 0
+    assert API_IDENTITY_REFUSAL in result.stderr, result.stderr
+    # Without the NetworkPolicies there is nothing to route.
+    off = helm_template(sets=API_BASE + sets + ("network.enabled=false",))
+    assert off.returncode == 0, off.stderr
+
+
+@pytest.mark.parametrize(
+    "issuer",
+    [
+        "http://sso.example",
+        "ftp://sso.example",
+        "sso.example",
+        "http://127.0.0.1.evil.example",
+    ],
+)
+def test_a_plain_http_issuer_is_refused(issuer: str):
+    result = helm_template(sets=API_BASE + API_SETS + (f"api.issuer={issuer}",))
+    assert result.returncode != 0
+    assert API_ISSUER_REFUSAL in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize(
+    "issuer",
+    [
+        "http://localhost:8080/realms/htr",
+        "http://127.0.0.1:8080/r",
+        "http://127.1.2.3/r",
+        "http://[::1]:8080/r",
+        "https://sso.example",
+    ],
+)
+def test_https_and_loopback_issuers_are_taken(issuer: str):
+    api_render(f"api.issuer={issuer}")
+
+
+def test_the_full_values_render_turns_the_api_on(full: list[dict]):
+    dep = named(full, "Deployment", "htrflow-api")
+    assert dep["spec"]["template"]["spec"]["containers"][0]["command"] == [
+        "/app/.venv/bin/htrflow-api"
+    ]
+    assert named(full, "Service", "htrflow-api")["spec"]["type"] == "ClusterIP"
+    ing = named(full, "Ingress", "htrflow-api")
+    assert ing["spec"]["tls"]
+    named(full, "NetworkPolicy", "htr-api")
+
+
+def test_the_schema_refuses_an_unknown_api_key():
+    result = helm_template(sets=DEFAULT_SETS + ("api.typo=1",))
+    assert result.returncode != 0
+    assert "api" in result.stderr and "typo" in result.stderr
+
+
+API_HOST_REFUSAL = (
+    "api.enabled needs web.ingress.host: the campaigns API is served on the"
+    " web front's host"
+)
+API_INGRESS_FROM_REFUSAL = (
+    "api.enabled needs network.web.ingressFrom: the Ingress controller's pods"
+    " are the only peers the API's NetworkPolicy admits"
+)
+
+
+def _api_without(*prefixes: str) -> tuple[str, ...]:
+    return API_BASE + tuple(s for s in API_SETS if not s.startswith(prefixes))
+
+
+# The api's guards join the table test_each_guard_refuses_in_its_own_words
+# reads (GUARDED_CHARTS holds this dict itself).
+BATCH_GUARDS.update(
+    {
+        "api without ingress tls": (
+            None,
+            _api_without("web.ingress.tlsSecretName"),
+            API_TLS_REFUSAL,
+        ),
+        "api without a host": (
+            None,
+            _api_without("web.ingress.host"),
+            API_HOST_REFUSAL,
+        ),
+        "api without ingressFrom": (
+            None,
+            _api_without("network.web.ingressFrom"),
+            API_INGRESS_FROM_REFUSAL,
+        ),
+        "api without an image": (
+            None,
+            _api_without("api.image="),
+            "api.enabled needs api.image: " + API_KEY_CLAUSES["image"],
+        ),
+        "api with a plain http issuer": (
+            None,
+            API_BASE + API_SETS + ("api.issuer=http://sso.example",),
+            API_ISSUER_REFUSAL,
+        ),
+        "api with a colliding path": (
+            None,
+            API_BASE + API_SETS + ("api.path=/results",),
+            API_PATH_REFUSAL,
+        ),
+        "api with no route to the sign-in service": (
+            None,
+            _api_without("json:api.network"),
+            API_IDENTITY_REFUSAL,
+        ),
+    }
+)
