@@ -64,3 +64,21 @@ def test_a_path_with_a_prefix_is_kept():
 def test_the_config_cannot_be_changed():
     with pytest.raises(ValidationError):
         ApiConfig.from_env(REQUIRED).group = "other"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "HTRFLOW_API_AUDIENCE",
+        "HTRFLOW_API_CLIENT_ID",
+        "HTRFLOW_API_GROUP",
+        "HTRFLOW_API_NAMESPACE",
+        "HTRFLOW_API_QUEUE",
+        "HTRFLOW_API_USER_CLAIM",
+        "HTRFLOW_API_GROUPS_CLAIM",
+    ],
+)
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_a_blank_value_is_refused_and_named(name, blank):
+    with pytest.raises(ValueError, match=name):
+        ApiConfig.from_env({**REQUIRED, name: blank})

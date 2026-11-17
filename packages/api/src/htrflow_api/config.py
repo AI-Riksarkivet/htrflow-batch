@@ -52,6 +52,16 @@ class ApiConfig(BaseModel):
             return v
         raise ValueError("must be an https:// URL (http only for a loopback host)")
 
+    @field_validator(
+        "audience", "client_id", "group", "user_claim", "groups_claim",
+        "namespace", "queue",
+    )  # fmt: skip
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must not be empty")
+        return v
+
     @field_validator("path")
     @classmethod
     def _prefix(cls, v: str) -> str:
