@@ -79,6 +79,12 @@ log and the transcription in the viewer:
 
 ![The status page: one card per campaign, with its volumes, pages and problems](docs/slides/assets/part-1-status-page.png)
 
+Signing in from the command line is optional. With the campaigns API turned
+on, `htrflow-campaigns login` signs you in through a browser and `whoami`
+shows who the server says you are; campaigns still reach the cluster through
+git and `apply`, as before
+([Signing in](https://ai-riksarkivet.github.io/htrflow-batch/reference/cli/#signing-in)).
+
 - [Deploy](https://ai-riksarkivet.github.io/htrflow-batch/getting-started/deploy/): the production install.
 - [Run a campaign](https://ai-riksarkivet.github.io/htrflow-batch/getting-started/campaigns/): your first campaigns repo.
 - [How it works](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/architecture/), and the [slides](https://ai-riksarkivet.github.io/htrflow-batch/presentations/) that walk through it in pictures.

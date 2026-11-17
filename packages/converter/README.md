@@ -37,6 +37,9 @@ uv run htrflow-campaigns init <dir> [--force] [--ci github|azure]  # write a new
 uv run htrflow-campaigns validate <campaigns-repo>    # exit 1 and one line per problem
 uv run htrflow-campaigns render <campaigns-repo> --out <dir>
 make campaigns-apply DIR=<campaigns-repo> [PRUNE=1]   # = htrflow-campaigns apply: render + apply + Kueue pause sync
+uv run htrflow-campaigns login --server https://<host>/<path>  # sign in, in a browser, to the optional campaigns API
+uv run htrflow-campaigns whoami                       # who the campaigns API says you are
+uv run htrflow-campaigns logout                       # remove the stored sign-in from this machine
 ```
 
 `render` writes `<dir>/pipelines/<id>.yaml` and `<dir>/campaigns/<name>.yaml`

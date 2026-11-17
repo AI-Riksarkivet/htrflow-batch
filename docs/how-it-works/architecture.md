@@ -17,7 +17,7 @@ What changes when htrflow runs on many nodes instead of one machine:
 A *volume* on these pages is an archival volume, a bound unit of pages
 with a reference code, never a Kubernetes volume.
 
-![The map: the campaigns repo, delivery, Kyverno and Kueue in the cluster, the warm-up Job, the campaign pods and the web front, storage, and what sits outside](../assets/diagrams/architecture.svg)
+![The map: the campaigns repo, delivery, Kyverno and Kueue in the cluster, the warm-up Job, the campaign pods, the web front and the optional campaigns API, storage, and what sits outside: the sign-in service, the CLI, the IIIF servers and the browser](../assets/diagrams/architecture.svg)
 
 ![htrflow in a pod: the init container waits for the models, then the container fetches, runs htrflow and uploads page by page, verifies, publishes and exits](../assets/diagrams/htrflow-in-a-pod.svg)
 
@@ -33,6 +33,14 @@ Each piece is deliberately simple:
 | **htrflow** | HTR | Everything else. It is the unmodified package, driven as a library |
 
 The web front (`packages/web`) is a passive extra piece: a read-only view of live cluster state and `progress.json`, whose one write is each campaign's status ConfigMap ([Web front & read API](../reference/web.md)).
+
+The campaigns API (`packages/api`) is an optional piece, off by default
+(`api.enabled`). In this release it answers two things: the sign-in details
+the CLI asks for, and `whoami`. It checks every token against the sign-in
+service's published signing keys, holds no Kubernetes rights and mounts no
+Secret. It does not start, pause or remove campaigns: `apply` reaches the
+cluster exactly as before ([Signing in](../reference/cli.md#signing-in),
+[Security](security.md#the-campaigns-api)).
 
 ## Components and their boundaries
 

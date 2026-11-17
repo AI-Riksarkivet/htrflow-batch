@@ -48,6 +48,8 @@ renders a suitable ServiceAccount behind `apply.rbac.enabled`
 `login`, `logout` and `whoami` are for a campaigns server that answers over
 HTTPS. They need no cluster access.
 
+![Signing in, in order: the CLI asks the campaigns API for the sign-in details, gets a device code from the sign-in service, prints a link and a code, waits for the token and stores it; whoami then sends the token to the campaigns API, which checks it against the sign-in service's signing keys and answers who you are](../assets/diagrams/seq-sign-in.svg)
+
 ```
 htrflow-campaigns login --server https://<host>/<path>
 htrflow-campaigns whoami
