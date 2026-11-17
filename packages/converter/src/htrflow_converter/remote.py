@@ -165,6 +165,14 @@ def forget(env: Mapping[str, str] | None = None) -> bool:
     return True
 
 
+def plain(text: object, limit: int = 500) -> str:
+    """Text that came from the network, safe to print: anything not printable
+    (control characters, escapes, bidi controls, newlines) becomes ``?``, and
+    the text is cut to ``limit`` characters."""
+    shown = "".join(c if c.isprintable() else "?" for c in str(text))
+    return shown if len(shown) <= limit else shown[: limit - 1] + "…"
+
+
 def _body(response: httpx.Response) -> tuple[str, str]:
     try:
         body = response.json()

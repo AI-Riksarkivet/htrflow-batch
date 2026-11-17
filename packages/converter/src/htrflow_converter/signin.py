@@ -18,13 +18,14 @@ from .remote import (
     _lifetime,
     _version,
     checked_address,
+    plain,
 )
 
 _SERVICE = "the sign-in service"
 _DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 _CODE = re.compile(r"[a-z_]{1,40}")
 _USER_CODE = re.compile(r"[A-Za-z0-9 _-]{1,64}")
-_INTERVAL = 5.0
+_INTERVAL = 5.0  # RFC 8628's default, and the least wait between polls
 _MAX_INTERVAL = 60.0
 _MAX_LIFETIME = 3600.0
 _MAX_FAILURES = 3  # network failures in a row that end the wait
@@ -46,6 +47,7 @@ def too_old(client: str, minimum: str) -> bool:
 
 
 def _call(client: httpx.Client, host: str, method: str, url: str, **kw: Any):
+    host = plain(host, 200)
     try:
         response = client.request(method, url, **kw)
     except httpx.HTTPError:
@@ -63,18 +65,37 @@ def _call(client: httpx.Client, host: str, method: str, url: str, **kw: Any):
 
 
 def _object(response: httpx.Response, what: str) -> dict:
+    """The JSON object a successful answer holds. The server's own refusal is
+    shown as it sent it; of the sign-in service only the status and a plain
+    error code are ever shown."""
     try:
         body = response.json()
     except ValueError:
         body = None
-    if not response.is_success or not isinstance(body, dict):
-        detail, hint = _body(response) if not response.is_success else ("", "")
+    if response.is_success and isinstance(body, dict):
+        return body
+    if what == _SERVICE:
+        if response.is_success:
+            raise RemoteError(
+                "The sign-in service answered with something this CLI cannot read.",
+                _TRY,
+            )
         raise RemoteError(
-            detail or f"{what} answered with something this CLI cannot read.",
-            hint or _TRY,
+            f"The sign-in service answered {response.status_code}{_named(body)}.",
+            _TRY,
             response.status_code,
         )
-    return body
+    detail, hint = _body(response) if not response.is_success else ("", "")
+    raise RemoteError(
+        detail or "the server answered with something this CLI cannot read.",
+        hint or _TRY,
+        response.status_code,
+    )
+
+
+def _named(body: Any) -> str:
+    code = body.get("error") if isinstance(body, dict) else None
+    return f" ({code})" if isinstance(code, str) and _CODE.fullmatch(code) else ""
 
 
 def _text(body: dict, key: str, what: str) -> str:
@@ -100,9 +121,7 @@ def _shown(url: str, what: str, complete: bool = False) -> str:
 
 
 def _refusal(body: dict) -> RemoteError:
-    code = body.get("error")
-    named = f" ({code})" if isinstance(code, str) and _CODE.fullmatch(code) else ""
-    return RemoteError(f"The sign-in service refused the sign-in{named}.", _TRY)
+    return RemoteError(f"The sign-in service refused the sign-in{_named(body)}.", _TRY)
 
 
 def _positive(value: Any, default: float) -> float:
@@ -142,8 +161,8 @@ def device_login(
     )
     if str(meta.get("issuer", "")).removesuffix("/") != given.removesuffix("/"):
         raise RemoteError(
-            f"The sign-in service names itself {meta.get('issuer')!s:.200}, "
-            f"but the server names {given}.",
+            f"The sign-in service names itself {plain(meta.get('issuer'), 200)}, "
+            f"but the server names {plain(given, 200)}.",
             "Tell whoever runs the server.",
         )
     if not all(isinstance(meta.get(k), str) and meta[k] for k in _ENDPOINTS):
@@ -175,7 +194,9 @@ def device_login(
         say(f"The code is {user_code}.")
     else:
         say(f"Open {uri} and enter the code {user_code}.")
-    interval = min(_positive(device.get("interval"), _INTERVAL), _MAX_INTERVAL)
+    interval = min(
+        max(_positive(device.get("interval"), _INTERVAL), _INTERVAL), _MAX_INTERVAL
+    )
     lifetime = min(_positive(device.get("expires_in"), 600.0), _MAX_LIFETIME)
     deadline = now() + lifetime
 
@@ -198,7 +219,7 @@ def device_login(
             failures += 1
             if failures >= _MAX_FAILURES:
                 raise RemoteError(
-                    f"Could not reach {token_endpoint} while waiting.",
+                    f"Could not reach {plain(token_endpoint, 200)} while waiting.",
                     "Check your network, then sign in again.",
                 ) from None
             continue
