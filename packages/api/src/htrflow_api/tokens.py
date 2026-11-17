@@ -18,6 +18,7 @@ from htrflow_api.config import ApiConfig
 ALGORITHMS = ("RS256", "RS384", "RS512", "PS256", "PS384", "PS512",
               "ES256", "ES384", "ES512", "EdDSA")  # fmt: skip
 REFETCH_SECONDS = 60
+FETCH_SECONDS = 5.0
 
 _RE_LOGIN = "Sign in again: htrflow-campaigns login"
 _GROUP_HINT = (
@@ -59,61 +60,70 @@ class Verifier:
         self._cfg = cfg
         self._fetch = fetch_keys or self._fetch_over_http
         self._clock = clock
-        self._http = http or httpx.Client(timeout=5.0)
-        self._lock = threading.Lock()
-        self._keys: dict[str, object] = {}
+        self._http = http  # built on first use, so a supplied fetch needs none
+        self._lock = threading.Lock()  # guards reloads only, never a lookup
+        self._keys: dict[str, object] = {}  # replaced whole, never edited
         self._last: float | None = None  # when the keys were last asked for
         self._down = False  # whether that last ask failed
 
-    def _get_json(self, url: str) -> dict:
-        try:
-            resp = self._http.get(url)
-            doc = resp.json() if resp.status_code == 200 else None
-        except (httpx.HTTPError, ValueError) as e:
-            raise _Unreachable from e
+    def _get_json(self, url: str, deadline: float) -> dict:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise _Unreachable
+        if self._http is None:
+            self._http = httpx.Client()
+        resp = self._http.get(url, timeout=left)
+        doc = resp.json() if resp.status_code == 200 else None
         if not isinstance(doc, dict):
             raise _Unreachable
         return doc
 
     def _fetch_over_http(self) -> dict:
+        # One 5 s budget for discovery and keys together: each request gets
+        # what is left of it as its timeout, and none starts once it is spent.
+        deadline = time.monotonic() + FETCH_SECONDS
         url = self._cfg.jwks_url
         if not url:
             base = self._cfg.issuer.rstrip("/")
-            url = self._get_json(f"{base}/.well-known/openid-configuration").get(
-                "jwks_uri"
-            )
+            found = self._get_json(f"{base}/.well-known/openid-configuration", deadline)
+            url = found.get("jwks_uri")
             if not isinstance(url, str) or not url:
                 raise _Unreachable
-        return self._get_json(url)
+        return self._get_json(url, deadline)
 
     def _reload(self) -> None:
-        """Ask the provider for its keys (lock held)."""
+        """Ask the provider for its keys (lock held). Any failure to fetch or
+        read the answer means the provider cannot be reached."""
         self._last = self._clock()
         try:
-            doc = self._fetch()
-            entries = doc["keys"]
+            entries = self._fetch()["keys"]
             if not isinstance(entries, list):
                 raise _Unreachable
-        except (_Unreachable, httpx.HTTPError, KeyError, TypeError, ValueError):
+        except Exception:  # noqa: BLE001 - whatever it was, the keys are not there
             self._down = True
             return
         keys: dict[str, object] = {}
         for entry in entries:
             try:
                 keys[entry["kid"]] = jwt.PyJWK.from_dict(entry).key
-            except (jwt.PyJWTError, KeyError, TypeError, ValueError):
-                continue  # a key this library cannot load is not fatal
+            except Exception:  # noqa: BLE001 - one bad entry is not fatal
+                continue
         self._keys, self._down = keys, False
 
-    def _key_for(self, kid: str | None):
+    def _key_for(self, kid: str):
+        key = self._keys.get(kid)  # no lock: a cached key never waits on a fetch
+        if key is not None:
+            return key
         with self._lock:
-            if kid in self._keys:
-                return self._keys[kid]
+            key = self._keys.get(kid)
+            if key is not None:
+                return key
             due = self._last is None or self._clock() - self._last >= REFETCH_SECONDS
             if due:
                 self._reload()
-                if kid in self._keys:
-                    return self._keys[kid]
+                key = self._keys.get(kid)
+                if key is not None:
+                    return key
             if self._down:
                 raise Refused(503, _DOWN_DETAIL, _DOWN_HINT)
         raise _unauthorized(

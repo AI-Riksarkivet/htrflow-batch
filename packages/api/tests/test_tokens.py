@@ -1,3 +1,5 @@
+import threading
+
 import httpx
 import pytest
 from api_fakes import Signer
@@ -194,3 +196,82 @@ def test_a_failing_provider_is_a_503(cfg, signer, handler):
     with pytest.raises(Refused) as e:
         Verifier(cfg, http=_client(handler)).verify(signer.token())
     assert e.value.status == 503
+
+
+# Whatever the provider or the fetch does wrong, the answer is a refusal.
+def test_a_bad_entry_is_skipped_and_the_good_one_beside_it_is_used(cfg, signer):
+    doc = {"keys": ["junk", 5, {"no": "kid"}, *signer.jwks()["keys"]]}
+    assert Verifier(cfg, lambda: doc).verify(signer.token()).user == "ada"
+
+
+def test_a_deeply_nested_body_is_a_503(cfg, signer):
+    def handler(req):
+        return httpx.Response(200, content=b"[" * 100_000)
+
+    with pytest.raises(Refused) as e:
+        Verifier(cfg, http=_client(handler)).verify(signer.token())
+    assert e.value.status == 503
+
+
+def test_a_malformed_jwks_uri_is_a_503(cfg, signer):
+    def handler(req):
+        return httpx.Response(200, json={"jwks_uri": "http://[::1"})
+
+    with pytest.raises(Refused) as e:
+        Verifier(cfg, http=_client(handler)).verify(signer.token())
+    assert e.value.status == 503
+
+
+def test_a_fetch_that_raises_anything_is_a_503(cfg, signer):
+    def fetch():
+        raise OSError("disk")
+
+    with pytest.raises(Refused) as e:
+        Verifier(cfg, fetch).verify(signer.token())
+    assert e.value.status == 503
+
+
+def test_a_first_fetch_that_fails_is_a_503_then_recovers_a_minute_later(cfg, signer):
+    up, now = [False], [0.0]
+
+    def fetch():
+        if not up[0]:
+            raise OSError("down")
+        return signer.jwks()
+
+    v = Verifier(cfg, fetch, clock=lambda: now[0])
+    for _ in range(2):
+        with pytest.raises(Refused) as e:
+            v.verify(signer.token())
+        assert e.value.status == 503
+    up[0], now[0] = True, REFETCH_SECONDS + 1
+    assert v.verify(signer.token()).user == "ada"
+
+
+def test_a_cached_key_does_not_wait_for_a_slow_fetch(cfg, signer):
+    release, started = threading.Event(), threading.Event()
+    slow = [False]
+
+    def fetch():
+        if slow[0]:
+            started.set()
+            release.wait(10)
+        return signer.jwks()
+
+    now = [0.0]
+    v = Verifier(cfg, fetch, clock=lambda: now[0])
+    v.verify(signer.token())
+    slow[0], now[0] = True, REFETCH_SECONDS + 1
+    stuck = threading.Thread(
+        target=lambda: pytest.raises(Refused, v.verify, Signer(kid="x").token())
+    )
+    stuck.start()
+    assert started.wait(5)
+    done = []
+    quick = threading.Thread(target=lambda: done.append(v.verify(signer.token())))
+    quick.start()
+    quick.join(3)
+    finished_while_blocked = not quick.is_alive()
+    release.set()
+    stuck.join(5)
+    assert finished_while_blocked and done[0].user == "ada"
