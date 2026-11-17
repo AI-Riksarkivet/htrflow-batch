@@ -1889,17 +1889,12 @@ def _pipeline_add(args: argparse.Namespace) -> int:
 def _remote_failed(error) -> int:
     """The refusal as its two sentences on stderr: 2 when the person is not
     signed in, 1 for anything else."""
-    from .remote import NotSignedIn
+    from .remote import NotSignedIn, plain
 
-    print(error.detail, file=sys.stderr)
+    print(plain(error.detail), file=sys.stderr)
     if error.hint:
-        print(error.hint, file=sys.stderr)
+        print(plain(error.hint), file=sys.stderr)
     return 2 if isinstance(error, NotSignedIn) else 1
-
-
-def _plain(value: object) -> str:
-    """A server's text on one line, with no control characters."""
-    return "".join(c if c.isprintable() else "?" for c in str(value))
 
 
 def _login(args: argparse.Namespace) -> int:
@@ -1931,9 +1926,19 @@ def _login(args: argparse.Namespace) -> int:
         who = remote.remote({**os.environ, remote.ENV_URL: login.server}).get(
             "/v1/whoami"
         )
+    except KeyboardInterrupt:
+        print("sign-in interrupted", file=sys.stderr)
+        return 130
     except remote.RemoteError as e:
-        return _remote_failed(e)
-    print(f"signed in to {login.server} as {_plain(who.get('user', ''))}")
+        # the sign-in worked and is stored; only this account is refused
+        print(
+            f"signed in to {remote.plain(login.server, 200)}, but the server "
+            "refused this account:",
+            file=sys.stderr,
+        )
+        _remote_failed(e)
+        return 1
+    print(f"signed in to {login.server} as {remote.plain(who.get('user', ''))}")
     return 0
 
 
@@ -1969,7 +1974,7 @@ def _whoami(args: argparse.Namespace) -> int:
         ("client version", remote._version()),
     ]
     for name, value in rows:
-        print(f"{name}: {_plain(value)}")
+        print(f"{name}: {remote.plain(value)}")
     return 0
 
 
