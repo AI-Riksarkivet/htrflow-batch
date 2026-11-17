@@ -925,7 +925,12 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 5140
 # +47: the marking and the rules for what is plainly two halves of one word;
 # the rest is the argument, its help (which says it takes word boxes) and
 # the Options field on their way to scale_alto.
-check converter "$(count packages/converter/src -name '*.py')" 7815
+# 7815 -> 8099 (2026-11-17, campaigns API, Task 4): remote.py, the CLI's side
+# of the campaigns API -- the address rule (https, or loopback over http), the
+# stored login (0600 file in a 0700 directory, written whole), and the Remote
+# that refreshes an expiring token and turns every refusal into the server's
+# two sentences. No command yet; cli.py is untouched.
+check converter "$(count packages/converter/src -name '*.py')" 8099
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
