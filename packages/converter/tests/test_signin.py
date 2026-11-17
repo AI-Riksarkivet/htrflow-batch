@@ -294,6 +294,55 @@ def test_failures_that_are_not_in_a_row_do_not_add_up():
     run(Provider([down, down, PENDING, down, down, TOKENS]))
 
 
+ADDRESS_HINT = (
+    "Check the address: it ends with the path the campaigns API is served "
+    "under, for example https://<host>/control."
+)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        httpx.Response(404, text="<html>not found</html>"),
+        httpx.Response(
+            404,
+            json={"detail": "There is nothing at this address.", "hint": "Check."},
+        ),
+        httpx.Response(200, text="<!doctype html><title>campaigns</title>"),
+        httpx.Response(200, json={"ok": True}),
+        httpx.Response(200, json={"issuer": ISSUER}),
+        httpx.Response(200, json=[1]),
+    ],
+    ids=["404 page", "404 json", "web page", "other json", "half", "list"],
+)
+def test_an_address_without_the_apis_path_says_so(answer):
+    class P(Provider):
+        def __call__(self, request):
+            if str(request.url) == f"{SERVER}/v1/login":
+                self.requests.append(request)
+                return answer
+            return super().__call__(request)
+
+    provider = P([TOKENS])
+    with pytest.raises(RemoteError) as e:
+        run(provider)
+    assert e.value.hint == ADDRESS_HINT
+    assert "<" not in e.value.detail
+    assert [str(r.url) for r in provider.requests] == [f"{SERVER}/v1/login"]
+
+
+def test_another_refusal_of_the_login_call_keeps_the_servers_hint():
+    class P(Provider):
+        def __call__(self, request):
+            if str(request.url) == f"{SERVER}/v1/login":
+                return httpx.Response(503, json={"detail": "d.", "hint": "h."})
+            return super().__call__(request)
+
+    with pytest.raises(RemoteError) as e:
+        run(P([TOKENS]))
+    assert (e.value.detail, e.value.hint) == ("d.", "h.")
+
+
 def test_the_server_must_be_https_or_loopback():
     with pytest.raises(RemoteError):
         device_login("http://h.example", Provider([]).client(), print)

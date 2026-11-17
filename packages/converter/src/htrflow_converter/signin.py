@@ -30,6 +30,10 @@ _MAX_INTERVAL = 60.0
 _MAX_LIFETIME = 3600.0
 _MAX_FAILURES = 3  # network failures in a row that end the wait
 _TRY = "Try again; if it stays, tell whoever runs the server."
+_ADDRESS = (
+    "Check the address: it ends with the path the campaigns API is served "
+    "under, for example https://<host>/control."
+)
 
 
 def _numbers(version: str) -> tuple[int, int, int] | None:
@@ -97,6 +101,23 @@ def _object(response: httpx.Response, what: str) -> dict:
     )
 
 
+def _sign_in_details(response: httpx.Response) -> dict:
+    """The server's ``/v1/login`` answer. A 404, or a success that is not the
+    sign-in details, is an address that misses the API's path (the web front
+    on the same host answers it), and the hint says so."""
+    try:
+        info = _object(response, "the server")
+    except RemoteError as e:
+        if response.status_code == 404 or response.is_success:
+            raise RemoteError(e.detail, _ADDRESS, e.status) from None
+        raise
+    if not all(
+        isinstance(info.get(k), str) and info[k] for k in ("issuer", "clientId")
+    ):
+        raise RemoteError("the server did not give the sign-in details.", _ADDRESS)
+    return info
+
+
 def _named(body: Any) -> str:
     code = body.get("error") if isinstance(body, dict) else None
     return f" ({code})" if isinstance(code, str) and _CODE.fullmatch(code) else ""
@@ -142,7 +163,7 @@ def device_login(
     now: Callable[[], float] = time.time,
 ) -> Login:
     server = checked_address(server, "the server")
-    info = _object(_call(client, server, "GET", f"{server}/v1/login"), "the server")
+    info = _sign_in_details(_call(client, server, "GET", f"{server}/v1/login"))
     minimum = info.get("minClient")
     if isinstance(minimum, str) and too_old(_version(), minimum):
         raise RemoteError(
