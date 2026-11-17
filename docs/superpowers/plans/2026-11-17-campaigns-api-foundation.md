@@ -25,7 +25,7 @@
 - **Repository docs name no person, no host and no site**, and the general docs (everything under `docs/` outside `docs/superpowers`) pass `scripts/docs_lint.py`.
 - **Commits are small:** one logical step each, no co-author trailer. Before any push: `make ci` and `bash scripts/loc-budget.sh`.
 - **Line budgets** live in `scripts/loc-budget.sh`. A raise is the measured count after the task, with a dated line of reason above it, like the raises already there.
-- **The dev cluster is shared.** Nothing is installed or upgraded on it before the owner has named the namespace and release to use (Task 8, Step 1).
+- **Only the local cluster is used.** The owner ruled on 2026-11-17 that Task 8 runs on the local k3s cluster (releases `htr` and `htr-devstack` in namespace `htr-batch`) and that the shared development cluster is never touched. Where this plan says "dev cluster" it means the local one. Other releases and namespaces on the local cluster are not touched either.
 
 ## Review Focus
 
@@ -940,7 +940,7 @@ keycloak.enabled needs devStack.insecureDefaults=true: this Keycloak runs in dev
 keycloak.enabled needs keycloak.image by digest, keycloak.adminPassword and keycloak.userPassword
 ```
 
-- [ ] **Step 1: Ask the owner which namespace and release on the dev cluster to use**, and whether the release's values may be upgraded with `api.enabled`. Do nothing on the cluster before the answer.
+- [ ] **Step 1: Confirm the target is the local cluster.** `kubectl config current-context` and `helm list -n htr-batch` must show the local k3s cluster with releases `htr` and `htr-devstack`. Anything else: stop and report. Before each `helm upgrade` in Step 6, render the upgrade (`helm upgrade --dry-run=server`) and compare it with `helm get manifest`: only the new Keycloak and campaigns API objects, and the allow-list entry their images need, may differ. If anything else would change, stop and report.
 
 - [ ] **Step 2: Write the failing chart tests**
 
