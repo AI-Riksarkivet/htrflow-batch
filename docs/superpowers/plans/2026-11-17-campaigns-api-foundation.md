@@ -1016,6 +1016,59 @@ git commit -m "docs(dev-cluster): signing in to the campaigns API on a developme
 
 ---
 
+### Task 9: The READMEs and the diagrams
+
+Added on 2026-11-17 at the owner's request: the branch had changed no diagram and neither the root README nor the converter's.
+
+**Files:**
+- Modify: `docs/slides/diagrams/build_docs.py` (the source of every SVG under `docs/assets/diagrams`)
+- Create: `docs/assets/diagrams/seq-sign-in.svg` (generated)
+- Modify: `docs/assets/diagrams/architecture.svg` (generated), `docs/how-it-works/architecture.md`, `docs/reference/cli.md`, `README.md`, `packages/converter/README.md`
+
+**Interfaces:**
+- Consumes: what Tasks 1 to 7 built, read from the code: `packages/api/src/htrflow_api/app.py` and `tokens.py`, `packages/converter/src/htrflow_converter/signin.py` and `remote.py`, `charts/htrflow-batch/templates/api.yaml`.
+- Produces: no code. Two diagrams and four pages that say what exists in this release and nothing more.
+
+What the pictures must say, and must not:
+
+- The campaigns API is **optional** (`api.enabled`, off by default). In this release it answers the sign-in details and `whoami`, holds **no Kubernetes rights** and mounts no Secret. It does not start, pause or remove anything yet, and `apply` reaches the cluster exactly as before. No arrow from the campaigns API to Jobs, Kueue or the bucket.
+- It is reached through the web front's Ingress with TLS, or by a port-forward on a development cluster.
+- It checks each token against the sign-in service's published signing keys; the token is never forwarded.
+
+- [ ] **Step 1: The map (`architecture.svg`).** In `build_docs.py`, the "Kubernetes cluster" group's second row has a free first column: put a card there for the campaigns API (title and two sub-lines within the kit's widths), marked optional the way the diagram marks the optional image cache. Show the sign-in service as an outside party and one arrow from the campaigns API to it for the signing keys, and the CLI reaching the campaigns API from outside. Arrows never cross a card or a group label; if the present layout cannot carry both arrows cleanly, widen the "Outside" group to all three columns or add one lane, and say in the report what you chose. Change nothing else on the map.
+
+- [ ] **Step 2: A new sequence diagram (`seq-sign-in.svg`)**, drawn with `seqkit.Steps` like `seq-campaign.svg`, titled "Signing in, in order". Actors: the person, the CLI, the campaigns API, the sign-in service. Steps, each checked against the code before it is drawn:
+  1. the CLI asks the campaigns API for the sign-in details, with no token;
+  2. the CLI reads the sign-in service's discovery document and asks for a device code;
+  3. the CLI prints a link and a code; the person signs in in a browser;
+  4. a loop: the CLI asks the sign-in service for the token, waiting between 5 and 60 seconds each time;
+  5. the CLI stores the sign-in in a file only the person can read;
+  6. `whoami`: the CLI calls the campaigns API with the token;
+  7. the campaigns API fetches the signing keys the first time, or when a token names a key it has not seen;
+  8. the campaigns API checks the signature, the issuer, the audience, the expiry and the group, and answers the user, groups, namespace and queue.
+  A note under it: the token goes to the campaigns API and nowhere else.
+
+- [ ] **Step 3: Generate and look.** Run `python3 docs/slides/diagrams/build_docs.py`. `git status` must show only `architecture.svg` changed and `seq-sign-in.svg` new among the SVGs; if the run rewrites any other SVG, do not commit those and report it. Rasterise both (`uv run --no-project --with cairosvg python -c ...` into the session scratchpad, never into the repository) and read the PNGs: no clipped label, no arrow through a card, nothing overlapping. The kit's own fit check is the authority for label widths.
+
+- [ ] **Step 4: The pages.**
+  - `docs/how-it-works/architecture.md`: the map's alt text names the campaigns API; one short paragraph (or one row, if the page lists its parts in a table) saying what it is, that it is optional, and what it does and does not do in this release.
+  - `docs/reference/cli.md`, section "Signing in": embed `seq-sign-in.svg` with alt text that says what the picture shows.
+  - `README.md`: two or three plain sentences where the README describes how a person works with the system: signing in exists, it is optional, with a link to the CLI reference's "Signing in". Do not touch the README's overview diagram: one campaign's path from git to the viewer does not pass through the campaigns API in this release.
+  - `packages/converter/README.md`: name `login`, `logout` and `whoami` beside the commands it lists, one line each.
+
+- [ ] **Step 5: The gates.** The strict site build exits 0 (`ZENSICAL=<a zensical outside the worktree> scripts/docs-site.sh build --clean --strict`); `uv run --all-packages pytest -q packages/converter/tests/test_docs_lint.py packages/converter/tests/test_documented_installs.py` passes; the general docs name no person, host or site and say "a loopback address", never a literal one.
+
+- [ ] **Step 6: Commit**, the diagram source with its two SVGs in one commit and the pages in another.
+
+```bash
+git add docs/slides/diagrams/build_docs.py docs/assets/diagrams/architecture.svg docs/assets/diagrams/seq-sign-in.svg
+git commit -m "docs(diagrams): the campaigns API on the map, and signing in, in order"
+git add docs/how-it-works/architecture.md docs/reference/cli.md README.md packages/converter/README.md
+git commit -m "docs: the campaigns API and signing in, in the READMEs and the architecture page"
+```
+
+---
+
 ## What the next plans take from this one
 
 - `Depends(current_identity)` in `app.py` is the one guard; every later route uses it.
