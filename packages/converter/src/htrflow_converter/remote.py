@@ -305,6 +305,18 @@ class Remote:
         return body
 
 
+def http_client() -> httpx.Client:
+    """The one way this CLI makes a client: a timeout, no redirects followed,
+    and plain http (loopback only) never sent through a proxy named in the
+    environment, since a token would leave the machine in the clear. https
+    keeps the environment's proxy and CA settings."""
+    return httpx.Client(
+        timeout=_TIMEOUT,
+        follow_redirects=False,
+        mounts={"http://": httpx.HTTPTransport()},
+    )
+
+
 def remote(env: Mapping[str, str] | None = None) -> Remote:
     env = os.environ if env is None else env
     login = load(env)
@@ -314,12 +326,5 @@ def remote(env: Mapping[str, str] | None = None) -> Remote:
             f"{ENV_URL} is {wanted} but you are signed in to {login.server}.",
             _RE_LOGIN,
         )
-    # Plain http (loopback only) is never sent through a proxy named in the
-    # environment: a token would leave the machine in the clear. https keeps
-    # the environment's proxy and CA settings.
-    client = httpx.Client(
-        timeout=_TIMEOUT,
-        follow_redirects=False,
-        mounts={"http://": httpx.HTTPTransport()},
-    )
+    client = http_client()
     return Remote(login, client, env)
