@@ -222,6 +222,20 @@ def test_too_old_reads_three_numbers_and_trusts_anything_else(client, minimum, o
     assert too_old(client, minimum) is old
 
 
+HUGE = "9" * 5000 + ".0.0"
+
+
+@pytest.mark.parametrize(
+    "client, minimum", [(HUGE, "1.0.0"), ("1.0.0", HUGE), ("1.0.0", "1234567890.0.0")]
+)
+def test_a_version_part_longer_than_nine_digits_is_unreadable(client, minimum):
+    assert too_old(client, minimum) is False
+
+
+def test_a_huge_minimum_from_the_server_does_not_end_the_sign_in():
+    run(Provider([TOKENS], login={"minClient": HUGE}))
+
+
 def test_an_unusual_error_ends_it_with_the_code_only_when_it_is_plain():
     with pytest.raises(RemoteError) as e:
         run(

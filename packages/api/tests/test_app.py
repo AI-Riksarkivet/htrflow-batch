@@ -219,6 +219,23 @@ def test_too_old():
     assert too_old("1.2.3", "1.10.0") and not too_old("1.10.0", "1.9.9")
 
 
+HUGE = "9" * 5000 + ".0.0"
+
+
+def test_a_version_part_longer_than_nine_digits_is_unreadable():
+    assert not too_old(HUGE) and not too_old("0.0.0", HUGE)
+    assert not too_old("0.0.0", "1234567890.0.0")
+    assert too_old("0.0.0", "123456789.0.0")
+
+
+def test_a_huge_client_version_without_a_token_is_the_normal_401(client, caplog):
+    with caplog.at_level("DEBUG"):
+        r = client.get("/v1/whoami", headers={CLIENT_HEADER: HUGE})
+    assert r.status_code == 401 and set(r.json()) == {"detail", "hint"}
+    assert "Traceback" not in caplog.text
+    assert not [x for x in caplog.records if x.levelname == "ERROR"]
+
+
 def test_answers_are_not_cached(client, signer):
     assert client.get("/v1/login").headers["Cache-Control"] == "no-store"
     assert client.get("/v1/whoami").headers["Cache-Control"] == "no-store"

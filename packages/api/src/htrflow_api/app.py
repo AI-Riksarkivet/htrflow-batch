@@ -36,14 +36,18 @@ _BROKEN = ("internal error", "Try again; if it stays, tell whoever runs the clus
 
 def _numbers(version: str) -> tuple[int, int, int] | None:
     parts = version.split(".")[:3]
-    if len(parts) < 3 or not all(p.isascii() and p.isdigit() for p in parts):
+    # Nine digits at most: a longer part is unreadable, not a huge number.
+    if len(parts) < 3 or not all(
+        p.isascii() and p.isdigit() and len(p) <= 9 for p in parts
+    ):
         return None
     return int(parts[0]), int(parts[1]), int(parts[2])
 
 
 def too_old(client: str, minimum: str = MIN_CLIENT) -> bool:
     """Whether ``client`` is a readable version below ``minimum``. A version
-    that does not start with three numbers is not too old."""
+    that does not start with three numbers of up to nine digits is not
+    too old."""
     have, need = _numbers(client), _numbers(minimum)
     return have is not None and need is not None and have < need
 
