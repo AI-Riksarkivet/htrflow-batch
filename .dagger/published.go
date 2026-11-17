@@ -183,14 +183,15 @@ grep -Eq 'pass: ([%d-9]|[1-9][0-9]+), fail: 0, warn: 0, error: 0' /out.txt`, pin
 
 // publishedEntrypoints are the programs this tree starts from each pinned
 // image's venv: the web image's own entrypoint and the results proxy's
-// command (templates/results.yaml, .docker/docker-compose.yml), and the
-// converter image's entrypoint. packages/converter/tests/test_entrypoints.py
+// command (templates/results.yaml, .docker/docker-compose.yml), the
+// converter image's entrypoint and the campaigns API's command
+// (templates/api.yaml). packages/converter/tests/test_entrypoints.py
 // holds the tree to its pyproject scripts and this list to the tree; this
 // holds the pinned digests to this list. The wrapper image (~10 GB) is left
 // out: its entrypoint is `python -m htrflow_batch`, which no release renames.
 var publishedEntrypoints = map[string][]string{
 	"web":       {"htrflow-web", "htrflow-results"},
-	"campaigns": {"htrflow-campaigns"},
+	"campaigns": {"htrflow-campaigns", "htrflow-api"},
 }
 
 // EntrypointsPublished checks that every program this commit's chart,
