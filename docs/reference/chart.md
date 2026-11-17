@@ -114,8 +114,8 @@ token, and holds no Kubernetes rights
 |-----|---------|-------------|
 | `api.enabled` | `false` | Renders the objects above. Refused without `web.ingress.enabled` and `web.ingress.tlsSecretName` (the token must not travel unencrypted) unless `api.allowNoIngress` is set, and without `api.image`, `api.issuer`, `api.audience`, `api.clientId` and `api.group` |
 | `api.image` | `""` | The htrflow-campaigns image. **Must be digest-pinned** unless `security.allowTagImages` |
-| `api.path` | `/control` | The prefix the routes are served under, on `web.ingress.host`. Starts with `/`, does not end with one, and is not `/api`, `/results`, `/alto`, `/log`, `/login` or `/search` or a path under them, which the web front serves. The service serves the prefix itself, so the Ingress rewrites nothing. May be empty only with `api.allowNoIngress` |
-| `api.issuer` | `""` | The sign-in service's issuer URL. `https://`, or `http://` for `localhost`, `127.x.x.x` or `[::1]` only |
+| `api.path` | `/control` | The prefix the routes are served under, on `web.ingress.host`. Starts with `/`, does not end with one, and is not `/api`, `/results`, `/alto`, `/log`, `/login` or `/search` or a path under them, which the web front serves. Only letters, digits, `-` and `_` in `/`-separated segments. The service serves the prefix itself, so the Ingress rewrites nothing, and the API's Ingress carries the web front's Ingress annotations, so an annotation that rewrites paths there would break the API. May be empty only with `api.allowNoIngress` |
+| `api.issuer` | `""` | The sign-in service's issuer URL. `https://`, or `http://` for a loopback address only. No user name, query or fragment |
 | `api.jwksUrl` | `""` | Where the pod reads the sign-in service's signing keys, when that is not the address the issuer's discovery document gives. `""` = found from the issuer |
 | `api.audience` | `""` | The audience a token must be issued for |
 | `api.clientId` | `""` | The client id the command line signs in with |

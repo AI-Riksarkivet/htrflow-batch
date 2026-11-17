@@ -73,7 +73,7 @@ htrflow-campaigns logout
 
 **The address rule.** The server's address, and every address the sign-in
 service hands out, must start with `https://`; `http://` is accepted only for
-`localhost`, `127.0.0.0/8` and `::1`, and never goes through a proxy named in
+a loopback address, and never goes through a proxy named in
 the environment. An address with a user name, a query or a fragment is
 refused, except that the link printed for signing in may carry the code as a
 query. Nothing turns this off, and a redirect is never followed.
