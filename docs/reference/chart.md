@@ -99,6 +99,35 @@ credentials ([Security → The results boundary](../how-it-works/security.md#the
 | `results.replicas` | `1` | Proxy replicas. Sessions need no shared state; the login limits are kept per replica |
 | `results.resources` | requests cpu 50m / 128Mi, limits cpu 500m / 256Mi | |
 
+## Campaigns API (`api.*`)
+
+Off by default. One Deployment, a ClusterIP Service and, unless
+`api.allowNoIngress`, an Ingress, all named `htrflow-api` (port 8083), on the
+htrflow-campaigns image, with its own NetworkPolicy `htr-api`. The command
+line signs in to an OpenID provider and sends the token it gets; the service
+checks the issuer, audience, signature, expiry and group of every one. No
+value turns that check off. The pod mounts no Secret and no ServiceAccount
+token, and holds no Kubernetes rights
+([Security → The campaigns API](../how-it-works/security.md#the-campaigns-api)).
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `api.enabled` | `false` | Renders the objects above. Refused without `web.ingress.enabled` and `web.ingress.tlsSecretName` (the token must not travel unencrypted) unless `api.allowNoIngress` is set, and without `api.image`, `api.issuer`, `api.audience`, `api.clientId` and `api.group` |
+| `api.image` | `""` | The htrflow-campaigns image. **Must be digest-pinned** unless `security.allowTagImages` |
+| `api.path` | `/control` | The prefix the routes are served under, on `web.ingress.host`. Starts with `/`, does not end with one, and is not `/api`, `/results`, `/alto`, `/log`, `/login` or `/search` or a path under them, which the web front serves. The service serves the prefix itself, so the Ingress rewrites nothing. May be empty only with `api.allowNoIngress` |
+| `api.issuer` | `""` | The sign-in service's issuer URL. `https://`, or `http://` for `localhost`, `127.x.x.x` or `[::1]` only |
+| `api.jwksUrl` | `""` | Where the pod reads the sign-in service's signing keys, when that is not the address the issuer's discovery document gives. `""` = found from the issuer |
+| `api.audience` | `""` | The audience a token must be issued for |
+| `api.clientId` | `""` | The client id the command line signs in with |
+| `api.group` | `""` | Members of this group may use the API |
+| `api.userClaim` | `preferred_username` | The token claim that names the user |
+| `api.groupsClaim` | `groups` | The token claim that lists the user's groups |
+| `api.allowNoIngress` | `false` | `true` renders no Ingress: the API is reached by port-forward only, and needs no TLS |
+| `api.resources` | requests cpu 50m / 128Mi, limits cpu 500m / 256Mi | |
+| `api.network.identityCidrs` | `[]` | Where the sign-in service's key endpoint is, by address, on `api.network.identityPorts`. With `network.enabled`, this or `identityInNamespace` is required |
+| `api.network.identityPorts` | `[443]` | The ports it answers on |
+| `api.network.identityInNamespace` | `false` | The sign-in service is a pod labelled `app: keycloak` in this namespace (the devstack's), on 8080. The API pod's egress names it by label, and a second policy, `htr-keycloak-from-api`, admits the API pod to it, since the namespace is default-deny |
+
 ## Apply identity (`apply.*`)
 
 | Key | Default | Description |

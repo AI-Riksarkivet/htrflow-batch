@@ -298,8 +298,28 @@ def results_set_by(name: str) -> str:
     return RESULTS_SET_BY[name]
 
 
+#: How the chart's campaigns API Deployment (templates/api.yaml) sets each
+#: setting of `ApiConfig`: the chart value it reads. A literal, like
+#: RESULTS_SET_BY, so test_chart_agreement.py renders the Deployment and holds
+#: every line to it.
+API_SET_BY = {
+    "HTRFLOW_API_ISSUER": "the chart: `api.issuer`",
+    "HTRFLOW_API_JWKS_URL": "the chart: `api.jwksUrl`, set only when it is not empty",
+    "HTRFLOW_API_AUDIENCE": "the chart: `api.audience`",
+    "HTRFLOW_API_CLIENT_ID": "the chart: `api.clientId`",
+    "HTRFLOW_API_GROUP": "the chart: `api.group`",
+    "HTRFLOW_API_USER_CLAIM": "the chart: `api.userClaim`",
+    "HTRFLOW_API_GROUPS_CLAIM": "the chart: `api.groupsClaim`",
+    "HTRFLOW_API_PATH": "the chart: `api.path`, set only when it is not empty",
+    "HTRFLOW_API_NAMESPACE": "the chart, fixed: the release namespace (downward API)",
+    "HTRFLOW_API_QUEUE": "the chart: `queue.name`",
+}
+
+
 def api_set_by(name: str) -> str:
-    return f"{LOCAL_ONLY}; no chart value yet"
+    if name in image_env("htrflow-campaigns.dockerfile"):
+        return _image(name)
+    return API_SET_BY[name]
 
 
 def overrides() -> list[tuple[type[BaseModel], str]]:

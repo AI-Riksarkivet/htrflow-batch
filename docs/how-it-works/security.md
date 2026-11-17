@@ -215,6 +215,21 @@ with egress to the Hub, gets it as `HF_TOKEN`, with **read** scope; campaign
 pods run `HF_HUB_OFFLINE=1` and never see it. The Secret is the operator's
 object ([Deploy](../getting-started/deploy.md#options)).
 
+### The campaigns API
+
+The campaigns API pod (`api.enabled`, off by default) checks a sign-in token
+on every request: issuer, audience, signature, expiry and group membership.
+No setting turns that off, and the service refuses to start without its
+issuer, audience, client id and group. The token travels only inside TLS:
+the Service is a ClusterIP, the way in from outside is the Ingress with the
+web front's TLS Secret, and the chart refuses the API without it unless
+`api.allowNoIngress` leaves out the Ingress and the API is reached by
+port-forward. The NetworkPolicy admits only the ingress controller's pods on
+8083 and lets the pod out only to the sign-in service's key endpoint (DNS is
+the namespace-wide policy's). The pod meets Pod Security `restricted`,
+mounts no ServiceAccount token and no Secret, and holds no Kubernetes
+rights; it reads and writes nothing in the cluster.
+
 ## Pod security posture
 
 Every pod the platform runs meets Pod Security **`restricted`**: the

@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from htrflow_api.config import ApiConfig
 from htrflow_web.results import ResultsConfig
 
 from htrflow_converter.models import ConverterConfig, ImageCacheSettings, Size
@@ -39,6 +40,7 @@ JOB_SKELETON = CONVERTER_SRC / "manifests" / "campaign-job.yaml"
 sys.path.insert(0, str(ROOT / "scripts"))
 from config_reference import (  # noqa: E402
     AGREEMENTS,
+    API_SET_BY,
     FLAVORS_PAIR,
     FREE_ENV,
     FRONTEND_DOC,
@@ -884,6 +886,53 @@ def test_a_results_setting_the_page_says_the_chart_sets_is_set_that_way():
     assert (
         env("results.keyDerivation=none")["HTRFLOW_KEY_DERIVATION"]["value"] == "none"
     )
+
+
+API_SETS = (
+    "api.enabled=true",
+    "api.image=docker.io/riksarkivet/htrflow-campaigns@sha256:" + "1" * 64,
+    "api.issuer=https://sso.example/realms/htr",
+    "api.audience=a",
+    "api.clientId=c",
+    "api.group=g",
+    "web.service.type=ClusterIP",
+    "web.ingress.enabled=true",
+    "web.ingress.host=h.example.org",
+    "web.ingress.tlsSecretName=htr-tls",
+    "network.web.ingressFrom[0].podSelector.matchLabels.x=y",
+    "api.network.identityInNamespace=true",
+)
+
+
+def test_an_api_setting_the_page_says_the_chart_sets_is_set_that_way():
+    """`API_SET_BY` is hand-written beside `ApiConfig`: every setting the page
+    lists has an entry, and the rendered Deployment carries each one the way
+    the entry says (the chart value it names, or the downward API)."""
+    names = [n for n, _ in _model_rows(ApiConfig)]
+    # The image sets HTRFLOW_BATCH_VERSION; the chart sets the rest.
+    assert set(API_SET_BY) == set(names) - {"HTRFLOW_BATCH_VERSION"}
+    dep = _rendered("Deployment", "htrflow-api", *API_SETS, "api.jwksUrl=https://k/j")
+    env = {
+        e["name"]: e for e in dep["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    values = {
+        "HTRFLOW_API_ISSUER": "https://sso.example/realms/htr",
+        "HTRFLOW_API_JWKS_URL": "https://k/j",
+        "HTRFLOW_API_AUDIENCE": "a",
+        "HTRFLOW_API_CLIENT_ID": "c",
+        "HTRFLOW_API_GROUP": "g",
+        "HTRFLOW_API_USER_CLAIM": "preferred_username",
+        "HTRFLOW_API_GROUPS_CLAIM": "groups",
+        "HTRFLOW_API_PATH": "/control",
+        "HTRFLOW_API_QUEUE": "htr-batch",
+    }
+    for name, value in values.items():
+        assert env[name]["value"] == value, name
+        assert API_SET_BY[name].startswith("the chart: `"), name
+    assert env["HTRFLOW_API_NAMESPACE"]["valueFrom"] == {
+        "fieldRef": {"fieldPath": "metadata.namespace"}
+    }
+    assert set(env) == {*API_SET_BY, "HOME"}
 
 
 def test_every_image_env_the_page_explains_is_one_an_image_sets():
