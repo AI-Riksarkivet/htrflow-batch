@@ -933,7 +933,11 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 5140
 # 8099 -> 8140 (2026-11-17, Task 4 review): load() refuses a login file or
 # directory others could read, plain http never goes through a proxy, save's
 # temporary file is exclusive, and odd expires_in / request paths are handled.
-check converter "$(count packages/converter/src -name '*.py')" 8140
+# 8140 -> 8505 (2026-11-17, Task 5): signin.py, the device sign-in against the
+# provider the server names (every address through the address rule, the
+# wait bounded by the code's lifetime), and the login, logout and whoami
+# commands in cli.py; remote.py gains http_client() so both share one client.
+check converter "$(count packages/converter/src -name '*.py')" 8505
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

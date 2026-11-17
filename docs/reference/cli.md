@@ -19,6 +19,9 @@ Source: [`packages/converter/src/htrflow_converter/cli.py`](https://github.com/A
 | `retry <campaign> --namespace <ns> [flags]` | Starts a campaign's unfinished volumes again as a new campaign in the cluster. See [`retry`](#retry-starting-failed-volumes-again). |
 | `pipeline add <file> --namespace <ns> --like <id> [flags]` | Puts a pipeline file in the cluster with no campaigns repo, for `retry --pipeline`. See [`pipeline add`](#pipeline-add-a-pipeline-with-no-repo). |
 | `export --pipeline <id> --namespace <ns> --volumes <ids> --to <dir> [flags]` | Writes finished volumes' ALTO into a publishing folder, one folder per volume. See [`export`](#export-publishing-finished-volumes). |
+| `login [--server <url>]` | Signs in to the campaigns server in your browser. See [Signing in](#signing-in). |
+| `logout` | Removes the stored sign-in from this machine. See [Signing in](#signing-in). |
+| `whoami [--json]` | Shows who the server says you are, and the versions. See [Signing in](#signing-in). |
 
 `make campaigns-apply DIR=<repo>` runs
 `uv run htrflow-campaigns apply <repo> --out <repo>/rendered --namespace
@@ -39,6 +42,54 @@ with server-side apply and no `kubectl`. It authenticates from
 `$KUBECONFIG` or, in a pod, from the mounted ServiceAccount token. The chart
 renders a suitable ServiceAccount behind `apply.rbac.enabled`
 ([Chart Values](chart.md#apply-identity-apply)).
+
+## Signing in
+
+`login`, `logout` and `whoami` are for a campaigns server that answers over
+HTTPS. They need no cluster access.
+
+```
+htrflow-campaigns login --server https://<host>/<path>
+htrflow-campaigns whoami
+htrflow-campaigns logout
+```
+
+- **`login`** asks the server which sign-in service it uses, then prints a
+  link and a code. Open the link in a browser, check the code and confirm;
+  the command waits until you have, or until the code runs out. The address
+  is `--server`, else the environment variable `HTRFLOW_API_URL`; with
+  neither, the command stops with exit `2`. A sign-in already stored is
+  replaced without a question. It ends with `signed in to <server> as <user>`.
+  It also stops, before anything is requested from the sign-in service, when
+  this client is older than the minimum the server names.
+- **`whoami`** asks the server and prints one `name: value` line each for
+  `user`, `groups`, `namespace`, `queue`, `server`, `server version` and
+  `client version`. `--json` prints the server's answer as it was sent.
+- **`logout`** removes the stored sign-in from this machine and nothing
+  more: the sign-in service is not told, so a token already issued stays
+  valid there until it expires. It exits `0` whether or not there was one.
+
+**The address rule.** The server's address, and every address the sign-in
+service hands out, must start with `https://`. `http://` is accepted only
+for `localhost`, `127.0.0.0/8` and `::1`, and never goes through a proxy
+named in the environment. An address with a user name, a query or a
+fragment is refused. Nothing turns this off, and a redirect is never
+followed.
+
+**Where the sign-in is stored.** In `login.json` under `htrflow/` in
+`$XDG_CONFIG_HOME` (else `~/.config`), in a directory only you can enter and
+a file only you can read. A sign-in stored where others could read it is not
+used. The token is sent to the server and, to renew it, the refresh token to
+the sign-in service; it is never printed or logged.
+
+**Exit codes** for the three commands:
+
+| Exit | Meaning |
+|---|---|
+| `0` | Done. |
+| `1` | Refused by the server or the sign-in service (including a denied or expired sign-in), or one could not be reached. |
+| `2` | Not signed in (or the stored sign-in no longer works), or no server address. |
+| `130` | You pressed Ctrl-C during `login`. Nothing is stored; the line `sign-in interrupted` is printed. |
 
 ## `export`: publishing finished volumes
 
@@ -767,6 +818,9 @@ The codes are a precedence, highest first: `1` beats `3` beats `0`.
 | `1` | A pause is **not enforced**, whatever else was applied: a paused campaign's Workload never appeared, the Workload patch failed, or its Job was refused and could not be read. Or nothing reached the cluster: no credentials, an unreachable API server, a render that did not pass, every object refused, the Lease held by another apply, a `--namespace` mismatch, or a live-cluster check that failed. Or the API server stopped answering part-way, or the Lease was lost: the line names the object the apply stopped at, and a re-run finishes the job. |
 | `3` | Some objects were refused and are unchanged, a prune could not delete some, a campaign's Job or record could not be read, or a campaign was held back for sharing a volume. Everything else was applied, and every pause holds. The summary line names each one. |
 | `0` | Everything was applied. |
+
+`login`, `logout` and `whoami` have their own codes, set out
+[above](#signing-in), including `130` for Ctrl-C.
 
 `export` has its own codes, set out [above](#export-publishing-finished-volumes):
 `0` when no volume failed or was forbidden, `1` when one was or the run
