@@ -9,7 +9,7 @@ The output goes to docs/assets/diagrams, which the site publishes.
 """
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from svgkit import Diagram, CARD_H, GAP, MAGENTA, tall_height
+from svgkit import Diagram, CARD_H, GAP, MAGENTA, PILL, tall_height, text_width
 from seqkit import Steps
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "assets", "diagrams") + os.sep
@@ -103,7 +103,7 @@ d.arrow([(MID[2], 72 + H2), (MID[2], g2 + 56 - GAP)])
 # The optional campaigns API sits boxed in at the cluster's second row, first
 # column, so its two arrows run up and down the canvas's left edge, outside
 # every panel: one up to the sign-in service, one up from the CLI.
-group_around(d, [0], g2, 56 + H2 + 24, "Outside", L("globe"), outside=True)
+group_around(d, [0], g2, 56 + H2 + 24, "Sign-in", L("lock"), outside=True)
 d.tall(C[0], g2 + 56, COLW, "Sign-in service", "signs the tokens,\npublishes its keys", L("lock"), outside=True)
 EDGE = 12
 g3 = g2 + 56 + H2 + 24 + 64
@@ -134,6 +134,12 @@ d.tall(C[2], r4, COLW, "Browser", "logs in, then the\nstatus page and viewer", L
 # as the other's continuation: the token goes no further than the API.
 d.arrow([(C[0], r4 + H2 / 2), (EDGE, r4 + H2 / 2), (EDGE, r2 + H2 - 40), (C[0] - GAP, r2 + H2 - 40)])
 d.arrow([(C[0], r2 + 40), (EDGE, r2 + 40), (EDGE, g2 + 56 + H2 / 2), (C[0] - GAP, g2 + 56 + H2 / 2)])
+# Their labels sit in the gaps between panels, where nothing else runs, with
+# the pill's left end over the line: centred on it, half would be off canvas.
+def edge_pill(y, label):
+    d.pill(4 + (text_width(label, PILL, 600) + 26) / 2, y, label)
+edge_pill(g5 - 32, "signs in")
+edge_pill(g3 - 32, "keys")
 lane = g4 - 32
 d.arrow([(MID[1] - 60, r2 + H2), (MID[1] - 60, lane), (MID[0] + 50, lane), (MID[0] + 50, r3 - GAP)], label="results", at=((MID[0] + 50 + MID[1] - 60) / 2, lane))
 d.arrow([(MID[1] + 40, r3), (MID[1] + 40, r2 + H2 + GAP)], label="pages", at=(MID[1] + 40, lane))
@@ -383,14 +389,14 @@ Steps(W, A, [
 ], "The live run log", L("scroll-text")).draw(OUT + "seq-run-log.svg")
 
 Steps(W, A, [
-    ("msg", "cli", "capi", "GET v1/login, with no token: the sign-in service's issuer, the client ID and the oldest CLI it takes"),
+    ("msg", "cli", "capi", "GET /v1/login, with no token: the sign-in service's issuer, the client ID and the oldest CLI it takes"),
     ("msg", "cli", "idp", "read the discovery document, then ask for a device code"),
     ("msg", "cli", "person", "print a link and a code; the person opens the link in a browser and signs in"),
     ("loop", "Until the sign-in is done, or the code runs out", [
         ("msg", "cli", "idp", "ask for the token, waiting between 5 and 60 seconds each time, as the sign-in service asks"),
     ]),
     ("msg", "cli", "cli", "store the sign-in in login.json, a file only the person can read"),
-    ("msg", "cli", "capi", "whoami: GET v1/whoami with the token; login ends with this call too"),
+    ("msg", "cli", "capi", "whoami: GET /v1/whoami with the token; login ends with this call too"),
     ("msg", "capi", "idp", "fetch the signing keys the first time, or when a token names a key it has not seen"),
     ("reply", "capi", "cli", "check the signature, issuer, audience, expiry and group; answer the user, groups, namespace and queue"),
     ("note", "The token goes to the campaigns API and nowhere else. Only the refresh token goes back to the sign-in service, to renew the sign-in."),
