@@ -4,8 +4,10 @@ shape: ``{"detail": "<what was refused>", "hint": "<what to do>"}``."""
 from __future__ import annotations
 
 import logging
+import traceback
 
 from fastapi import Depends, FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -32,6 +34,10 @@ _BAD_REQUEST = (
     "Check it and try again.",
 )
 _BROKEN = ("internal error", "Try again; if it stays, tell whoever runs the cluster.")
+_INVALID = (
+    "The request is not what this call takes.",
+    "Upgrade htrflow-campaigns; if it stays, tell whoever runs the cluster.",
+)
 
 
 def _numbers(version: str) -> tuple[int, int, int] | None:
@@ -61,6 +67,17 @@ def _refusal(status: int, detail: str, hint: str, headers=None) -> JSONResponse:
 _root_path_logged = False
 
 
+def _log_broken(scope: Scope, exc: Exception) -> None:
+    """The exception's type and the file and line it was raised at, never
+    its message or arguments (they may hold a token), nor any header."""
+    frames = traceback.extract_tb(exc.__traceback__)
+    where = f"{frames[-1].filename}:{frames[-1].lineno}" if frames else "?"
+    log.error(
+        "unhandled %s at %s on %s %s",
+        type(exc).__name__, where, scope.get("method", "-"), scope.get("path", ""),
+    )  # fmt: skip
+
+
 def route_path(scope: Scope) -> str:
     """The path the router matches: ``path`` with ``root_path`` removed, as
     Starlette's ``get_route_path`` does."""
@@ -86,9 +103,35 @@ class _Guard:
         return path == self.v1 or path.startswith(self.v1 + "/")
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        global _root_path_logged
+        """Every request, guarded; an exception from anywhere below ends here,
+        logged by `_log_broken` and answered 500, and goes no further: the
+        server would log it with its message, and the message may hold a
+        token."""
         if scope["type"] == "lifespan":
             return await self.app(scope, receive, send)
+        started = False
+
+        async def watched(message) -> None:
+            nonlocal started
+            started = started or message["type"] in (
+                "http.response.start", "websocket.accept", "websocket.close",
+            )  # fmt: skip
+            await send(message)
+
+        try:
+            await self._guarded(scope, receive, watched)
+        except Exception as exc:  # noqa: BLE001 - logged without its text
+            _log_broken(scope, exc)
+            if started:  # nothing more can be said on this response
+                return
+            if scope["type"] != "http":
+                return await send({"type": "websocket.close", "code": 1011})
+            v1 = self.under_v1(route_path(scope))
+            headers = {"Cache-Control": "no-store"} if v1 else None
+            await _refusal(500, *_BROKEN, headers)(scope, receive, send)
+
+    async def _guarded(self, scope: Scope, receive: Receive, send: Send) -> None:
+        global _root_path_logged
         if scope.get("root_path"):
             # This service has its own prefix setting and no use for ASGI
             # root_path; refuse everything, /healthz too, so a pod started
@@ -171,7 +214,7 @@ def create_app(cfg: ApiConfig, verifier: Verifier) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.get("/healthz")
-    def healthz() -> dict:
+    async def healthz() -> dict:  # on the loop, never queued behind verify()
         return {"ok": True}
 
     @app.get(f"{v1}/login")
@@ -205,19 +248,9 @@ def create_app(cfg: ApiConfig, verifier: Verifier) -> FastAPI:
         )
         return _refusal(exc.status_code, detail, hint, exc.headers)
 
-    @app.exception_handler(Exception)
-    async def broken(request: Request, exc: Exception):
-        # No headers in the log line: they carry the token.
-        log.error(
-            "unhandled error on %s %s", request.method, request.url.path,
-            exc_info=exc,
-        )  # fmt: skip
-        resp = _refusal(500, *_BROKEN)
-        # The one place Cache-Control is set outside _Guard: this handler runs
-        # in ServerErrorMiddleware, outside the guard's send wrapper.
-        if request.url.path == v1 or request.url.path.startswith(v1 + "/"):
-            resp.headers["Cache-Control"] = "no-store"
-        return resp
+    @app.exception_handler(RequestValidationError)
+    async def invalid(request: Request, exc: RequestValidationError):
+        return _refusal(422, *_INVALID)  # never the input: it is the caller's
 
     app.add_middleware(_Guard, v1=v1, verifier=verifier)
     return app

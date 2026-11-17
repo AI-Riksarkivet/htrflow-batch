@@ -265,6 +265,64 @@ def test_an_unhandled_error_is_json_with_two_sentences(cfg):
     assert r.headers["Cache-Control"] == "no-store"
 
 
+def test_healthz_runs_on_the_event_loop_not_the_verifiers_thread_pool(client):
+    import inspect
+
+    [route] = [r for r in client.app.routes if getattr(r, "path", "") == "/healthz"]
+    assert inspect.iscoroutinefunction(route.endpoint)
+
+
+SECRET = "eyJTOKEN.SECRET.PART"
+
+
+def test_an_unhandled_error_logs_its_type_and_place_never_its_text(cfg, caplog):
+    class Broken:
+        def verify(self, token):
+            raise RuntimeError(f"bad {token}", token)
+
+    c = TestClient(create_app(cfg, Broken()))  # nothing may reach the server
+    with caplog.at_level("DEBUG"):
+        r = c.get("/v1/whoami", headers=auth(SECRET))
+    assert r.status_code == 500 and r.json()["detail"] == "internal error"
+    assert r.headers["Cache-Control"] == "no-store"
+    assert SECRET not in caplog.text and "bad" not in caplog.text
+    assert "RuntimeError" in caplog.text and "test_app.py:" in caplog.text
+
+
+def test_an_unhandled_error_outside_v1_is_a_500_without_its_text(cfg, signer, caplog):
+    _, app = prefixed(cfg, signer, "")
+
+    @app.get("/boom")
+    def boom():
+        raise ValueError(SECRET)
+
+    with caplog.at_level("DEBUG"):
+        r = TestClient(app).get("/boom")
+    assert r.status_code == 500 and set(r.json()) == {"detail", "hint"}
+    assert SECRET not in caplog.text and "ValueError" in caplog.text
+
+
+def test_a_request_the_route_cannot_take_is_a_two_sentence_422(cfg, signer):
+    _, app = prefixed(cfg, signer, "")
+
+    @app.get("/v1/needs")
+    def needs(n: int):
+        return {}
+
+    r = TestClient(app).get(
+        "/v1/needs", params={"n": SECRET}, headers=auth(signer.token())
+    )
+    assert r.status_code == 422
+    assert r.json() == {
+        "detail": "The request is not what this call takes.",
+        "hint": (
+            "Upgrade htrflow-campaigns; if it stays, tell whoever runs the cluster."
+        ),
+    }
+    assert SECRET not in r.text
+    assert r.headers["Cache-Control"] == "no-store"
+
+
 def test_another_client_error_is_not_an_internal_error(cfg, signer):
     from starlette.exceptions import HTTPException
 
