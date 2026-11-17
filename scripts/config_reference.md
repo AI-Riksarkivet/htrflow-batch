@@ -5,7 +5,7 @@
 # Configuration
 
 Every setting of the wrapper, the web front, the results proxy, the
-converter, the `htrflow-batch` chart and the frontend build, generated from
+campaigns API, the converter, the `htrflow-batch` chart and the frontend build, generated from
 the config models, the chart's `values.yaml` and the frontend's `config.ts`. The `htrflow-devstack` chart — the development support
 stack (RustFS, an in-cluster registry, `devStack.insecureDefaults`,
 `rustfs.accessKey`/`secretKey`) — is a separate surface, documented in its own

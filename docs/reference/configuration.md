@@ -5,7 +5,7 @@
 # Configuration
 
 Every setting of the wrapper, the web front, the results proxy, the
-converter, the `htrflow-batch` chart and the frontend build, generated from
+campaigns API, the converter, the `htrflow-batch` chart and the frontend build, generated from
 the config models, the chart's `values.yaml` and the frontend's `config.ts`. The `htrflow-devstack` chart — the development support
 stack (RustFS, an in-cluster registry, `devStack.insecureDefaults`,
 `rustfs.accessKey`/`secretKey`) — is a separate surface, documented in its own
@@ -158,6 +158,24 @@ Each key is an environment variable of the container.
 | `HTRFLOW_SESSION_HOURS` | the chart: `results.sessionHours` | `8.0` | — | no secret — nobody |
 | `HTRFLOW_KEY_DERIVATION` | the chart: `results.keyDerivation` | `hcp` | — | how a login's password becomes S3 keys; a wrong value only makes every login fail — nobody |
 | `HTRFLOW_TRUSTED_HOPS` | the chart, fixed: 2 on a ClusterIP Service with `web.ingress.enabled` or `network.web.ingressFrom`, else 1 | `1` | — | no secret — nobody |
+
+## api — the campaigns API (`htrflow-api`)
+
+Each key is an environment variable of the container.
+
+| Key | Set by | Default | Must agree with | Security |
+|---|---|---|---|---|
+| `HTRFLOW_API_ISSUER` | **a local run only**; no chart value yet | **required** | — | no secret — nobody |
+| `HTRFLOW_API_JWKS_URL` | **a local run only**; no chart value yet | `jwks_uri` from `<issuer>/.well-known/openid-configuration` | — | no secret — nobody |
+| `HTRFLOW_API_AUDIENCE` | **a local run only**; no chart value yet | **required** | — | no secret — nobody |
+| `HTRFLOW_API_CLIENT_ID` | **a local run only**; no chart value yet | **required** | — | no secret — nobody |
+| `HTRFLOW_API_GROUP` | **a local run only**; no chart value yet | **required** | — | no secret — nobody |
+| `HTRFLOW_API_USER_CLAIM` | **a local run only**; no chart value yet | `preferred_username` | — | no secret — nobody |
+| `HTRFLOW_API_GROUPS_CLAIM` | **a local run only**; no chart value yet | `groups` | — | no secret — nobody |
+| `HTRFLOW_API_PATH` | **a local run only**; no chart value yet | none: the routes are served at the root | — | no secret — nobody |
+| `HTRFLOW_API_NAMESPACE` | **a local run only**; no chart value yet | **required** | — | no secret — nobody |
+| `HTRFLOW_API_QUEUE` | **a local run only**; no chart value yet | **required** | — | no secret — nobody |
+| `HTRFLOW_BATCH_VERSION` | **a local run only**; no chart value yet | `dev` | — | no secret — nobody |
 
 ## converter — a campaigns repo
 

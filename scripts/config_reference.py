@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from htrflow_api.config import ApiConfig
 from htrflow_batch.config import Config as WrapperConfig
 from htrflow_converter.models import Campaign, ConverterConfig, Pipeline
 from htrflow_web.kube import Config as WebConfig
@@ -111,11 +112,19 @@ WEB_DEFAULT_DOC = {
     "HTRFLOW_WEB_STATIC": "`/app/static`",
 }
 
+#: What `ApiConfig` leaves empty, and what that means.
+API_DEFAULT_DOC = {
+    "HTRFLOW_API_JWKS_URL": "`jwks_uri` from "
+    "`<issuer>/.well-known/openid-configuration`",
+    "HTRFLOW_API_PATH": "none: the routes are served at the root",
+}
+
 _ENV = "an environment variable of the container"
 SURFACES = [
     ("wrapper", "the batch Job's container", _ENV, WrapperConfig, None),
     ("web", "the read API and campaign browser", _ENV, WebConfig, WEB_DEFAULT_DOC),
     ("results", "the results proxy (`htrflow-results`)", _ENV, ResultsConfig, None),
+    ("api", "the campaigns API (`htrflow-api`)", _ENV, ApiConfig, API_DEFAULT_DOC),
     (
         "converter",
         "a campaigns repo",
@@ -289,6 +298,10 @@ def results_set_by(name: str) -> str:
     return RESULTS_SET_BY[name]
 
 
+def api_set_by(name: str) -> str:
+    return f"{LOCAL_ONLY}; no chart value yet"
+
+
 def overrides() -> list[tuple[type[BaseModel], str]]:
     """Campaign and pipeline keys named like a converter.yaml key."""
     fields = ConverterConfig.model_fields
@@ -304,6 +317,7 @@ SET_BY = {
     "wrapper": wrapper_set_by,
     "web": web_set_by,
     "results": results_set_by,
+    "api": api_set_by,
     "converter": converter_set_by,
     "chart": lambda _: "`values.yaml`",
 }
