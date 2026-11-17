@@ -420,7 +420,7 @@
         },
         "jwksUrl": {
           "type": "string",
-          "description": "Where the pod reads the sign-in service's keys. Empty: found from the issuer."
+          "description": "Where the pod reads the sign-in service's keys. Empty: found from the issuer. https, or http to a host with api.network.identityInNamespace."
         },
         "audience": {
           "type": "string"

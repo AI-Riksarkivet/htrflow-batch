@@ -27,6 +27,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from htrflow_api.config import ApiConfig
 
 from htrflow_converter.models import _DNS_LABEL_RE, Campaign
 
@@ -2793,6 +2794,150 @@ BATCH_GUARDS.update(
         ),
     }
 )
+
+
+API_JWKS_REFUSAL = (
+    "api.jwksUrl must start with https:// (http:// only with"
+    " api.network.identityInNamespace=true) and carry no user name, query or"
+    " fragment: the signing keys it points at decide who may sign in, and they"
+    " must not be fetched in the clear outside the namespace"
+)
+#: The API with the devstack's in-namespace Keycloak instead of ranges.
+API_IN_NAMESPACE_SETS = tuple(s for s in API_SETS if "identityCidrs" not in s) + (
+    "api.network.identityInNamespace=true",
+)
+
+BATCH_GUARDS["api with a plain http jwks url"] = (
+    None,
+    API_BASE + API_SETS + ("api.jwksUrl=http://keys.example/jwks",),
+    API_JWKS_REFUSAL,
+)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://keys.elsewhere.example/jwks",
+        "ftp://x",
+        "file:///etc/passwd",
+        "not a url",
+        "https://user@keys.example/jwks",
+        "https://keys.example/jwks?x=1",
+        "https://keys.example/jwks#f",
+    ],
+)
+def test_a_jwks_url_outside_the_namespace_must_be_https(url: str):
+    result = helm_template(sets=API_BASE + API_SETS + (f"api.jwksUrl={url}",))
+    assert result.returncode != 0
+    assert API_JWKS_REFUSAL in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize(
+    "url", ["ftp://x", "not a url", "http://u@keycloak/j", "http://keycloak/j?x"]
+)
+def test_in_the_namespace_a_jwks_url_is_still_a_plain_address(url: str):
+    sets = API_BASE + API_IN_NAMESPACE_SETS + (f"api.jwksUrl={url}",)
+    result = helm_template(sets=sets)
+    assert result.returncode != 0
+    assert API_JWKS_REFUSAL in result.stderr, result.stderr
+
+
+def test_in_the_namespace_plain_http_to_the_keycloak_is_taken():
+    url = "http://keycloak:8080/realms/htrflow/protocol/openid-connect/certs"
+    env = api_env(
+        render(sets=API_BASE + API_IN_NAMESPACE_SETS + (f"api.jwksUrl={url}",))
+    )
+    assert env["HTRFLOW_API_JWKS_URL"]["value"] == url
+
+
+#: What the service needs besides the one value under test.
+SERVICE_ENV = {
+    "HTRFLOW_API_ISSUER": "https://sso.example/realms/htr",
+    "HTRFLOW_API_AUDIENCE": "htrflow-api",
+    "HTRFLOW_API_CLIENT_ID": "htrflow-cli",
+    "HTRFLOW_API_GROUP": "htr-operators",
+    "HTRFLOW_API_NAMESPACE": "htr-batch",
+    "HTRFLOW_API_QUEUE": "htr-batch",
+}
+ISSUERS = [
+    "https://sso.example/realms/htr",
+    "https://sso.example/realms/htr/",
+    "https://[2001:db8::1]:8443/r",
+    "http://localhost:8080/r",
+    "http://127.0.0.1/r",
+    "http://[::1]:8080/r",
+    "http://sso.example/r",
+    "http://127.0.0.1.evil.example/r",
+    "https://user@sso.example/r",
+    "https://sso.example@evil.example/r",
+    "https://sso.example/r?x=1",
+    "https://sso.example/r#f",
+    "https://:443/r",
+    "ftp://sso.example",
+    "sso.example",
+]
+JWKS_URLS = [
+    "https://keys.example/jwks",
+    "http://keycloak:8080/realms/htrflow/protocol/openid-connect/certs",
+    "ftp://x",
+    "file:///etc/passwd",
+    "not a url",
+    "http:///jwks",
+    "https://user@keys.example/jwks",
+    "https://keys.example/jwks?x=1",
+    "https://keys.example/jwks#f",
+]
+PATHS = ["/control", "/a/b", "/a-b_c", "", "/{p}", "/a b", "/a/../b", "/a//b",
+         "/a.b", "/a#b", "control", "/control/", "/"]  # fmt: skip
+
+
+def _service_takes(name: str, value: str) -> bool:
+    try:
+        ApiConfig.from_env({**SERVICE_ENV, name: value})
+    except ValueError:
+        return False
+    return True
+
+
+def _chart_takes(sets: tuple[str, ...], refusal: str) -> bool:
+    result = helm_template(sets=sets)
+    assert result.returncode == 0 or refusal in result.stderr, result.stderr
+    return result.returncode == 0
+
+
+AGREEMENT = (
+    [("HTRFLOW_API_ISSUER", "issuer", API_SETS, API_ISSUER_REFUSAL, v) for v in ISSUERS]
+    + [("HTRFLOW_API_JWKS_URL", "jwksUrl", API_IN_NAMESPACE_SETS, API_JWKS_REFUSAL, v)
+       for v in JWKS_URLS]
+    + [("HTRFLOW_API_PATH", "path", API_NO_INGRESS_SETS, API_PATH_REFUSAL, v)
+       for v in PATHS]
+)  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "name, key, sets, refusal, value",
+    AGREEMENT,
+    ids=[f"{key}={value!r}" for _, key, _, _, value in AGREEMENT],
+)
+def test_the_chart_and_the_service_take_the_same_values(
+    name: str, key: str, sets: tuple[str, ...], refusal: str, value: str
+):
+    """What the chart renders, the service starts with, and what the chart
+    refuses, the service refuses: a value both check never starts a pod that
+    refuses to run, nor one that runs on a value the chart would refuse. (The
+    keys outside the namespace are the one place the chart is stricter.)"""
+    chart = _chart_takes(API_BASE + sets + (f"api.{key}={value}",), refusal)
+    assert chart == _service_takes(name, value), value
+
+
+@pytest.mark.parametrize("value", JWKS_URLS + ["http://keys.elsewhere.example/j"])
+def test_outside_the_namespace_the_chart_takes_no_key_address_the_service_refuses(
+    value: str,
+):
+    chart = _chart_takes(
+        API_BASE + API_SETS + (f"api.jwksUrl={value}",), API_JWKS_REFUSAL
+    )
+    assert not chart or _service_takes("HTRFLOW_API_JWKS_URL", value), value
 
 
 def test_allow_no_ingress_admits_nobody_on_the_api_port():

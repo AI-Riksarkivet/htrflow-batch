@@ -29,6 +29,15 @@ def test_a_token_that_is_not_ours_is_a_401(cfg, signer, overrides, word):
     assert e.value.hint == "Sign in again: htrflow-campaigns login"
 
 
+def test_another_issuer_is_named_with_the_one_this_service_expects(cfg, signer):
+    with pytest.raises(Refused) as e:
+        Verifier(cfg, signer.jwks).verify(signer.token(iss="https://other.example/r"))
+    assert e.value.detail == (
+        "This token comes from another issuer than https://id.example/realms/htrflow."
+    )
+    assert "other.example" not in e.value.detail
+
+
 def test_a_token_signed_by_another_key_is_a_401(cfg, signer):
     other = Signer(kid=signer.kid)
     with pytest.raises(Refused) as e:

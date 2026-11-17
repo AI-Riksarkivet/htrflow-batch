@@ -12,7 +12,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from htrflow_api import MIN_CLIENT
-from htrflow_api.config import ApiConfig
+from htrflow_api.config import ApiConfig, checked_prefix
 from htrflow_api.tokens import Identity, Refused, Verifier
 
 #: The CLI's htrflow-converter version.
@@ -166,8 +166,9 @@ def current_identity(request: Request) -> Identity:
 
 
 def create_app(cfg: ApiConfig, verifier: Verifier) -> FastAPI:
+    # Again here: model_copy and model_construct skip the validators.
+    v1 = f"{checked_prefix(cfg.path)}/v1"
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
-    v1 = f"{cfg.path}/v1"
 
     @app.get("/healthz")
     def healthz() -> dict:

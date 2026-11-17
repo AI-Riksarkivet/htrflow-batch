@@ -103,7 +103,8 @@ Added:
   Secret. The service checks every sign-in token itself and holds no
   Kubernetes rights and no Secret. The chart refuses it without the Ingress
   and TLS, without `api.image` (by digest), `issuer`, `audience`, `clientId`
-  and `group`, with a plain-http issuer outside loopback, with a path the web
+  and `group`, with a plain-http issuer outside loopback, with a key address
+  (`api.jwksUrl`) that is not https outside the namespace, with a path the web
   front serves, and (with `network.enabled`) with no route to the sign-in
   service's keys: `api.network.identityCidrs`, or
   `api.network.identityInNamespace` for the devstack's Keycloak.

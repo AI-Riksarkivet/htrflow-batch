@@ -151,7 +151,9 @@ class Verifier:
         except jwt.ExpiredSignatureError:
             raise _unauthorized("The token has expired.") from None
         except jwt.InvalidIssuerError:
-            raise _unauthorized("The token comes from another issuer.") from None
+            raise _unauthorized(
+                f"This token comes from another issuer than {cfg.issuer}."
+            ) from None
         except (jwt.InvalidAudienceError, jwt.MissingRequiredClaimError) as e:
             what = getattr(e, "claim", "aud")
             detail = {

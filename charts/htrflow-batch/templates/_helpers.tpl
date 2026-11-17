@@ -120,8 +120,9 @@ after the slash.
 {{- end }}
 {{- /*
 The campaigns API (templates/api.yaml). Every sentence names the value to
-set: a wrong one fails here, not as a crash-looping pod. The issuer rule
-mirrors the service's own (packages/api config.py): https, or http for a
+set: a wrong one fails here, not as a crash-looping pod. The issuer, key
+address and path rules mirror the service's own (packages/api config.py;
+test_chart_render.py holds the two to one table): https, or http for a
 loopback host only -- matched on the host, so `http://127.0.0.1.evil.example`
 is not one.
 */}}
@@ -142,8 +143,17 @@ is not one.
 {{- end }}
 {{- end }}
 {{- /* No user name (an `@` in the authority hides the real host), no query, no fragment. */}}
-{{- if not (regexMatch `^(?i:https://[^/?#@\s]+(/[^?#\s]*)?|http://(localhost|127(\.[0-9]{1,3}){3}|\[::1\])(:[0-9]+)?(/[^?#\s]*)?)$` .Values.api.issuer) }}
+{{- if not (regexMatch `^(?i:https://(\[[0-9A-Fa-f:.]+\]|[^/?#@\s:\[\]]+)(:[0-9]+)?(/[^?#\s]*)?|http://(localhost|127(\.[0-9]{1,3}){3}|\[::1\])(:[0-9]+)?(/[^?#\s]*)?)$` .Values.api.issuer) }}
 {{- fail "api.issuer must start with https:// (http:// only for localhost, 127.x.x.x or [::1]) and carry no user name, query or fragment: the signing keys it points at decide who may sign in, and they must not be fetched in the clear" }}
+{{- end }}
+{{- /* The keys: https, or http to a host only for the in-namespace sign-in
+     service (the service itself takes http anywhere; the chart allows it
+     only where it never leaves the namespace). Same shape as the issuer. */}}
+{{- with .Values.api.jwksUrl }}
+{{- $shape := ternary `^(?i:https?://(\[[0-9A-Fa-f:.]+\]|[^/?#@\s:\[\]]+)(:[0-9]+)?(/[^?#\s]*)?)$` `^(?i:https://(\[[0-9A-Fa-f:.]+\]|[^/?#@\s:\[\]]+)(:[0-9]+)?(/[^?#\s]*)?)$` $.Values.api.network.identityInNamespace }}
+{{- if not (regexMatch $shape .) }}
+{{- fail "api.jwksUrl must start with https:// (http:// only with api.network.identityInNamespace=true) and carry no user name, query or fragment: the signing keys it points at decide who may sign in, and they must not be fetched in the clear outside the namespace" }}
+{{- end }}
 {{- end }}
 {{- $path := .Values.api.path }}
 {{- if $path }}

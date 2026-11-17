@@ -174,6 +174,14 @@ def test_path_tricks_never_reach_a_handler_without_a_token(cfg, signer, prefix, 
     assert calls == []
 
 
+@pytest.mark.parametrize("path", ["/{p}", "/a/{p}", "control", "/a/"])
+def test_no_app_is_made_with_a_prefix_the_config_would_refuse(cfg, signer, path):
+    """``model_copy`` skips the validators; ``create_app`` checks again, since
+    a ``{`` would make the router read a parameter the guard reads as text."""
+    with pytest.raises(ValueError, match="path"):
+        prefixed(cfg, signer, path)
+
+
 def test_the_prefix_is_served_and_the_bare_path_is_not(cfg, signer):
     app = create_app(
         cfg.model_copy(update={"path": "/control"}), Verifier(cfg, signer.jwks)

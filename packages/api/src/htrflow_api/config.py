@@ -6,10 +6,42 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import re
 from collections.abc import Mapping
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
+#: The prefix shape charts/htrflow-batch takes for ``api.path`` (_helpers.tpl):
+#: no braces (the router would read a parameter the guard reads as text), no
+#: dots, no empty segment.
+PATH_SHAPE = re.compile(r"(/[A-Za-z0-9_-]+)+")
+
+
+def checked_prefix(path: str) -> str:
+    if path and not PATH_SHAPE.fullmatch(path):
+        raise ValueError(
+            "path must be empty, or /segments of letters, digits, _ and - "
+            "with no / at the end"
+        )
+    return path
+
+
+def _scheme_and_host(url: str) -> tuple[str, str]:
+    """The scheme and host of an absolute URL with no user name, query,
+    fragment, whitespace or bad port; ValueError otherwise. The same shape
+    the chart and the CLI take."""
+    parts = urlsplit(url)
+    _ = parts.port  # raises on a port that is not a number
+    if (
+        not parts.hostname
+        or "@" in parts.netloc
+        or "?" in url
+        or "#" in url
+        or any(c.isspace() for c in url)
+    ):
+        raise ValueError("must have a host and no user name, query or fragment")
+    return parts.scheme, parts.hostname
 
 
 def is_loopback(host: str) -> bool:
@@ -27,8 +59,9 @@ class ApiConfig(BaseModel):
     #: The OpenID provider's issuer URL; must be https, loopback excepted.
     issuer: str = Field(alias="HTRFLOW_API_ISSUER")
     #: Where THIS POD reads the provider's keys: a pod may reach the provider
-    #: at another address than a person does. Empty reads ``jwks_uri`` from
-    #: ``<issuer>/.well-known/openid-configuration``.
+    #: at another address than a person does, so plain http to any host is
+    #: taken (the chart allows it only inside the namespace). Empty reads
+    #: ``jwks_uri`` from ``<issuer>/.well-known/openid-configuration``.
     jwks_url: str = Field("", alias="HTRFLOW_API_JWKS_URL")
     audience: str = Field(alias="HTRFLOW_API_AUDIENCE")
     client_id: str = Field(alias="HTRFLOW_API_CLIENT_ID")
@@ -45,12 +78,35 @@ class ApiConfig(BaseModel):
     @field_validator("issuer")
     @classmethod
     def _https_only(cls, v: str) -> str:
-        parts = urlsplit(v)
-        if parts.scheme == "https" and parts.hostname:
+        """Kept exactly as given: it must equal the tokens' ``iss``."""
+        rule = (
+            "must be an https:// URL (http only for a loopback host) with no "
+            "user name, query or fragment"
+        )
+        try:
+            scheme, host = _scheme_and_host(v)
+        except ValueError:
+            raise ValueError(rule) from None
+        if scheme == "https" or (scheme == "http" and is_loopback(host)):
             return v
-        if parts.scheme == "http" and is_loopback(parts.hostname or ""):
+        raise ValueError(rule)
+
+    @field_validator("jwks_url")
+    @classmethod
+    def _jwks(cls, v: str) -> str:
+        rule = (
+            "must be an http:// or https:// URL with a host and no user name, "
+            "query or fragment"
+        )
+        if not v:
             return v
-        raise ValueError("must be an https:// URL (http only for a loopback host)")
+        try:
+            scheme, _ = _scheme_and_host(v)
+        except ValueError:
+            raise ValueError(rule) from None
+        if scheme not in ("http", "https"):
+            raise ValueError(rule)
+        return v
 
     @field_validator(
         "audience", "client_id", "group", "user_claim", "groups_claim",
@@ -65,9 +121,7 @@ class ApiConfig(BaseModel):
     @field_validator("path")
     @classmethod
     def _prefix(cls, v: str) -> str:
-        if v and (not v.startswith("/") or v.endswith("/")):
-            raise ValueError("must be empty, or start with / and not end with /")
-        return v
+        return checked_prefix(v)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> ApiConfig:

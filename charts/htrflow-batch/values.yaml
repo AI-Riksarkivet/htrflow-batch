@@ -198,7 +198,8 @@ api:
   issuer: ""
   # Where this pod reads the sign-in service's keys, when that is not
   # <issuer>/.well-known/openid-configuration's own answer. "" = found from
-  # the issuer.
+  # the issuer. https://, or http:// only with network.identityInNamespace:
+  # the keys are never fetched in the clear outside the namespace.
   jwksUrl: ""
   audience: ""
   clientId: ""
