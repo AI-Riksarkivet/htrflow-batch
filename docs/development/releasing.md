@@ -314,7 +314,7 @@ gh attestation verify oci://docker.io/riksarkivet/htrflow-batch:<version>-<arch>
 Every `v*` tag gets a GitHub release from `.github/workflows/release.yml`. The
 order is the one the images need:
 
-1. **Bump and merge the version**: the wrapper's, the web's and the
+1. **Bump and merge the version**: the wrapper's, the web's, the api's and the
    converter's `pyproject.toml`, and the chart's `appVersion`.
 2. **Publish the images** for the tag with the publish workflow above.
 3. **The release commit** pins the three manifest-list digests where the

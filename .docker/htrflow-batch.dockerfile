@@ -196,6 +196,7 @@ RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
     --mount=type=bind,source=packages/wrapper/pyproject.toml,target=/opt/workspace/packages/wrapper/pyproject.toml \
     --mount=type=bind,source=packages/converter/pyproject.toml,target=/opt/workspace/packages/converter/pyproject.toml \
     --mount=type=bind,source=packages/web/pyproject.toml,target=/opt/workspace/packages/web/pyproject.toml \
+    --mount=type=bind,source=packages/api/pyproject.toml,target=/opt/workspace/packages/api/pyproject.toml \
     uv export --directory /opt/workspace --locked --package htrflow-batch-wrapper --no-dev --no-emit-project \
          -o /tmp/wrapper-requirements.txt \
     && uv pip install --python /app/.venv/bin/python --no-build --no-cache --require-hashes \
@@ -264,6 +265,7 @@ RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
     --mount=type=bind,source=packages/wrapper/pyproject.toml,target=/opt/workspace/packages/wrapper/pyproject.toml \
     --mount=type=bind,source=packages/converter/pyproject.toml,target=/opt/workspace/packages/converter/pyproject.toml \
     --mount=type=bind,source=packages/web/pyproject.toml,target=/opt/workspace/packages/web/pyproject.toml \
+    --mount=type=bind,source=packages/api/pyproject.toml,target=/opt/workspace/packages/api/pyproject.toml \
     uv export --directory /opt/workspace --locked --only-group wrapper-image --no-emit-project \
          -o /tmp/image-requirements.txt \
     && uv pip install --python /app/.venv/bin/python --no-build --no-cache --no-deps --require-hashes \

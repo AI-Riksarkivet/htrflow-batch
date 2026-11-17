@@ -16,6 +16,7 @@ testpaths = [
     "packages/wrapper/tests",
     "packages/converter/tests",
     "packages/web/tests",
+    "packages/api/tests",
 ]
 markers = [
     "htrflow: needs the htrflow runtime; runs inside the wrapper image (make test-driver-real / dagger call test-driver)",

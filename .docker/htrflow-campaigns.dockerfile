@@ -22,10 +22,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=packages/wrapper/pyproject.toml,target=packages/wrapper/pyproject.toml \
     --mount=type=bind,source=packages/converter/pyproject.toml,target=packages/converter/pyproject.toml \
     --mount=type=bind,source=packages/web/pyproject.toml,target=packages/web/pyproject.toml \
+    --mount=type=bind,source=packages/api/pyproject.toml,target=packages/api/pyproject.toml \
     uv sync --frozen --no-install-workspace --no-build --package htrflow-converter --extra hook
 COPY pyproject.toml uv.lock ./
 COPY packages/wrapper/pyproject.toml packages/wrapper/pyproject.toml
 COPY packages/web/pyproject.toml packages/web/pyproject.toml
+COPY packages/api/pyproject.toml packages/api/pyproject.toml
 COPY packages/converter packages/converter
 # The member itself: --locked proves the lock still matches the pyprojects
 # and --no-build that every dependency came from it as a wheel; then the

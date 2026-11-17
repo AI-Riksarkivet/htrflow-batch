@@ -49,7 +49,7 @@ test:
 # ty from the workspace venv resolves the members' imports; the dagger
 # `typecheck` function runs the same command in CI.
 typecheck:
-	uv run --no-sync ty check packages/wrapper/src packages/converter/src packages/web/src
+	uv run --no-sync ty check packages/wrapper/src packages/converter/src packages/web/src packages/api/src
 
 # Level 0 htrflow API pin (audit T4): the real Pipeline.from_config / Export /
 # auto_import contract on a one-page CPU fixture, inside the locally built
