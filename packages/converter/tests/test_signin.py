@@ -325,6 +325,37 @@ def test_nothing_else_of_a_provider_body_is_shown():
     assert "Not Plain" not in text and "400" in text
 
 
+@pytest.mark.parametrize(
+    "device, raw",
+    [
+        ({"user_code": "\x1b[31mABCD"}, "\x1b[31mABCD"),
+        ({"verification_uri": "https://id.example/act\x07ivate"}, "act\x07ivate"),
+        ({"verification_uri": "https://id.example/act ivate"}, "act ivate"),
+        ({"verification_uri": "https://id.example/act\nivate"}, "act\nivate"),
+        (
+            {"verification_uri_complete": "https://id.example/a?code=\x1b]0;x\x07"},
+            "\x1b]0;x",
+        ),
+        (
+            {"verification_uri_complete": "https://id.example/a?code=AB CD"},
+            "code=AB CD",
+        ),
+        (
+            {"verification_uri_complete": "https://id.example/a?code=\u202eDCBA"},
+            "\u202eDCBA",
+        ),
+    ],
+)
+def test_what_login_always_prints_is_refused_unless_plain(device, raw):
+    provider, said = Provider([TOKENS], device=device), []
+    with pytest.raises(RemoteError) as e:
+        run(provider, said=said)
+    assert said == []
+    assert raw not in e.value.detail + e.value.hint
+    assert e.value.detail.endswith(".") and e.value.hint
+    assert provider.sent(TOKEN_URL) == []
+
+
 def test_a_discovery_issuer_with_an_escape_is_not_echoed_raw():
     provider = Provider([TOKENS], discovery={"issuer": "\x1b]0;pwned\x07https://evil"})
     with pytest.raises(RemoteError) as e:

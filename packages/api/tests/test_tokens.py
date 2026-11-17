@@ -5,7 +5,13 @@ import httpx
 import pytest
 from api_fakes import Signer
 
-from htrflow_api.tokens import REFETCH_SECONDS, Identity, Refused, Verifier
+from htrflow_api.tokens import (
+    ALGORITHMS,
+    REFETCH_SECONDS,
+    Identity,
+    Refused,
+    Verifier,
+)
 
 
 def test_a_good_token_gives_the_user_and_the_groups(cfg, signer):
@@ -74,6 +80,18 @@ def test_a_token_signed_by_another_key_is_a_401(cfg, signer):
     with pytest.raises(Refused) as e:
         Verifier(cfg, signer.jwks).verify(other.token())
     assert e.value.status == 401
+
+
+def test_the_algorithms_are_the_ten_asymmetric_ones_exactly():
+    """Pinned as a tuple: an HS256 or "none" token is refused by PyJWT's key
+    handling even with a wider list, so a token test alone would not notice
+    the list growing."""
+    assert ALGORITHMS == (
+        "RS256", "RS384", "RS512", "PS256", "PS384", "PS512",
+        "ES256", "ES384", "ES512", "EdDSA",
+    )  # fmt: skip
+    assert not [a for a in ALGORITHMS if a.upper().startswith("HS")]
+    assert "none" not in {a.lower() for a in ALGORITHMS}
 
 
 @pytest.mark.parametrize("alg", ["none", "HS256"])
