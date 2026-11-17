@@ -102,7 +102,11 @@ def test_a_sign_in_prints_the_link_and_the_code_and_returns_the_login():
     assert "https://id.example/activate?code=ABCD-EFGH" in text
     assert "ABCD-EFGH" in text
     assert "DC-secret" not in text and "AT-secret" not in text
-    assert form(provider.sent(DEVICE_URL)[0]) == {"client_id": "cli", "scope": "openid"}
+    # preferred_username, the user claim the service reads, is in "profile".
+    assert form(provider.sent(DEVICE_URL)[0]) == {
+        "client_id": "cli",
+        "scope": "openid profile",
+    }
     assert form(provider.sent(TOKEN_URL)[0]) == {
         "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
         "device_code": "DC-secret",

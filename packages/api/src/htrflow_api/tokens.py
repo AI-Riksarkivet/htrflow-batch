@@ -182,7 +182,12 @@ class Verifier:
             ) from None
         user = claims.get(cfg.user_claim)
         if not isinstance(user, str) or not user:
-            raise _unauthorized(f"The token has no {cfg.user_claim} to act as.")
+            raise Refused(
+                401,
+                f"The token has no {cfg.user_claim} to act as.",
+                "Ask whoever runs the sign-in service to send the user name in "
+                f"the token's {cfg.user_claim} claim.",
+            )
         groups = claims.get(cfg.groups_claim)
         if not isinstance(groups, list) or not all(isinstance(g, str) for g in groups):
             groups = []

@@ -183,7 +183,8 @@ def device_login(
             device_endpoint,
             "POST",
             device_endpoint,
-            data={"client_id": client_id, "scope": "openid"},
+            # profile: preferred_username, the user the service acts as.
+            data={"client_id": client_id, "scope": "openid profile"},
         ),
         _SERVICE,
     )

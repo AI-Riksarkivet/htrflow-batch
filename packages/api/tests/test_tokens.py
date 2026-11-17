@@ -113,7 +113,17 @@ def test_a_token_without_a_usable_user_is_a_401(cfg, signer, user):
     with pytest.raises(Refused) as e:
         Verifier(cfg, signer.jwks).verify(signer.token(preferred_username=user))
     assert e.value.status == 401
-    assert e.value.hint == "Sign in again: htrflow-campaigns login"
+    assert e.value.hint == (
+        "Ask whoever runs the sign-in service to send the user name in the "
+        "token's preferred_username claim."
+    )
+
+
+def test_the_missing_user_hint_names_the_configured_claim(cfg, signer):
+    cfg2 = cfg.model_copy(update={"user_claim": "email"})
+    with pytest.raises(Refused) as e:
+        Verifier(cfg2, signer.jwks).verify(signer.token())
+    assert "token's email claim." in e.value.hint
 
 
 def test_a_token_without_the_group_is_a_403_that_names_it(cfg, signer):
