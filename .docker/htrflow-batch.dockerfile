@@ -73,7 +73,7 @@ ADD https://github.com/${HTRFLOW_REPO}.git#${HTRFLOW_REF} /
 # HTRFLOW_REF fails here instead of building something else; a checkout that
 # already has a fix (`make build-wrapper HTRFLOW_SRC=…` on that main) skips it.
 # alpine/git 2.54.0 (multi-arch index digest)
-FROM alpine/git:v2.54.0@sha256:03228d7ded483b0b3e55e1de7fa660d70d3e1bb432fa7021d29e192640de11aa AS htrflow-patched
+FROM alpine/git:v2.54.0@sha256:6a1fdb962814ca11508ca8d1bab94375b5b7ac4e4a9a40981c29fc32c02f095d AS htrflow-patched
 COPY --from=htrflow-src / /src/
 COPY .docker/htrflow-reading-order.patch /tmp/patches/
 WORKDIR /src
