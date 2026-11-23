@@ -4,7 +4,7 @@
 # same venv, so there is no git binary either.
 # The interpreter is uv's CPython build, as in the web image: see
 # htrflow-web.dockerfile's stage 3 for why, and why it moves by hand.
-FROM debian:13-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS venv
+FROM debian:13-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS venv
 COPY --from=ghcr.io/astral-sh/uv:0.13.1@sha256:4a1f3666816dafadd20ceb71eac9a7d56d7ef30279f7d64048519ab901ada336 /uv /bin/uv
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
@@ -40,7 +40,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && uv pip install --python /app/.venv/bin/python --no-build --no-deps /tmp/dist/*.whl \
     && rm -rf /tmp/dist
 
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:b7e81cb1af38d9345680e68bcf564d388f96304e25222030fc8c051faf8565b3
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:532c7a94f9e96ba9db75eb9388f4227751131c7cb0a411d1a8521af4096135de
 LABEL org.opencontainers.image.licenses="EUPL-1.2"
 COPY --from=venv /opt/python /opt/python
 COPY --from=venv /app/.venv /app/.venv
