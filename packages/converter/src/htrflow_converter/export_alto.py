@@ -174,7 +174,7 @@ def scale_alto(
     page.set("WIDTH", str(native_w))
     page.set("HEIGHT", str(native_h))
     page.set("PHYSICAL_IMG_NR", str(number))
-    page.set("ID", f"_{number:05d}")  # the image number, not the run's page name
+    page.set("ID", f"_{stem}")  # the image's whole id, not the run's page name
     _file_name(root).text = stem
     return _serialise(root)
 
@@ -256,7 +256,7 @@ def empty_alto(native: tuple[int, int], stem: str, number: int) -> bytes:
             "WIDTH": str(width),
             "HEIGHT": str(height),
             "PHYSICAL_IMG_NR": str(number),
-            "ID": f"_{number:05d}",
+            "ID": f"_{stem}",
         },
     )
     ET.SubElement(
