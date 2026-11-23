@@ -331,8 +331,10 @@ A valid ALTO v4 document that says nothing about processing: a
 `sourceImageInformation/fileName` (the published stem) — **no
 `Processing` entries**, since no model's output is on the page — and
 `Layout/Page` with `WIDTH`/`HEIGHT` = the scan's native size,
-`PHYSICAL_IMG_NR` = the page position, `ID` as htrflow writes it
-(`_<page key>`), and an empty `PrintSpace` covering the whole page
+`PHYSICAL_IMG_NR` = the page position, `ID` = the published stem behind
+an underscore (`_<bildid>_<nnnnn>`; a scaled page gets the same, in place
+of the run's page key: the number alone is not unique where several image
+series belong to one volume), and an empty `PrintSpace` covering the whole page
 (`HPOS=0 VPOS=0 WIDTH HEIGHT` = the page). No `PC`: an empty page carries no
 quality claim. No `ReadingOrder`.
 
@@ -351,7 +353,7 @@ ALTO 4.4 schema:
     </sourceImageInformation>
   </Description>
   <Layout>
-    <Page WIDTH="3494" HEIGHT="2472" PHYSICAL_IMG_NR="1" ID="_0001">
+    <Page WIDTH="3494" HEIGHT="2472" PHYSICAL_IMG_NR="1" ID="_R0001203_00001">
       <PrintSpace HPOS="0" VPOS="0" WIDTH="3494" HEIGHT="2472"/>
     </Page>
   </Layout>
